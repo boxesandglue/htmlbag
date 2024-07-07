@@ -3,9 +3,9 @@ package htmlbag
 import (
 	"fmt"
 
-	"github.com/speedata/boxesandglue/backend/bag"
-	"github.com/speedata/boxesandglue/backend/node"
-	"github.com/speedata/boxesandglue/frontend"
+	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/backend/node"
+	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
 func (cb *CSSBuilder) CreateVlist(te *frontend.Text, wd bag.ScaledPoint) (*node.VList, error) {

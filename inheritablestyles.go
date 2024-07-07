@@ -5,11 +5,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/speedata/boxesandglue/backend/bag"
-	"github.com/speedata/boxesandglue/backend/color"
-	"github.com/speedata/boxesandglue/backend/document"
-	"github.com/speedata/boxesandglue/backend/node"
-	"github.com/speedata/boxesandglue/frontend"
+	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/backend/color"
+	"github.com/boxesandglue/boxesandglue/backend/document"
+	"github.com/boxesandglue/boxesandglue/backend/node"
+	"github.com/boxesandglue/boxesandglue/frontend"
 	"golang.org/x/net/html"
 )
 

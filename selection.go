@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/speedata/boxesandglue/frontend"
+	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/speedata/csshtml"
 	"golang.org/x/net/html"
 )

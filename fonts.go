@@ -1,8 +1,8 @@
 package htmlbag
 
 import (
-	"github.com/speedata/boxesandglue/backend/bag"
-	"github.com/speedata/boxesandglue/frontend"
+	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/speedata/htmlbag/fonts/camingocodebold"
 	"github.com/speedata/htmlbag/fonts/camingocodebolditalic"
 	"github.com/speedata/htmlbag/fonts/camingocodeitalic"
