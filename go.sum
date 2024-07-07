@@ -13,8 +13,8 @@ github.com/speedata/css/scanner v0.0.0-20240704081300-00e8c453c7d5 h1:US/RNbUXoK
 github.com/speedata/css/scanner v0.0.0-20240704081300-00e8c453c7d5/go.mod h1:uF4+EGySaBnGeZpXZ0boh/oR6P0vNiYfQ2MAJXCU9hE=
 github.com/boxesandglue/csshtml v0.0.0-20240704145954-263007d03337 h1:x1V2HJmvj7NmICRYn82sdMxO8+gk7x8QFH53u18LDuA=
 github.com/boxesandglue/csshtml v0.0.0-20240704145954-263007d03337/go.mod h1:5G9pAKnX0DaCWUjFXNs1Gvki9Naf8hLggwBsNYuP2+k=
-github.com/speedata/gofpdi v1.0.18 h1:LEiIN62ckZcA4n8AtBu16M2P2fBK3OnwpTGDfe13v/4=
-github.com/speedata/gofpdi v1.0.18/go.mod h1:aRZ6VjhFbzJWwCoHeKOdbUjImuf4GMVCJpwS9+bCYuM=
+github.com/boxesandglue/gofpdi v1.0.18 h1:LEiIN62ckZcA4n8AtBu16M2P2fBK3OnwpTGDfe13v/4=
+github.com/boxesandglue/gofpdi v1.0.18/go.mod h1:aRZ6VjhFbzJWwCoHeKOdbUjImuf4GMVCJpwS9+bCYuM=
 github.com/speedata/hyphenation v1.0.1 h1:O9gKtVw2JvyiHybCYJwpB3zzHaeXEvDtXjiExZdm1TU=
 github.com/speedata/hyphenation v1.0.1/go.mod h1:vwrKKvBvJWFll0sVZw99hyWS/+r4YlMI7MAYjnje0nM=
 github.com/boxesandglue/textlayout v0.0.0-20230827181055-b7ff752e85ae h1:WREBj80Ov1CmfmpLHyValOTcb2YhiHFBrdD2drUlfZM=
