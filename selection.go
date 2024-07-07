@@ -7,7 +7,7 @@ import (
 	"unicode"
 
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/speedata/csshtml"
+	"github.com/boxesandglue/csshtml"
 	"golang.org/x/net/html"
 )
 

@@ -11,7 +11,7 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/boxesandglue/frontend/pdfdraw"
-	"github.com/speedata/csshtml"
+	"github.com/boxesandglue/csshtml"
 	"golang.org/x/net/html"
 )
 
