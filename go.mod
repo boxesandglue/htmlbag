@@ -17,6 +17,6 @@ require (
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/speedata/css/scanner v0.0.0-20240704081300-00e8c453c7d5 // indirect
 	github.com/speedata/hyphenation v1.0.1 // indirect
-	golang.org/x/image v0.7.0 // indirect
+	golang.org/x/image v0.18.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
 )
