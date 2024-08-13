@@ -245,15 +245,11 @@ func (cb *CSSBuilder) ParseHTMLFromNode(input *html.Node) (*frontend.Text, error
 
 // HTMLToText interprets the HTML string and applies all previously read CSS data.
 func (cb *CSSBuilder) HTMLToText(html string) (*frontend.Text, error) {
-	doc, err := cb.css.ReadHTMLChunk(html)
+	doc, err := cb.css.ProcessHTMLChunk(html)
 	if err != nil {
 		return nil, err
 	}
-	gq, err := cb.css.ApplyCSS(doc)
-	if err != nil {
-		return nil, err
-	}
-	n := gq.Nodes[0]
+	n := doc.Nodes[0]
 
 	var te *frontend.Text
 	if te, err = HTMLNodeToText(n, cb.stylesStack, cb.frontend); err != nil {
@@ -261,11 +257,6 @@ func (cb *CSSBuilder) HTMLToText(html string) (*frontend.Text, error) {
 	}
 
 	return te, nil
-}
-
-// ShowCSS returns a CSS dump
-func (cb *CSSBuilder) ShowCSS() string {
-	return cb.css.Show()
 }
 
 // AddCSS reads the CSS instructions in css.

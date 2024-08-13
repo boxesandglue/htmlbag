@@ -3,6 +3,7 @@ package htmlbag
 import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"github.com/boxesandglue/csshtml"
 	"github.com/boxesandglue/htmlbag/fonts/camingocodebold"
 	"github.com/boxesandglue/htmlbag/fonts/camingocodebolditalic"
 	"github.com/boxesandglue/htmlbag/fonts/camingocodeitalic"
@@ -65,6 +66,46 @@ func LoadIncludedFonts(fe *frontend.Document) error {
 	}
 	if err = serif.AddMember(&frontend.FontSource{Data: crimsonprobolditalic.TTF, Name: "CrimsonPro BoldItalic"}, 700, frontend.FontStyleItalic); err != nil {
 		return err
+	}
+	return nil
+}
+
+// AddFontFamiliesFromCSS adds entries to the font families of the frontend
+// document.
+func AddFontFamiliesFromCSS(cs *csshtml.CSS, fe *frontend.Document) error {
+	for _, v := range cs.FontFaces {
+		var fontfamily *frontend.FontFamily
+		if ff := fe.FindFontFamily(v.Family); ff == nil {
+			fontfamily = fe.NewFontFamily(v.Family)
+		} else {
+			fontfamily = ff
+		}
+		fs := &frontend.FontSource{}
+
+		for _, src := range v.Source {
+			if l := src.URI; l != "" {
+				fs.Location = l
+				fs.Name = l
+
+			} else if l := src.Local; l != "" {
+				fs.Name = l
+				switch l {
+				case "CamingoCode Regular":
+					fs.Data = camingocoderegular.TTF
+				}
+			}
+			fs.FontFeatures = v.Features
+		}
+		var fontstyle frontend.FontStyle
+		switch v.Style {
+		case "", "normal":
+			fontstyle = frontend.FontStyleNormal
+		case "italic":
+			fontstyle = frontend.FontStyleItalic
+		default:
+			panic("nyi" + v.Style)
+		}
+		fontfamily.AddMember(fs, frontend.FontWeight(v.Weight), fontstyle)
 	}
 	return nil
 }
