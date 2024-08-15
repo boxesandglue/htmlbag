@@ -6,49 +6,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
-// OutputPage outputs the HTML text and breaks pages when necessary.
-func (cb *CSSBuilder) OutputPage(html string) error {
-	// doc, err := cb.css.ReadHTMLChunk(html)
-	// if err != nil {
-	// 	return err
-	// }
-	// gq, err := cb.css.ApplyCSS(doc)
-	// if err != nil {
-	// 	return err
-	// }
-	// var te *frontend.Text
-	// n := gq.Nodes[0]
-
-	// if te, err = HTMLNodeToText(n, cb.stylesStack, cb.frontend); err != nil {
-	// 	return err
-	// }
-	// err = cb.outputOnPage(te)
-	// if err != nil {
-	// 	return err
-	// }
-	// // d.te = nil
-	return nil
-}
-
-// outputOnPage builds vlists and places them on pages.
-// func (cb *CSSBuilder) outputOnPage(te *frontend.Text) error {
-// 	dim, err := cb.PageSize()
-// 	if err != nil {
-// 		return err
-// 	}
-// 	info, err := cb.frontend.BuildVlistInternal(te, dim.ContentWidth, dim.MarginLeft, 0)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	cb.pagebox = info.Pagebox
-
-// 	if err = cb.buildPages(); err != nil {
-// 		return err
-// 	}
-// 	cb.pagebox = cb.pagebox[:0]
-// 	return nil
-// }
-
 // turn content: `"page " counter(page) " of " counter(pages)` into a meaningful
 // string.
 func (cb *CSSBuilder) parseContent(in string) string {
@@ -265,21 +222,5 @@ func (cb *CSSBuilder) buildPages() error {
 			y -= height
 		}
 	}
-	return nil
-}
-
-// OutputAt places the text at the given coordinates and formats it to the given
-// width. OutputAt inserts page breaks if necessary.
-func (cb *CSSBuilder) OutputAt(text *frontend.Text, x, y, width bag.ScaledPoint) error {
-	bag.Logger.Debug("CSSBuilder#OutputAt")
-	// inf, err := cb.BuildVlistInternal(text, width, x, 0)
-	// if err != nil {
-	// 	return err
-	// }
-	// cb.pagebox = inf.Pagebox
-	// if err = cb.buildPages(); err != nil {
-	// 	return err
-	// }
-	// cb.pagebox = cb.pagebox[:0]
 	return nil
 }

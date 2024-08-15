@@ -27,15 +27,18 @@ type CSSBuilder struct {
 }
 
 // New creates an instance of the CSSBuilder.
-func New(fd *frontend.Document, c *csshtml.CSS) *CSSBuilder {
+func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
 	cb := CSSBuilder{
 		css:         c,
 		frontend:    fd,
 		stylesStack: make(StylesStack, 0),
 		pagebox:     []node.Node{},
 	}
+	if err := LoadIncludedFonts(fd); err != nil {
+		return nil, err
+	}
 
-	return &cb
+	return &cb, nil
 }
 
 // PageDimensions contains the page size and the margins of the page.
