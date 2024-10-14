@@ -143,21 +143,21 @@ func (cb *CSSBuilder) CSSPropertiesToValues(p HTMLProperties) HTMLValues {
 		case "background-color":
 			hv.BackgroundColor = d.GetColor(v)
 		case "border-top-width":
-			hv.BorderTopWidth = bag.MustSp(v)
+			hv.BorderTopWidth = bag.MustSP(v)
 		case "border-right-width":
-			hv.BorderRightWidth = bag.MustSp(v)
+			hv.BorderRightWidth = bag.MustSP(v)
 		case "border-bottom-width":
-			hv.BorderBottomWidth = bag.MustSp(v)
+			hv.BorderBottomWidth = bag.MustSP(v)
 		case "border-left-width":
-			hv.BorderLeftWidth = bag.MustSp(v)
+			hv.BorderLeftWidth = bag.MustSP(v)
 		case "border-top-left-radius":
-			hv.BorderTopLeftRadius = bag.MustSp(v)
+			hv.BorderTopLeftRadius = bag.MustSP(v)
 		case "border-top-right-radius":
-			hv.BorderTopRightRadius = bag.MustSp(v)
+			hv.BorderTopRightRadius = bag.MustSP(v)
 		case "border-bottom-left-radius":
-			hv.BorderBottomLeftRadius = bag.MustSp(v)
+			hv.BorderBottomLeftRadius = bag.MustSP(v)
 		case "border-bottom-right-radius":
-			hv.BorderBottomRightRadius = bag.MustSp(v)
+			hv.BorderBottomRightRadius = bag.MustSP(v)
 		case "border-top-color":
 			hv.BorderTopColor = d.GetColor(v)
 		case "border-right-color":

@@ -6,14 +6,14 @@ toolchain go1.22.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.9.2
-	github.com/boxesandglue/boxesandglue v0.0.0-20240815090256-4262a0b934f0
+	github.com/boxesandglue/boxesandglue v0.1.0
 	github.com/boxesandglue/csshtml v0.0.0-20240813134317-f214983f48f8
 	golang.org/x/net v0.28.0
 )
 
 require (
 	github.com/andybalholm/cascadia v1.3.2 // indirect
-	github.com/boxesandglue/baseline-pdf v0.0.0-20240805104743-f940543238d5 // indirect
+	github.com/boxesandglue/baseline-pdf v1.0.0 // indirect
 	github.com/boxesandglue/gofpdi v1.0.19 // indirect
 	github.com/boxesandglue/textlayout v0.0.0-20240805104743-4ef76f4729dd // indirect
 	github.com/google/uuid v1.6.0 // indirect

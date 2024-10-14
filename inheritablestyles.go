@@ -13,8 +13,8 @@ import (
 	"golang.org/x/net/html"
 )
 
-var tenpt = bag.MustSp("10pt")
-var tenptflt = bag.MustSp("10pt").ToPT()
+var tenpt = bag.MustSP("10pt")
+var tenptflt = bag.MustSP("10pt").ToPT()
 
 // ParseVerticalAlign parses the input ("top","middle",...) and returns the
 // VerticalAlignment value.
@@ -70,7 +70,7 @@ func ParseRelativeSize(fs string, cur bag.ScaledPoint, root bag.ScaledPoint) bag
 		factor, err := strconv.ParseFloat(prefix, 32)
 		if err != nil {
 			// logger.Error(fmt.Sprintf("Cannot convert relative size %s", fs))
-			return bag.MustSp("10pt")
+			return bag.MustSP("10pt")
 		}
 		return bag.ScaledPoint(float64(root) * factor)
 	}
@@ -82,11 +82,11 @@ func ParseRelativeSize(fs string, cur bag.ScaledPoint, root bag.ScaledPoint) bag
 		factor, err := strconv.ParseFloat(prefix, 32)
 		if err != nil {
 			// logger.Error(fmt.Sprintf("Cannot convert relative size %s", fs))
-			return bag.MustSp("10pt")
+			return bag.MustSP("10pt")
 		}
 		return bag.ScaledPoint(float64(cur) * factor)
 	}
-	if unit, err := bag.Sp(fs); err == nil {
+	if unit, err := bag.SP(fs); err == nil {
 		return unit
 	}
 	if factor, err := strconv.ParseFloat(fs, 64); err == nil {
@@ -635,14 +635,14 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 			for k, v := range item.Attributes {
 				switch k {
 				case "width":
-					imgNode.Attributes["wd"] = bag.MustSp(v)
+					imgNode.Attributes["wd"] = bag.MustSP(v)
 				case "!width":
 					if !strings.HasSuffix(v, "%") {
 						wd := ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
 						imgNode.Attributes["wd"] = wd
 					}
 				case "height":
-					imgNode.Attributes["ht"] = bag.MustSp(v)
+					imgNode.Attributes["ht"] = bag.MustSP(v)
 				case "src":
 					filename = v
 				}

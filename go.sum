@@ -4,10 +4,10 @@ github.com/andybalholm/cascadia v1.3.2 h1:3Xi6Dw5lHF15JtdcmAHD3i1+T8plmv7BQ/nsVi
 github.com/andybalholm/cascadia v1.3.2/go.mod h1:7gtRlve5FxPPgIgX36uWBX58OdBsSS6lUvCFb+h7KvU=
 github.com/benoitkugler/textlayout-testdata v0.1.1 h1:AvFxBxpfrQd8v55qH59mZOJOQjtD6K2SFe9/HvnIbJk=
 github.com/benoitkugler/textlayout-testdata v0.1.1/go.mod h1:i/qZl09BbUOtd7Bu/W1CAubRwTWrEXWq6JwMkw8wYxo=
-github.com/boxesandglue/baseline-pdf v0.0.0-20240805104743-f940543238d5 h1:HO8+D7Sq9oEosrJZCBX9SgCFGcbARqx6qGvySN4vJ/0=
-github.com/boxesandglue/baseline-pdf v0.0.0-20240805104743-f940543238d5/go.mod h1:vHHOX9Wb/F6LvTVhxdOTyRBW6XtM0POP8BjxXkQHag4=
-github.com/boxesandglue/boxesandglue v0.0.0-20240815090256-4262a0b934f0 h1:bHail+7Idvt0vCXRrBGSm/dT/9z9pD06G33Z2srMTbs=
-github.com/boxesandglue/boxesandglue v0.0.0-20240815090256-4262a0b934f0/go.mod h1:OrtSoEMm+Czwp3ALMIC/H7aulMR/6HwmpoExtKSXqfM=
+github.com/boxesandglue/baseline-pdf v1.0.0 h1:Lq+kOA1tOu7v1peGdBfrhoFIy7nl8e9xEntdC5ukT4Q=
+github.com/boxesandglue/baseline-pdf v1.0.0/go.mod h1:vHHOX9Wb/F6LvTVhxdOTyRBW6XtM0POP8BjxXkQHag4=
+github.com/boxesandglue/boxesandglue v0.1.0 h1:qLa70hWAaB8bZwjLzEIW8ZntuoBYUQQtTiB6keTHHQw=
+github.com/boxesandglue/boxesandglue v0.1.0/go.mod h1:IGvlFTYAqBdq0CJEom22S+jRkC34wh8jIVgKwpg76EE=
 github.com/boxesandglue/csshtml v0.0.0-20240813134317-f214983f48f8 h1:5wR87PgBG/NDsvArAnG+JAlaxeSgNioZ2BdsiuXo4oc=
 github.com/boxesandglue/csshtml v0.0.0-20240813134317-f214983f48f8/go.mod h1:YBlYV2UrdFEn/jLf4YpOQD8YQduiYBt6q0YTvWZqJvA=
 github.com/boxesandglue/gofpdi v1.0.19 h1:GZX1/akVhVsZgCwjc/jTbJZ6kuoHw7CvwwGzF9Ie37U=

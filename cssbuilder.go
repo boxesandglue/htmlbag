@@ -15,7 +15,7 @@ import (
 	"golang.org/x/net/html"
 )
 
-var onecm = bag.MustSp("1cm")
+var onecm = bag.MustSP("1cm")
 
 // CSSBuilder handles HTML chunks and CSS instructions.
 type CSSBuilder struct {
@@ -82,37 +82,37 @@ func (cb *CSSBuilder) InitPage() error {
 	if defaultPage := cb.getPageType(); defaultPage != nil {
 		wdStr, htStr := csshtml.PapersizeWidthHeight(defaultPage.Papersize)
 		var wd, ht, mt, mb, ml, mr bag.ScaledPoint
-		if wd, err = bag.Sp(wdStr); err != nil {
+		if wd, err = bag.SP(wdStr); err != nil {
 			return err
 		}
-		if ht, err = bag.Sp(htStr); err != nil {
+		if ht, err = bag.SP(htStr); err != nil {
 			return err
 		}
 		if str := defaultPage.MarginTop; str == "" {
 			mt = onecm
 		} else {
-			if mt, err = bag.Sp(str); err != nil {
+			if mt, err = bag.SP(str); err != nil {
 				return err
 			}
 		}
 		if str := defaultPage.MarginBottom; str == "" {
 			mb = onecm
 		} else {
-			if mb, err = bag.Sp(str); err != nil {
+			if mb, err = bag.SP(str); err != nil {
 				return err
 			}
 		}
 		if str := defaultPage.MarginLeft; str == "" {
 			ml = onecm
 		} else {
-			if ml, err = bag.Sp(str); err != nil {
+			if ml, err = bag.SP(str); err != nil {
 				return err
 			}
 		}
 		if str := defaultPage.MarginRight; str == "" {
 			mr = onecm
 		} else {
-			if mr, err = bag.Sp(str); err != nil {
+			if mr, err = bag.SP(str); err != nil {
 				return err
 			}
 		}
@@ -180,8 +180,8 @@ func (cb *CSSBuilder) InitPage() error {
 		return nil
 	}
 	// no page master found
-	cb.frontend.Doc.DefaultPageWidth = bag.MustSp("210mm")
-	cb.frontend.Doc.DefaultPageHeight = bag.MustSp("297mm")
+	cb.frontend.Doc.DefaultPageWidth = bag.MustSP("210mm")
+	cb.frontend.Doc.DefaultPageHeight = bag.MustSP("297mm")
 
 	cb.currentPageDimensions = PageDimensions{
 		Width:         cb.frontend.Doc.DefaultPageWidth,

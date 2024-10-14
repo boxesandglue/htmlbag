@@ -19,8 +19,8 @@ import (
 )
 
 var (
-	tenpoint    = bag.MustSp("10pt")
-	twelvepoint = bag.MustSp("12pt")
+	tenpoint    = bag.MustSP("10pt")
+	twelvepoint = bag.MustSP("12pt")
 )
 
 // LoadIncludedFonts creates the font families monospace, sans and serif for
