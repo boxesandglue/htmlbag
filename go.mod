@@ -7,7 +7,7 @@ toolchain go1.22.0
 require (
 	github.com/PuerkitoBio/goquery v1.9.2
 	github.com/boxesandglue/boxesandglue v0.1.0
-	github.com/boxesandglue/csshtml v0.0.0-20240813134317-f214983f48f8
+	github.com/boxesandglue/csshtml v0.0.0-20241014190843-a38491759379
 	golang.org/x/net v0.28.0
 )
 
@@ -19,6 +19,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/speedata/css/scanner v0.0.0-20240704081300-00e8c453c7d5 // indirect
 	github.com/speedata/hyphenation v1.0.2 // indirect
-	golang.org/x/image v0.19.0 // indirect
-	golang.org/x/text v0.17.0 // indirect
+	golang.org/x/image v0.21.0 // indirect
+	golang.org/x/text v0.19.0 // indirect
 )
