@@ -627,22 +627,20 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 			hl := document.Hyperlink{URI: href, Local: link}
 			childSettings[frontend.SettingHyperlink] = hl
 		case "img":
-			imgNode := node.NewImage()
-			imgNode.Attributes = node.H{}
-
 			cs := ss.CurrentStyle()
 			var filename string
+			var wd, ht bag.ScaledPoint
+
 			for k, v := range item.Attributes {
 				switch k {
 				case "width":
-					imgNode.Attributes["wd"] = bag.MustSP(v)
+					wd = bag.MustSP(v)
 				case "!width":
 					if !strings.HasSuffix(v, "%") {
-						wd := ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
-						imgNode.Attributes["wd"] = wd
+						wd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
 					}
 				case "height":
-					imgNode.Attributes["ht"] = bag.MustSP(v)
+					ht = bag.MustSP(v)
 				case "src":
 					filename = v
 				}
@@ -651,8 +649,10 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 			if err != nil {
 				return err
 			}
-			ii := df.Doc.CreateImage(imgfile, 1, "/MediaBox")
-			imgNode.Img = ii
+			imgNode := df.Doc.CreateImageNodeFromImagefile(imgfile, 1, "/MediaBox")
+			imgNode.Attributes = node.H{}
+			imgNode.Attributes["wd"] = wd
+			imgNode.Attributes["ht"] = ht
 			imgNode.Attributes["attr"] = item.Attributes
 			te.Items = append(te.Items, imgNode)
 		}
