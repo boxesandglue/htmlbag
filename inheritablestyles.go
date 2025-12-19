@@ -261,9 +261,10 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "user-select":
 			// ignore
 		case "vertical-align":
-			if v == "sub" {
+			switch v {
+			case "sub":
 				ih.yoffset = -1 * ih.Fontsize * 1000 / 5000
-			} else if v == "super" {
+			case "super":
 				ih.yoffset = ih.Fontsize * 1000 / 5000
 			}
 		case "width":
@@ -329,6 +330,7 @@ type FormattingStyles struct {
 	marginTop               bag.ScaledPoint
 	paddingInlineStart      bag.ScaledPoint
 	OlCounter               int
+	ListPaddingLeft         bag.ScaledPoint
 	PaddingBottom           bag.ScaledPoint
 	PaddingLeft             bag.ScaledPoint
 	PaddingRight            bag.ScaledPoint
@@ -346,9 +348,7 @@ type FormattingStyles struct {
 func (is *FormattingStyles) Clone() *FormattingStyles {
 	// inherit
 	newFontFeatures := make([]string, len(is.fontfeatures))
-	for i, f := range is.fontfeatures {
-		newFontFeatures[i] = f
-	}
+	copy(newFontFeatures, is.fontfeatures)
 	newis := &FormattingStyles{
 		color:              is.color,
 		DefaultFontSize:    is.DefaultFontSize,
@@ -363,6 +363,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		language:           is.language,
 		lineheight:         is.lineheight,
 		ListStyleType:      is.ListStyleType,
+		ListPaddingLeft:    is.ListPaddingLeft,
 		OlCounter:          is.OlCounter,
 		preserveWhitespace: is.preserveWhitespace,
 		tabsize:            is.tabsize,
@@ -509,6 +510,7 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 	// 	return newte, nil
 	case "ol", "ul":
 		styles.OlCounter = 0
+		styles.ListPaddingLeft = styles.PaddingLeft
 	case "li":
 		var item string
 		if strings.HasPrefix(styles.ListStyleType, `"`) && strings.HasSuffix(styles.ListStyleType, `"`) {
@@ -530,13 +532,24 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 				// logger.Error(fmt.Sprintf("unhandled list-style-type: %q", styles.ListStyleType))
 				item = "•"
 			}
-			item += " "
 		}
 		n, err := df.BuildNodelistFromString(newte.Settings, item)
 		if err != nil {
 			return nil, err
 		}
-		newte.Settings[frontend.SettingPrepend] = n
+		glue1 := node.NewGlue()
+		glue1.Width = -styles.ListPaddingLeft
+		glue1.Stretch = 1 * bag.Factor
+		glue1.StretchOrder = node.StretchFil
+
+		gap := node.NewKern()
+		gap.Kern = styles.Fontsize / 3 // ~0.33em
+
+		node.InsertBefore(n, n, glue1)
+		node.InsertAfter(glue1, node.Tail(n), gap)
+		hbox := node.HpackTo(glue1, 0)
+
+		newte.Settings[frontend.SettingPrepend] = hbox
 	}
 
 	var te *frontend.Text
@@ -655,6 +668,12 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 			imgNode.Attributes["ht"] = ht
 			imgNode.Attributes["attr"] = item.Attributes
 			te.Items = append(te.Items, imgNode)
+		case "br":
+			br := node.NewPenalty()
+			br.Penalty = -10000
+			br.Attributes = node.H{"htmlbr": true}
+			te.Items = append(te.Items, br)
+			return nil
 		}
 
 		for _, itm := range item.Children {
