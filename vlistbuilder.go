@@ -20,18 +20,6 @@ func (cb *CSSBuilder) CreateVlist(te *frontend.Text, wd bag.ScaledPoint) (*node.
 func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) (*node.VList, error) {
 	settings := te.Settings
 
-	// Get prepend nodes (e.g., bullet point for list items)
-	var prependNodes node.Node
-	var prependWidth bag.ScaledPoint
-	if prepend, ok := te.Settings[frontend.SettingPrepend]; ok {
-		if p, ok := prepend.(node.Node); ok {
-			prependNodes = p
-			// Calculate prepend width
-			hl := node.Hpack(node.CopyList(p))
-			prependWidth = hl.Width
-		}
-	}
-
 	// Get padding-left from this element to pass to children (for ul/ol lists)
 	var paddingLeft bag.ScaledPoint
 	if pl, ok := settings[frontend.SettingPaddingLeft]; ok {
@@ -75,12 +63,6 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					k.Attributes = node.H{"origin": "margin"}
 					vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
 					vls.Height += marginGlue
-				}
-
-				if prependNodes != nil && i == 0 {
-					// Pass prepend to the child element so it gets formatted
-					// as part of the first line (correct baseline alignment)
-					t.Settings[frontend.SettingPrepend] = prependNodes
 				}
 
 				// Apply padding-left: reduce width for children and shift content
@@ -138,32 +120,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		return vls, nil
 	}
 
-	// For non-box elements (actual text content), handle prepend here
-	// by inserting it into the first line of the formatted paragraph
-	contentWidth := wd
-	if prependNodes != nil {
-		contentWidth = wd - prependWidth
-	}
-
-	vl, _, err := cb.frontend.FormatParagraph(te, contentWidth)
+	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points)
+	vl, _, err := cb.frontend.FormatParagraph(te, wd)
 	if err != nil {
 		return nil, err
-	}
-
-	if prependNodes != nil && vl != nil && vl.List != nil {
-		// Insert prepend at the beginning of the first line
-		// Find the first HList in the VList
-		cur := vl.List
-		for cur != nil {
-			if hl, ok := cur.(*node.HList); ok {
-				// Insert prepend nodes at the beginning of this HList
-				hl.List = node.InsertBefore(hl.List, hl.List, prependNodes)
-				// Recalculate HList dimensions
-				hl.Width += prependWidth
-				break
-			}
-			cur = cur.Next()
-		}
 	}
 
 	return vl, nil
