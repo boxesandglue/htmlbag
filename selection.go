@@ -101,7 +101,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			ws := preserveWhitespace[len(preserveWhitespace)-1]
 			eltname := thisNode.Data
 			switch eltname {
-			case "body", "address", "article", "aside", "blockquote", "canvas", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
+			case "body", "address", "article", "aside", "blockquote", "canvas", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
 				newDir = ModeVertical
 			case "b", "big", "i", "small", "tt", "abbr", "acronym", "cite", "code", "dfn", "em", "kbd", "strong", "samp", "var", "a", "bdo", "img", "map", "object", "q", "script", "span", "sub", "sup", "button", "input", "label", "select", "textarea":
 				newDir = ModeHorizontal
@@ -119,9 +119,9 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			attributes := thisNode.Attr
 			if len(attributes) > 0 {
 				itm.Styles, attributes = csshtml.ResolveAttributes(attributes)
-				// for _, attr := range attributes {
-				// 	itm.Attributes[attr.Key] = attr.Val
-				// }
+				for _, attr := range attributes {
+					itm.Attributes[attr.Key] = attr.Val
+				}
 
 				for key, value := range itm.Styles {
 					if key == "white-space" {

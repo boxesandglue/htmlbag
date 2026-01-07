@@ -10,6 +10,8 @@ github.com/boxesandglue/baseline-pdf v1.0.11 h1:4R7S/F9EAPvSR0JUKUOlijZR/vwqDOpb
 github.com/boxesandglue/baseline-pdf v1.0.11/go.mod h1:0jWmoFBL0boguGwc9BwcRSV2eo4S+1ZaqHlCPKlZH/U=
 github.com/boxesandglue/boxesandglue v0.1.13 h1:Ln4c7COoohx675ZT/l4/kgPL6ZALlHhKZPs5wVS04Lw=
 github.com/boxesandglue/boxesandglue v0.1.13/go.mod h1:zDWmAQ6kDF8Wu/5Md8SJDVqycG+8KiwnB1u9uEC4mwM=
+github.com/boxesandglue/boxesandglue v0.1.14 h1:FJeHtFeafSQUI7i4q4cvCEYBN1xWzk4Eye4jF9c+G54=
+github.com/boxesandglue/boxesandglue v0.1.14/go.mod h1:zDWmAQ6kDF8Wu/5Md8SJDVqycG+8KiwnB1u9uEC4mwM=
 github.com/boxesandglue/csshtml v0.0.1 h1:5tjS4VQV0ZI3F6A+t+HwyINtGOHmtgyxMEXDDlOb3ks=
 github.com/boxesandglue/csshtml v0.0.1/go.mod h1:SsN7tdLsZ9NroHYo/7eVNt/oghZFPMaNGBM9wN5DyLo=
 github.com/boxesandglue/gofpdi v1.0.21 h1:3smZ4iP1LiegX/mvDDMoJMNbfrnR0DPyRpzygBQ5Ooo=

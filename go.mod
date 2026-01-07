@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
-	github.com/boxesandglue/boxesandglue v0.1.13
+	github.com/boxesandglue/boxesandglue v0.1.14
 	github.com/boxesandglue/csshtml v0.0.1
 	golang.org/x/net v0.48.0
 )

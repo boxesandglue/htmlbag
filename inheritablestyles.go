@@ -350,6 +350,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 	newFontFeatures := make([]string, len(is.fontfeatures))
 	copy(newFontFeatures, is.fontfeatures)
 	newis := &FormattingStyles{
+		BackgroundColor:    is.BackgroundColor,
 		color:              is.color,
 		DefaultFontSize:    is.DefaultFontSize,
 		DefaultFontFamily:  is.DefaultFontFamily,
@@ -500,6 +501,24 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 			ff := df.FindFontFamily(ffs)
 			ss.SetDefaultFontFamily(ff)
 		}
+	case "td", "th":
+		if cs, ok := item.Attributes["colspan"]; ok {
+			if colspan, err := strconv.Atoi(cs); err == nil {
+				newte.Settings[frontend.SettingColspan] = colspan
+			}
+		}
+		if rs, ok := item.Attributes["rowspan"]; ok {
+			if rowspan, err := strconv.Atoi(rs); err == nil {
+				newte.Settings[frontend.SettingRowspan] = rowspan
+			}
+		}
+	case "col":
+		// First check data-width (from XTS), then CSS width
+		if wd, ok := item.Attributes["data-width"]; ok {
+			newte.Settings[frontend.SettingColumnWidth] = wd
+		} else if wd, ok := item.Styles["width"]; ok {
+			newte.Settings[frontend.SettingColumnWidth] = wd
+		}
 	// case "table":
 	// 	tbl, err := processTable(item, ss, df)
 	// 	ss.PopStyles()
@@ -596,7 +615,8 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 			if err != nil {
 				return nil, err
 			}
-			if len(te.Items) > 0 {
+			// Always include td/th/col elements even if empty (for table structure)
+			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" {
 				newte.Items = append(newte.Items, te)
 			}
 		}

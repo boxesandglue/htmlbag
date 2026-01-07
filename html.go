@@ -329,17 +329,17 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 	//          1--------------------------------2
 	//     x0    x1                         x2    x3
 
-	// does not look correct, but for now it is fine.
-	maxTrapezoidThickness := bag.Min(width, height+vl.Depth) / 2
+	// Outer rectangle coordinates
 	x0 := 0 - width - hv.PaddingLeft - hv.PaddingRight - hv.BorderLeftWidth - hv.BorderRightWidth
-	x1 := x0 + hv.BorderLeftWidth + maxTrapezoidThickness
-	x2 := 0 - hv.BorderRightWidth - maxTrapezoidThickness
 	x3 := bag.ScaledPoint(0)
-
 	y0 := height + hv.PaddingTop + hv.BorderTopWidth
-	y1 := y0 - maxTrapezoidThickness - hv.BorderTopWidth
 	y3 := bag.ScaledPoint(0) - hv.PaddingBottom - hv.BorderBottomWidth - vl.Depth
-	y2 := y3 + maxTrapezoidThickness + hv.BorderBottomWidth
+
+	// Inner rectangle coordinates (where borders meet)
+	x1 := x0 + hv.BorderLeftWidth
+	x2 := x3 - hv.BorderRightWidth
+	y1 := y0 - hv.BorderTopWidth
+	y2 := y3 + hv.BorderBottomWidth
 	// for the background, we need x-coordinates looking from the left border
 	// and y-coordinates from top to bottom
 	xbg0 := 0 - hv.BorderLeftWidth - hv.PaddingLeft
@@ -348,9 +348,9 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 	xbg3 := xbg2 + hv.BorderRightWidth + hv.PaddingRight
 
 	ybg0 := bag.ScaledPoint(0) + hv.PaddingTop + hv.BorderTopWidth
-	ybg1 := ybg0 - maxTrapezoidThickness
+	ybg1 := ybg0 - hv.BorderTopWidth
 	ybg3 := ybg0 - height - hv.PaddingTop - hv.BorderTopWidth - hv.PaddingBottom - hv.BorderBottomWidth
-	ybg2 := ybg3 + maxTrapezoidThickness
+	ybg2 := ybg3 + hv.BorderBottomWidth
 
 	if hv.BackgroundColor != nil && hv.BackgroundColor.Space != color.ColorNone {
 		// this is the rule node for the background
@@ -403,11 +403,65 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 		// for debugging:
 		// inner.Stroke().Endpath()
 
-		// Draw the four trapezoids
-		inner.ColorNonstroking(*hv.BorderTopColor).Moveto(x0, y0).Lineto(x1, y1).Lineto(x2, y1).Lineto(x3, y0).Close().Fill()
-		inner.ColorNonstroking(*hv.BorderLeftColor).Moveto(x0, y3).Lineto(x1, y2).Lineto(x1, y1).Lineto(x0, y0).Close().Fill()
-		inner.ColorNonstroking(*hv.BorderBottomColor).Moveto(x0, y3).Lineto(x3, y3).Lineto(x2, y2).Lineto(x1, y2).Close().Fill()
-		inner.ColorNonstroking(*hv.BorderRightColor).Moveto(x2, y2).Lineto(x3, y3).Lineto(x3, y0).Lineto(x2, y1).Close().Fill()
+		// Draw only the trapezoids for borders that are defined
+		// Adjust corner coordinates based on whether adjacent borders exist
+		hasLeft := hv.BorderLeftWidth > 0 && hv.BorderLeftStyle != frontend.BorderStyleNone
+		hasRight := hv.BorderRightWidth > 0 && hv.BorderRightStyle != frontend.BorderStyleNone
+		hasTop := hv.BorderTopWidth > 0 && hv.BorderTopStyle != frontend.BorderStyleNone
+		hasBottom := hv.BorderBottomWidth > 0 && hv.BorderBottomStyle != frontend.BorderStyleNone
+
+		if hasTop {
+			// Left corner: use x0 if no left border, else x1 (angled)
+			tlx := x1
+			if !hasLeft {
+				tlx = x0
+			}
+			// Right corner: use x3 if no right border, else x2 (angled)
+			trx := x2
+			if !hasRight {
+				trx = x3
+			}
+			inner.ColorNonstroking(*hv.BorderTopColor).Moveto(x0, y0).Lineto(tlx, y1).Lineto(trx, y1).Lineto(x3, y0).Close().Fill()
+		}
+		if hasLeft {
+			// Top corner: use y0 if no top border, else y1 (angled)
+			lty := y1
+			if !hasTop {
+				lty = y0
+			}
+			// Bottom corner: use y3 if no bottom border, else y2 (angled)
+			lby := y2
+			if !hasBottom {
+				lby = y3
+			}
+			inner.ColorNonstroking(*hv.BorderLeftColor).Moveto(x0, y3).Lineto(x1, lby).Lineto(x1, lty).Lineto(x0, y0).Close().Fill()
+		}
+		if hasBottom {
+			// Left corner: use x0 if no left border, else x1 (angled)
+			blx := x1
+			if !hasLeft {
+				blx = x0
+			}
+			// Right corner: use x3 if no right border, else x2 (angled)
+			brx := x2
+			if !hasRight {
+				brx = x3
+			}
+			inner.ColorNonstroking(*hv.BorderBottomColor).Moveto(x0, y3).Lineto(x3, y3).Lineto(brx, y2).Lineto(blx, y2).Close().Fill()
+		}
+		if hasRight {
+			// Top corner: use y0 if no top border, else y1 (angled)
+			rty := y1
+			if !hasTop {
+				rty = y0
+			}
+			// Bottom corner: use y3 if no bottom border, else y2 (angled)
+			rby := y2
+			if !hasBottom {
+				rby = y3
+			}
+			inner.ColorNonstroking(*hv.BorderRightColor).Moveto(x2, rby).Lineto(x3, y3).Lineto(x3, y0).Lineto(x2, rty).Close().Fill()
+		}
 
 		r.Pre = "q " + outer.String() + " " + inner.String() + " Q"
 		head = node.InsertAfter(head, tail, r)
