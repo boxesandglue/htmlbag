@@ -206,6 +206,22 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			ih.Fontweight = frontend.ResolveFontWeight(v, ih.Fontweight)
 		case "font-feature-settings":
 			ih.fontfeatures = append(ih.fontfeatures, v)
+		case "font-variation-settings":
+			// Parse CSS syntax: "wght" 700, "wdth" 100
+			if ih.variationSettings == nil {
+				ih.variationSettings = make(map[string]float64)
+			}
+			for _, pair := range strings.Split(v, ",") {
+				pair = strings.TrimSpace(pair)
+				parts := strings.Fields(pair)
+				if len(parts) >= 2 {
+					// Remove quotes from axis tag
+					tag := strings.Trim(parts[0], `"'`)
+					if val, err := strconv.ParseFloat(parts[1], 64); err == nil {
+						ih.variationSettings[tag] = val
+					}
+				}
+			}
 		case "list-style-type":
 			ih.ListStyleType = v
 		case "font-family":
@@ -313,6 +329,7 @@ type FormattingStyles struct {
 	Hide                    bool
 	fontfamily              *frontend.FontFamily
 	fontfeatures            []string
+	variationSettings       map[string]float64 // axis tag -> value (e.g., "wght" -> 700)
 	Fontsize                bag.ScaledPoint
 	fontstyle               frontend.FontStyle
 	Fontweight              frontend.FontWeight
@@ -349,6 +366,13 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 	// inherit
 	newFontFeatures := make([]string, len(is.fontfeatures))
 	copy(newFontFeatures, is.fontfeatures)
+	var newVariationSettings map[string]float64
+	if is.variationSettings != nil {
+		newVariationSettings = make(map[string]float64, len(is.variationSettings))
+		for k, v := range is.variationSettings {
+			newVariationSettings[k] = v
+		}
+	}
 	newis := &FormattingStyles{
 		BackgroundColor:    is.BackgroundColor,
 		color:              is.color,
@@ -357,6 +381,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		fontexpansion:      is.fontexpansion,
 		fontfamily:         is.fontfamily,
 		fontfeatures:       newFontFeatures,
+		variationSettings:  newVariationSettings,
 		Fontsize:           is.Fontsize,
 		fontstyle:          is.fontstyle,
 		Fontweight:         is.Fontweight,
@@ -415,6 +440,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	settings[frontend.SettingMarginLeft] = ih.marginLeft
 	settings[frontend.SettingMarginTop] = ih.marginTop
 	settings[frontend.SettingOpenTypeFeature] = ih.fontfeatures
+	if ih.variationSettings != nil {
+		settings[frontend.SettingFontVariationSettings] = ih.variationSettings
+	}
 	settings[frontend.SettingPaddingRight] = ih.PaddingRight
 	settings[frontend.SettingPaddingLeft] = ih.PaddingLeft
 	settings[frontend.SettingPaddingTop] = ih.PaddingTop

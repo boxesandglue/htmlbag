@@ -1,3 +1,5 @@
+//go:generate go run ./internal/genfonts
+
 package htmlbag
 
 import (
@@ -95,7 +97,9 @@ func AddFontFamiliesFromCSS(cs *csshtml.CSS, fe *frontend.Document) error {
 				}
 			}
 			fs.FontFeatures = v.Features
+			fs.VariationSettings = v.VariationSettings
 		}
+		bag.Logger.Debug("AddFontFamiliesFromCSS", "family", v.Family, "variations", fs.VariationSettings)
 		var fontstyle frontend.FontStyle
 		switch v.Style {
 		case "", "normal":
