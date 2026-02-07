@@ -711,6 +711,19 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 				return err
 			}
 			imgNode := df.Doc.CreateImageNodeFromImagefile(imgfile, 1, "/MediaBox")
+			// Apply user-specified dimensions
+			if wd > 0 && ht > 0 {
+				imgNode.Width = wd
+				imgNode.Height = ht
+			} else if wd > 0 {
+				// Scale height proportionally
+				imgNode.Height = bag.ScaledPoint(float64(imgNode.Height) * float64(wd) / float64(imgNode.Width))
+				imgNode.Width = wd
+			} else if ht > 0 {
+				// Scale width proportionally
+				imgNode.Width = bag.ScaledPoint(float64(imgNode.Width) * float64(ht) / float64(imgNode.Height))
+				imgNode.Height = ht
+			}
 			imgNode.Attributes = node.H{}
 			imgNode.Attributes["wd"] = wd
 			imgNode.Attributes["ht"] = ht

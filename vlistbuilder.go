@@ -37,10 +37,6 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		for i, itm := range te.Items {
 			switch t := itm.(type) {
 			case *frontend.Text:
-				if dbg, ok := t.Settings[frontend.SettingDebug].(string); ok && dbg == "table" {
-					return cb.buildTable(t, wd)
-				}
-
 				// Get margin-top of current element
 				var curMarginTop bag.ScaledPoint
 				if mt, ok := t.Settings[frontend.SettingMarginTop]; ok {
@@ -66,26 +62,36 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					vls.Height += marginGlue
 				}
 
-				// Apply padding-left: reduce width for children and shift content
-				childWidth := wd
-				if paddingLeft > 0 {
-					childWidth = wd - paddingLeft
-				}
-				vl, err := cb.buildVlistInternal(t, childWidth)
-				if err != nil {
-					return nil, err
-				}
+				var vl *node.VList
+				if dbg, ok := t.Settings[frontend.SettingDebug].(string); ok && dbg == "table" {
+					var err error
+					vl, err = cb.buildTable(t, wd)
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					// Apply padding-left: reduce width for children and shift content
+					childWidth := wd
+					if paddingLeft > 0 {
+						childWidth = wd - paddingLeft
+					}
+					var err error
+					vl, err = cb.buildVlistInternal(t, childWidth)
+					if err != nil {
+						return nil, err
+					}
 
-				// Shift content right by padding-left
-				if paddingLeft > 0 {
-					// Add kern at the beginning of each HList
-					for cur := vl.List; cur != nil; cur = cur.Next() {
-						if hl, ok := cur.(*node.HList); ok {
-							k := node.NewKern()
-							k.Kern = paddingLeft
-							k.Attributes = node.H{"origin": "padding-left"}
-							hl.List = node.InsertBefore(hl.List, hl.List, k)
-							hl.Width += paddingLeft
+					// Shift content right by padding-left
+					if paddingLeft > 0 {
+						// Add kern at the beginning of each HList
+						for cur := vl.List; cur != nil; cur = cur.Next() {
+							if hl, ok := cur.(*node.HList); ok {
+								k := node.NewKern()
+								k.Kern = paddingLeft
+								k.Attributes = node.H{"origin": "padding-left"}
+								hl.List = node.InsertBefore(hl.List, hl.List, k)
+								hl.Width += paddingLeft
+							}
 						}
 					}
 				}
