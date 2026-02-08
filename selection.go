@@ -66,7 +66,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			break
 		}
 		switch thisNode.Type {
-		case html.CommentNode:
+		case html.CommentNode, html.DoctypeNode:
 			// ignore
 		case html.TextNode:
 			itm := &HTMLItem{}
@@ -140,7 +140,9 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			}
 		case html.DocumentNode:
 			// just passthrough
-			GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, firstItem)
+			if err := GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, firstItem); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("Output: unknown node type %T", thisNode.Type)
 		}

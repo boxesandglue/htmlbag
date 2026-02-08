@@ -2,6 +2,9 @@ package htmlbag
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -10,11 +13,14 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"github.com/boxesandglue/svgreader"
 	"golang.org/x/net/html"
 )
 
-var tenpt = bag.MustSP("10pt")
-var tenptflt = bag.MustSP("10pt").ToPT()
+var (
+	tenpt    = bag.MustSP("10pt")
+	tenptflt = bag.MustSP("10pt").ToPT()
+)
 
 // ParseVerticalAlign parses the input ("top","middle",...) and returns the
 // VerticalAlignment value.
@@ -194,7 +200,15 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "color":
 			ih.color = df.GetColor(v)
 		case "content":
-			// ignore
+			// Check for leader() function: leader('.') or leader(".")
+			if strings.HasPrefix(v, "leader(") && strings.HasSuffix(v, ")") {
+				inner := v[7 : len(v)-1]
+				inner = strings.TrimSpace(inner)
+				inner = strings.Trim(inner, "'\"")
+				if inner != "" {
+					ih.leaderContent = inner
+				}
+			}
 		case "font-style":
 			switch v {
 			case "italic":
@@ -246,6 +260,10 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			ih.marginRight = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 		case "margin-top":
 			ih.marginTop = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+		case "page-break-after", "break-after":
+			ih.pageBreakAfter = v
+		case "page-break-before", "break-before":
+			ih.pageBreakBefore = v
 		case "padding-inline-start":
 			ih.paddingInlineStart = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 		case "padding-bottom":
@@ -264,6 +282,8 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			}
 		case "text-align":
 			ih.Halign = ParseHorizontalAlign(v, ih)
+		case "border-collapse":
+			// handled by table builder
 		case "text-decoration-style":
 			// not yet implemented
 		case "text-decoration-line":
@@ -298,7 +318,7 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 				ih.fontexpansion = &fe
 			}
 		default:
-			fmt.Println("unresolved attribute", k, v)
+			slog.Debug("unresolved attribute", k, v)
 		}
 	}
 	return nil
@@ -353,11 +373,14 @@ type FormattingStyles struct {
 	PaddingRight            bag.ScaledPoint
 	PaddingTop              bag.ScaledPoint
 	TextDecorationLine      frontend.TextDecorationLine
+	leaderContent           string
 	preserveWhitespace      bool
 	tabsize                 bag.ScaledPoint
 	tabsizeSpaces           int
 	Valign                  frontend.VerticalAlignment
 	width                   string
+	pageBreakAfter          string
+	pageBreakBefore         string
 	yoffset                 bag.ScaledPoint
 }
 
@@ -455,10 +478,18 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	settings[frontend.SettingTabSizeSpaces] = ih.tabsizeSpaces
 	settings[frontend.SettingTextDecorationLine] = ih.TextDecorationLine
 
+	if ih.pageBreakAfter != "" {
+		settings[frontend.SettingPageBreakAfter] = ih.pageBreakAfter
+	}
+	if ih.pageBreakBefore != "" {
+		settings[frontend.SettingPageBreakBefore] = ih.pageBreakBefore
+	}
 	if ih.width != "" {
 		settings[frontend.SettingWidth] = ih.width
 	}
-
+	if ih.leaderContent != "" {
+		settings[frontend.SettingLeader] = ih.leaderContent
+	}
 }
 
 // StylesStack mimics CSS style inheritance.
@@ -706,34 +737,75 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 					filename = v
 				}
 			}
-			imgfile, err := df.Doc.LoadImageFile(filename)
-			if err != nil {
-				return err
+
+			if strings.ToLower(filepath.Ext(filename)) == ".svg" {
+				// SVG image
+				f, err := os.Open(filename)
+				if err != nil {
+					return fmt.Errorf("opening SVG %s: %w", filename, err)
+				}
+				svgDoc, err := svgreader.Parse(f)
+				f.Close()
+				if err != nil {
+					return fmt.Errorf("parsing SVG %s: %w", filename, err)
+				}
+				textRenderer := frontend.NewSVGTextRenderer(df)
+				svgNode := df.Doc.CreateSVGNodeFromDocument(svgDoc, wd, ht, textRenderer)
+				// Wrap in VList so the SVG is correctly positioned in
+				// horizontal mode. The SVG renderer draws from (0,0)
+				// downward; a VList in an HList starts output from the
+				// top, which matches the SVG coordinate system.
+				svgVL := node.Vpack(svgNode)
+				svgVL.Attributes = node.H{
+					"origin": "svg",
+					"attr":   item.Attributes,
+				}
+				te.Items = append(te.Items, svgVL)
+			} else {
+				// Raster image (PNG, JPEG, PDF)
+				imgfile, err := df.Doc.LoadImageFile(filename)
+				if err != nil {
+					return err
+				}
+				imgNode := df.Doc.CreateImageNodeFromImagefile(imgfile, 1, "/MediaBox")
+				// Apply user-specified dimensions
+				if wd > 0 && ht > 0 {
+					imgNode.Width = wd
+					imgNode.Height = ht
+				} else if wd > 0 {
+					// Scale height proportionally
+					imgNode.Height = bag.ScaledPoint(float64(imgNode.Height) * float64(wd) / float64(imgNode.Width))
+					imgNode.Width = wd
+				} else if ht > 0 {
+					// Scale width proportionally
+					imgNode.Width = bag.ScaledPoint(float64(imgNode.Width) * float64(ht) / float64(imgNode.Height))
+					imgNode.Height = ht
+				}
+				imgNode.Attributes = node.H{}
+				imgNode.Attributes["wd"] = wd
+				imgNode.Attributes["ht"] = ht
+				imgNode.Attributes["attr"] = item.Attributes
+				te.Items = append(te.Items, imgNode)
 			}
-			imgNode := df.Doc.CreateImageNodeFromImagefile(imgfile, 1, "/MediaBox")
-			// Apply user-specified dimensions
-			if wd > 0 && ht > 0 {
-				imgNode.Width = wd
-				imgNode.Height = ht
-			} else if wd > 0 {
-				// Scale height proportionally
-				imgNode.Height = bag.ScaledPoint(float64(imgNode.Height) * float64(wd) / float64(imgNode.Width))
-				imgNode.Width = wd
-			} else if ht > 0 {
-				// Scale width proportionally
-				imgNode.Width = bag.ScaledPoint(float64(imgNode.Width) * float64(ht) / float64(imgNode.Height))
-				imgNode.Height = ht
-			}
-			imgNode.Attributes = node.H{}
-			imgNode.Attributes["wd"] = wd
-			imgNode.Attributes["ht"] = ht
-			imgNode.Attributes["attr"] = item.Attributes
-			te.Items = append(te.Items, imgNode)
 		case "br":
 			br := node.NewPenalty()
 			br.Penalty = -10000
 			br.Attributes = node.H{"htmlbr": true}
 			te.Items = append(te.Items, br)
+			return nil
+		}
+
+		// Handle content-generated leaders on empty elements.
+		if contentVal, ok := item.Styles["content"]; ok && strings.HasPrefix(contentVal, "leader(") {
+			leaderText := frontend.NewText()
+			sty := ss.PushStyles()
+			if err := StylesToStyles(sty, item.Styles, df, currentFontsize); err != nil {
+				ss.PopStyles()
+				return err
+			}
+			ApplySettings(leaderText.Settings, sty)
+			te.Items = append(te.Items, leaderText)
+			ss.PopStyles()
 			return nil
 		}
 

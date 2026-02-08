@@ -1,27 +1,30 @@
 package htmlbag
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"github.com/boxesandglue/csshtml"
 )
 
-// turn content: `"page " counter(page) " of " counter(pages)` into a meaningful
-// string.
-func (cb *CSSBuilder) parseContent(in string) string {
-	var result []rune
-	inString := false
-	for _, r := range in {
-		switch r {
-		case '"':
-			inString = !inString
-		default:
-			if inString {
-				result = append(result, r)
+// evaluateContent turns parsed CSS content tokens into a displayable string.
+// counters maps counter names (e.g. "page", "pages") to their current values.
+func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) string {
+	var sb strings.Builder
+	for _, tok := range tokens {
+		switch tok.Type {
+		case csshtml.ContentString:
+			sb.WriteString(tok.Value)
+		case csshtml.ContentCounter:
+			if v, ok := counters[tok.Value]; ok {
+				sb.WriteString(strconv.Itoa(v))
 			}
 		}
 	}
-	return string(result)
+	return sb.String()
 }
 
 // BeforeShipout should be called when placing a CSS page in the PDF. It adds
@@ -37,7 +40,7 @@ func (cb *CSSBuilder) BeforeShipout() error {
 			pmb := &pageMarginBox{
 				widthAuto: true,
 			}
-			pmb.hasContents = hasContents(attr)
+			pmb.hasContents = hasContents(attr, mp.PageAreaContent[areaName])
 			if wd, ok := attr["width"]; ok {
 				if wd != "auto" {
 					pmb.areaWidth = ParseRelativeSize(wd, dimensions.Width, dimensions.Width)
@@ -84,9 +87,9 @@ func (cb *CSSBuilder) BeforeShipout() error {
 				}
 			case "bottom-left", "bottom-center", "bottom-right":
 				pmb.x = dimensions.MarginLeft
-				pmb.y = dimensions.MarginTop
+				pmb.y = dimensions.MarginBottom
 				pmb.wd = dimensions.Width - dimensions.MarginLeft - dimensions.MarginRight
-				pmb.ht = dimensions.MarginTop
+				pmb.ht = dimensions.MarginBottom
 				switch areaName {
 				case "bottom-left":
 					pmb.halign = frontend.HAlignLeft
@@ -100,7 +103,8 @@ func (cb *CSSBuilder) BeforeShipout() error {
 		// todo: calculate the area size
 		for _, areaName := range []string{"top-left-corner", "top-left", "top-center", "top-right", "top-right-corner", "right-top", "right-middle", "right-bottom", "bottom-right-corner", "bottom-right", "bottom-center", "bottom-left", "bottom-left-corner", "left-bottom", "left-middle", "left-top"} {
 			if area, ok := mp.PageArea[areaName]; ok {
-				if !hasContents(area) {
+				contentTokens := mp.PageAreaContent[areaName]
+				if !hasContents(area, contentTokens) {
 					continue
 				}
 				styles := cb.stylesStack.PushStyles()
@@ -110,57 +114,78 @@ func (cb *CSSBuilder) BeforeShipout() error {
 				}
 				pmb := pageMarginBoxes[areaName]
 
+				// Apply margin to shrink and offset the margin box area.
+				pmb.x += styles.marginLeft
+				pmb.wd -= styles.marginLeft + styles.marginRight
+				pmb.ht -= styles.marginTop + styles.marginBottom
+				// Adjust vertical position: for top areas margin-top pushes
+				// content down, for bottom areas it also pushes content down
+				// (away from the content area boundary).
+				if strings.HasPrefix(areaName, "top") {
+					pmb.y -= styles.marginTop
+				} else if strings.HasPrefix(areaName, "bottom") {
+					pmb.y -= styles.marginTop
+				}
+
 				vl := node.NewVList()
 				var err error
-				if c, ok := area["content"]; ok {
-					c = cb.parseContent(c)
-					if c != "" {
-						txt := frontend.NewText()
-						ApplySettings(txt.Settings, styles)
+				cb.Counters["page"] = len(cb.frontend.Doc.Pages)
+				c := evaluateContent(contentTokens, cb.Counters)
+				if c != "" {
+					txt := frontend.NewText()
+					ApplySettings(txt.Settings, styles)
+					if styles.Fontsize > 0 {
+						txt.Settings[frontend.SettingSize] = styles.Fontsize
+					} else if styles.DefaultFontSize > 0 {
 						txt.Settings[frontend.SettingSize] = styles.DefaultFontSize
-						txt.Settings[frontend.SettingHeight] = pmb.ht - styles.BorderTopWidth - styles.BorderBottomWidth
-						txt.Settings[frontend.SettingVAlign] = styles.Valign
-
-						txt.Items = append(txt.Items, c)
-						defaultFontFamily := styles.DefaultFontFamily
-						vl, _, err = df.FormatParagraph(txt, pmb.wd-styles.BorderLeftWidth-styles.BorderRightWidth, frontend.Family(defaultFontFamily), frontend.HorizontalAlign(pmb.halign))
-						if err != nil {
-							return err
-						}
-
-					} else {
-						vl = node.NewVList()
-						vl.Width = pmb.wd - styles.BorderLeftWidth - styles.BorderRightWidth
-						vl.Height = pmb.ht - styles.BorderTopWidth - styles.BorderBottomWidth
 					}
-					hv := HTMLValues{
-						BorderLeftWidth:         styles.BorderLeftWidth,
-						BorderRightWidth:        styles.BorderRightWidth,
-						BorderTopWidth:          styles.BorderTopWidth,
-						BorderBottomWidth:       styles.BorderBottomWidth,
-						BorderTopStyle:          styles.BorderTopStyle,
-						BorderLeftStyle:         styles.BorderLeftStyle,
-						BorderRightStyle:        styles.BorderRightStyle,
-						BorderBottomStyle:       styles.BorderBottomStyle,
-						BorderTopColor:          styles.BorderTopColor,
-						BorderLeftColor:         styles.BorderLeftColor,
-						BorderRightColor:        styles.BorderRightColor,
-						BorderBottomColor:       styles.BorderBottomColor,
-						PaddingLeft:             styles.PaddingLeft,
-						PaddingRight:            styles.PaddingRight,
-						PaddingBottom:           styles.PaddingBottom,
-						PaddingTop:              styles.PaddingTop,
-						BorderTopLeftRadius:     styles.BorderTopLeftRadius,
-						BorderTopRightRadius:    styles.BorderTopRightRadius,
-						BorderBottomLeftRadius:  styles.BorderBottomLeftRadius,
-						BorderBottomRightRadius: styles.BorderBottomRightRadius,
-						BackgroundColor:         styles.BackgroundColor,
-					}
-					vl = cb.HTMLBorder(vl, hv)
-					df.Doc.CurrentPage.OutputAt(pmb.x, pmb.y, vl)
-					cb.stylesStack.PopStyles()
+					txt.Settings[frontend.SettingHeight] = pmb.ht - styles.BorderTopWidth - styles.BorderBottomWidth
+					txt.Settings[frontend.SettingVAlign] = styles.Valign
 
+					txt.Items = append(txt.Items, c)
+					defaultFontFamily := styles.DefaultFontFamily
+					if defaultFontFamily == nil {
+						defaultFontFamily = styles.fontfamily
+					}
+					if defaultFontFamily == nil {
+						defaultFontFamily = df.FindFontFamily("serif")
+					}
+					vl, _, err = df.FormatParagraph(txt, pmb.wd-styles.BorderLeftWidth-styles.BorderRightWidth, frontend.Family(defaultFontFamily), frontend.HorizontalAlign(pmb.halign))
+					if err != nil {
+						return err
+					}
+
+				} else {
+					vl = node.NewVList()
+					vl.Width = pmb.wd - styles.BorderLeftWidth - styles.BorderRightWidth
+					vl.Height = pmb.ht - styles.BorderTopWidth - styles.BorderBottomWidth
 				}
+				hv := HTMLValues{
+					BorderLeftWidth:         styles.BorderLeftWidth,
+					BorderRightWidth:        styles.BorderRightWidth,
+					BorderTopWidth:          styles.BorderTopWidth,
+					BorderBottomWidth:       styles.BorderBottomWidth,
+					BorderTopStyle:          styles.BorderTopStyle,
+					BorderLeftStyle:         styles.BorderLeftStyle,
+					BorderRightStyle:        styles.BorderRightStyle,
+					BorderBottomStyle:       styles.BorderBottomStyle,
+					BorderTopColor:          styles.BorderTopColor,
+					BorderLeftColor:         styles.BorderLeftColor,
+					BorderRightColor:        styles.BorderRightColor,
+					BorderBottomColor:       styles.BorderBottomColor,
+					PaddingLeft:             styles.PaddingLeft,
+					PaddingRight:            styles.PaddingRight,
+					PaddingBottom:           styles.PaddingBottom,
+					PaddingTop:              styles.PaddingTop,
+					BorderTopLeftRadius:     styles.BorderTopLeftRadius,
+					BorderTopRightRadius:    styles.BorderTopRightRadius,
+					BorderBottomLeftRadius:  styles.BorderBottomLeftRadius,
+					BorderBottomRightRadius: styles.BorderBottomRightRadius,
+					BackgroundColor:         styles.BackgroundColor,
+				}
+				vl = cb.HTMLBorder(vl, hv)
+				df.Doc.CurrentPage.OutputAt(pmb.x, pmb.y, vl)
+				cb.stylesStack.PopStyles()
 			}
 		}
 	}
