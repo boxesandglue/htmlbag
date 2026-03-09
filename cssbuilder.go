@@ -131,6 +131,9 @@ func (cb *CSSBuilder) InitPage() error {
 	if cb.frontend.Doc.CurrentPage != nil {
 		return nil
 	}
+	if err := AddFontFamiliesFromCSS(cb.css, cb.frontend); err != nil {
+		return err
+	}
 	var err error
 	if defaultPage := cb.getPageType(); defaultPage != nil {
 		wdStr, htStr := csshtml.PapersizeWidthHeight(defaultPage.Papersize)

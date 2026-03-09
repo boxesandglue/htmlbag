@@ -356,11 +356,12 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 		// this is the rule node for the background
 		rbg := node.NewRule()
 		rbg.Hide = true
-		var innerBG *pdfdraw.Object
-		innerBG, _ = getBorderPaths(xbg0, ybg0, xbg1, ybg1, xbg2, ybg2, xbg3, ybg3, hv)
-		innerBG.Clip().Endpath()
-		innerBG.ColorNonstroking(*hv.BackgroundColor).Rect(xbg0, ybg3, xbg3-xbg0, ybg0-ybg3).Fill()
-		rbg.Pre = "q " + innerBG.String() + " Q"
+		// Clip to the outer (border-box) path so background extends through
+		// padding and under the border, matching CSS background-clip: border-box.
+		_, outerBG := getBorderPaths(xbg0, ybg0, xbg1, ybg1, xbg2, ybg2, xbg3, ybg3, hv)
+		outerBG.Clip().Endpath()
+		outerBG.ColorNonstroking(*hv.BackgroundColor).Rect(xbg0, ybg3, xbg3-xbg0, ybg0-ybg3).Fill()
+		rbg.Pre = "q " + outerBG.String() + " Q"
 		rbg.Attributes = node.H{"origin": "html background color"}
 		vl.List = node.InsertBefore(vl.List, vl.List, rbg)
 	}
@@ -403,71 +404,95 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 		// for debugging:
 		// inner.Stroke().Endpath()
 
-		// Draw only the trapezoids for borders that are defined
-		// Adjust corner coordinates based on whether adjacent borders exist
+		// Draw border fills for each side. For rounded corners, the inner
+		// corner points are moved to the inner arc center so that the fill
+		// extends through the curved corner area. The clip (outer minus
+		// inner path) restricts the fill to the actual border region.
 		hasLeft := hv.BorderLeftWidth > 0 && hv.BorderLeftStyle != frontend.BorderStyleNone
 		hasRight := hv.BorderRightWidth > 0 && hv.BorderRightStyle != frontend.BorderStyleNone
 		hasTop := hv.BorderTopWidth > 0 && hv.BorderTopStyle != frontend.BorderStyleNone
 		hasBottom := hv.BorderBottomWidth > 0 && hv.BorderBottomStyle != frontend.BorderStyleNone
 
+		// Inner radii for each corner (matching getBorderPaths calculations).
+		innerTLR := bag.Max(0, hv.BorderTopLeftRadius-hv.BorderLeftWidth)
+		innerTRR := bag.Max(0, hv.BorderTopRightRadius-hv.BorderRightWidth)
+		innerBLR := bag.Max(0, hv.BorderBottomLeftRadius-hv.BorderLeftWidth)
+		innerBRR := bag.Max(0, hv.BorderBottomRightRadius-hv.BorderRightWidth)
+
 		if hasTop {
-			// Left corner: use x0 if no left border, else x1 (angled)
-			tlx := x1
+			tlx, tly := x1, y1
 			if !hasLeft {
 				tlx = x0
+			} else if innerTLR > 0 {
+				tlx = x1 + innerTLR
+				tly = y1 - innerTLR
 			}
-			// Right corner: use x3 if no right border, else x2 (angled)
-			trx := x2
+			trx, try_ := x2, y1
 			if !hasRight {
 				trx = x3
+			} else if innerTRR > 0 {
+				trx = x2 - innerTRR
+				try_ = y1 - innerTRR
 			}
 			if hv.BorderTopColor.Space != color.ColorNone {
-				inner.ColorNonstroking(*hv.BorderTopColor).Moveto(x0, y0).Lineto(tlx, y1).Lineto(trx, y1).Lineto(x3, y0).Close().Fill()
+				inner.ColorNonstroking(*hv.BorderTopColor).Moveto(x0, y0).Lineto(tlx, tly).Lineto(trx, try_).Lineto(x3, y0).Close().Fill()
 			}
 		}
 		if hasLeft {
-			// Top corner: use y0 if no top border, else y1 (angled)
-			lty := y1
+			ltx, lty := x1, y1
 			if !hasTop {
 				lty = y0
+			} else if innerTLR > 0 {
+				ltx = x1 + innerTLR
+				lty = y1 - innerTLR
 			}
-			// Bottom corner: use y3 if no bottom border, else y2 (angled)
-			lby := y2
+			lbx, lby := x1, y2
 			if !hasBottom {
 				lby = y3
+			} else if innerBLR > 0 {
+				lbx = x1 + innerBLR
+				lby = y2 + innerBLR
 			}
 			if hv.BorderLeftColor.Space != color.ColorNone {
-				inner.ColorNonstroking(*hv.BorderLeftColor).Moveto(x0, y3).Lineto(x1, lby).Lineto(x1, lty).Lineto(x0, y0).Close().Fill()
+				inner.ColorNonstroking(*hv.BorderLeftColor).Moveto(x0, y3).Lineto(lbx, lby).Lineto(ltx, lty).Lineto(x0, y0).Close().Fill()
 			}
 		}
 		if hasBottom {
-			// Left corner: use x0 if no left border, else x1 (angled)
-			blx := x1
+			blx, bly := x1, y2
 			if !hasLeft {
 				blx = x0
+			} else if innerBLR > 0 {
+				blx = x1 + innerBLR
+				bly = y2 + innerBLR
 			}
-			// Right corner: use x3 if no right border, else x2 (angled)
-			brx := x2
+			brx, bry := x2, y2
 			if !hasRight {
 				brx = x3
+			} else if innerBRR > 0 {
+				brx = x2 - innerBRR
+				bry = y2 + innerBRR
 			}
 			if hv.BorderBottomColor.Space != color.ColorNone {
-				inner.ColorNonstroking(*hv.BorderBottomColor).Moveto(x0, y3).Lineto(x3, y3).Lineto(brx, y2).Lineto(blx, y2).Close().Fill()
+				inner.ColorNonstroking(*hv.BorderBottomColor).Moveto(x0, y3).Lineto(x3, y3).Lineto(brx, bry).Lineto(blx, bly).Close().Fill()
 			}
 		}
 		if hasRight {
-			// Top corner: use y0 if no top border, else y1 (angled)
-			rty := y1
+			rtx, rty := x2, y1
 			if !hasTop {
 				rty = y0
+			} else if innerTRR > 0 {
+				rtx = x2 - innerTRR
+				rty = y1 - innerTRR
 			}
-			// Bottom corner: use y3 if no bottom border, else y2 (angled)
-			rby := y2
+			rbx, rby := x2, y2
 			if !hasBottom {
 				rby = y3
+			} else if innerBRR > 0 {
+				rbx = x2 - innerBRR
+				rby = y2 + innerBRR
 			}
 			if hv.BorderRightColor.Space != color.ColorNone {
-				inner.ColorNonstroking(*hv.BorderRightColor).Moveto(x2, rby).Lineto(x3, y3).Lineto(x3, y0).Lineto(x2, rty).Close().Fill()
+				inner.ColorNonstroking(*hv.BorderRightColor).Moveto(rbx, rby).Lineto(x3, y3).Lineto(x3, y0).Lineto(rtx, rty).Close().Fill()
 			}
 		}
 
