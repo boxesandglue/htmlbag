@@ -12,10 +12,18 @@ import (
 )
 
 var (
-	isSpace          = regexp.MustCompile(`^\s*$`)
-	reLeadcloseWhtsp = regexp.MustCompile(`^[\s\p{Zs}]+|[\s\p{Zs}]+$`)
-	reInsideWS       = regexp.MustCompile(`\n|[\s\p{Zs}]{2,}`) //to match 2 or more whitespace symbols inside a string or NL
+	// These patterns use [ \t\n\r\f] instead of \s to exclude NBSP (U+00A0).
+	// CSS treats NBSP as non-collapsible whitespace.
+	isSpace          = regexp.MustCompile(`^[ \t\n\r\f]*$`)
+	reLeadcloseWhtsp = regexp.MustCompile(`^[ \t\n\r\f]+|[ \t\n\r\f]+$`)
+	reInsideWS       = regexp.MustCompile(`\n|[ \t\n\r\f]{2,}`)
 )
+
+// isCollapsibleSpace returns true for whitespace characters that CSS considers
+// collapsible. NBSP (U+00A0) is explicitly excluded.
+func isCollapsibleSpace(r rune) bool {
+	return r != '\u00A0' && unicode.IsSpace(r)
+}
 
 // Mode is the progression direction of the current HTML element.
 type Mode int
@@ -76,7 +84,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			// horizontal material), trim the left space. TODO: honor preserve
 			// whitespace setting
 			if direction == ModeVertical {
-				txt = strings.TrimLeftFunc(txt, unicode.IsSpace)
+				txt = strings.TrimLeftFunc(txt, isCollapsibleSpace)
 			}
 			if !preserveWhitespace {
 				if isSpace.MatchString(txt) {

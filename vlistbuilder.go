@@ -40,6 +40,13 @@ func isWhitespaceOnly(te *frontend.Text) bool {
 func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) (*node.VList, error) {
 	settings := te.Settings
 
+	// If a CSS width is specified, use it instead of the inherited width.
+	if sWd, ok := settings[frontend.SettingWidth]; ok {
+		if wdStr, ok := sWd.(string); ok {
+			wd = ParseRelativeSize(wdStr, wd, wd)
+		}
+	}
+
 	// Get padding-left from this element to pass to children (for ul/ol lists)
 	var paddingLeft bag.ScaledPoint
 	if pl, ok := settings[frontend.SettingPaddingLeft]; ok {

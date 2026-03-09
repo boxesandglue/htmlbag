@@ -57,16 +57,21 @@ type CSSBuilder struct {
 	// Headings collects all h1–h6 headings encountered during VList
 	// construction. Page numbers are assigned during OutputPages.
 	Headings []HeadingEntry
+	// PendingVLists stores pre-rendered VLists keyed by a unique ID.
+	// Used to pass already-rendered content (e.g. group contents) through
+	// the HTML/CSS pipeline into table cells.
+	PendingVLists map[string]*node.VList
 }
 
 // New creates an instance of the CSSBuilder.
 func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
 	cb := CSSBuilder{
-		css:         c,
-		frontend:    fd,
-		stylesStack: make(StylesStack, 0),
-		pagebox:     []node.Node{},
-		Counters:    map[string]int{},
+		css:           c,
+		frontend:      fd,
+		stylesStack:   make(StylesStack, 0),
+		pagebox:       []node.Node{},
+		Counters:      map[string]int{},
+		PendingVLists: map[string]*node.VList{},
 	}
 	if err := LoadIncludedFonts(fd); err != nil {
 		return nil, err

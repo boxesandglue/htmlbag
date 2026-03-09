@@ -421,7 +421,9 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 			if !hasRight {
 				trx = x3
 			}
-			inner.ColorNonstroking(*hv.BorderTopColor).Moveto(x0, y0).Lineto(tlx, y1).Lineto(trx, y1).Lineto(x3, y0).Close().Fill()
+			if hv.BorderTopColor.Space != color.ColorNone {
+				inner.ColorNonstroking(*hv.BorderTopColor).Moveto(x0, y0).Lineto(tlx, y1).Lineto(trx, y1).Lineto(x3, y0).Close().Fill()
+			}
 		}
 		if hasLeft {
 			// Top corner: use y0 if no top border, else y1 (angled)
@@ -434,7 +436,9 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 			if !hasBottom {
 				lby = y3
 			}
-			inner.ColorNonstroking(*hv.BorderLeftColor).Moveto(x0, y3).Lineto(x1, lby).Lineto(x1, lty).Lineto(x0, y0).Close().Fill()
+			if hv.BorderLeftColor.Space != color.ColorNone {
+				inner.ColorNonstroking(*hv.BorderLeftColor).Moveto(x0, y3).Lineto(x1, lby).Lineto(x1, lty).Lineto(x0, y0).Close().Fill()
+			}
 		}
 		if hasBottom {
 			// Left corner: use x0 if no left border, else x1 (angled)
@@ -447,7 +451,9 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 			if !hasRight {
 				brx = x3
 			}
-			inner.ColorNonstroking(*hv.BorderBottomColor).Moveto(x0, y3).Lineto(x3, y3).Lineto(brx, y2).Lineto(blx, y2).Close().Fill()
+			if hv.BorderBottomColor.Space != color.ColorNone {
+				inner.ColorNonstroking(*hv.BorderBottomColor).Moveto(x0, y3).Lineto(x3, y3).Lineto(brx, y2).Lineto(blx, y2).Close().Fill()
+			}
 		}
 		if hasRight {
 			// Top corner: use y0 if no top border, else y1 (angled)
@@ -460,7 +466,9 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 			if !hasBottom {
 				rby = y3
 			}
-			inner.ColorNonstroking(*hv.BorderRightColor).Moveto(x2, rby).Lineto(x3, y3).Lineto(x3, y0).Lineto(x2, rty).Close().Fill()
+			if hv.BorderRightColor.Space != color.ColorNone {
+				inner.ColorNonstroking(*hv.BorderRightColor).Moveto(x2, rby).Lineto(x3, y3).Lineto(x3, y0).Lineto(x2, rty).Close().Fill()
+			}
 		}
 
 		r.Pre = "q " + outer.String() + " " + inner.String() + " Q"

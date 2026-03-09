@@ -216,6 +216,15 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow) {
 		td.BackgroundColor = v.(*color.Color)
 	}
 
+	// If this cell references a pre-rendered VList, use it directly as content.
+	if vlid, ok := settings[frontend.SettingPrerenderedVListID].(string); ok {
+		if vl, vlOK := cb.PendingVLists[vlid]; vlOK {
+			td.Contents = append(td.Contents, frontend.FormatToVList(func(wd bag.ScaledPoint) (*node.VList, error) {
+				return vl, nil
+			}))
+		}
+	}
+
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
 		case *frontend.Text:
@@ -224,7 +233,23 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow) {
 			if isBox, ok := t.Settings[frontend.SettingBox]; ok && isBox.(bool) {
 				textCopy := t
 				ftv := func(wd bag.ScaledPoint) (*node.VList, error) {
-					return cb.CreateVlist(textCopy, wd)
+					vl, err := cb.CreateVlist(textCopy, wd)
+					if err != nil {
+						return nil, err
+					}
+					// Margin-bottom may have been propagated from a child
+					// through a borderless parent (CSS margin collapsing).
+					// In a table cell, materialize it as a kern.
+					if mb, ok := textCopy.Settings[frontend.SettingMarginBottom]; ok {
+						if mbSP, ok := mb.(bag.ScaledPoint); ok && mbSP > 0 {
+							k := node.NewKern()
+							k.Kern = mbSP
+							k.Attributes = node.H{"origin": "margin-bottom"}
+							vl.List = node.InsertAfter(vl.List, node.Tail(vl.List), k)
+							vl.Height += mbSP
+						}
+					}
+					return vl, nil
 				}
 				td.Contents = append(td.Contents, frontend.FormatToVList(ftv))
 			} else {

@@ -250,8 +250,23 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			case "allow-end":
 				ih.hangingPunctuation = frontend.HangingPunctuationAllowEnd
 			}
+		case "letter-spacing":
+			if v != "normal" {
+				ih.letterSpacing = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			}
 		case "line-height":
-			ih.lineheight = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			if v == "normal" {
+				ih.lineheight = 0
+				ih.lineheightFactor = 1.2
+			} else if factor, err := strconv.ParseFloat(v, 64); err == nil {
+				// Unitless value like "1.5" — store as factor, inherit per element
+				ih.lineheight = 0
+				ih.lineheightFactor = factor
+			} else {
+				// Absolute value like "18pt", "1.5em", "150%"
+				ih.lineheight = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+				ih.lineheightFactor = 0
+			}
 		case "margin-bottom":
 			ih.marginBottom = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 		case "margin-left":
@@ -359,7 +374,9 @@ type FormattingStyles struct {
 	indent                  bag.ScaledPoint
 	indentRows              int
 	language                string
+	letterSpacing           bag.ScaledPoint
 	lineheight              bag.ScaledPoint
+	lineheightFactor        float64 // unitless line-height factor (e.g. 1.2); recalculated per element
 	ListStyleType           string
 	marginBottom            bag.ScaledPoint
 	marginLeft              bag.ScaledPoint
@@ -410,7 +427,9 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		Fontweight:         is.Fontweight,
 		hangingPunctuation: is.hangingPunctuation,
 		language:           is.language,
+		letterSpacing:      is.letterSpacing,
 		lineheight:         is.lineheight,
+		lineheightFactor:   is.lineheightFactor,
 		ListStyleType:      is.ListStyleType,
 		ListPaddingLeft:    is.ListPaddingLeft,
 		OlCounter:          is.OlCounter,
@@ -457,7 +476,12 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	settings[frontend.SettingHangingPunctuation] = ih.hangingPunctuation
 	settings[frontend.SettingIndentLeft] = ih.indent
 	settings[frontend.SettingIndentLeftRows] = ih.indentRows
-	settings[frontend.SettingLeading] = ih.lineheight
+	if ih.lineheightFactor != 0 {
+		settings[frontend.SettingLeading] = bag.ScaledPoint(float64(ih.Fontsize) * ih.lineheightFactor)
+	} else {
+		settings[frontend.SettingLeading] = ih.lineheight
+	}
+	settings[frontend.SettingLetterSpacing] = ih.letterSpacing
 	settings[frontend.SettingMarginBottom] = ih.marginBottom
 	settings[frontend.SettingMarginRight] = ih.marginRight
 	settings[frontend.SettingMarginLeft] = ih.marginLeft
@@ -535,6 +559,46 @@ func (ss *StylesStack) SetDefaultFontSize(size bag.ScaledPoint) {
 	}
 }
 
+// parseCSSContentValue parses a CSS content value string, handling quoted
+// strings and CSS unicode escapes like \2022 (→ "•").
+func parseCSSContentValue(val string) string {
+	val = strings.TrimSpace(val)
+	// Remove surrounding quotes
+	if (strings.HasPrefix(val, `"`) && strings.HasSuffix(val, `"`)) ||
+		(strings.HasPrefix(val, `'`) && strings.HasSuffix(val, `'`)) {
+		val = val[1 : len(val)-1]
+	}
+	// Resolve CSS unicode escapes: \HHHH
+	var b strings.Builder
+	for i := 0; i < len(val); i++ {
+		if val[i] == '\\' && i+1 < len(val) {
+			// Collect hex digits (up to 6)
+			j := i + 1
+			for j < len(val) && j < i+7 && isHexDigit(val[j]) {
+				j++
+			}
+			if j > i+1 {
+				cp, err := strconv.ParseInt(val[i+1:j], 16, 32)
+				if err == nil {
+					b.WriteRune(rune(cp))
+				}
+				// Skip optional trailing space after hex escape
+				if j < len(val) && val[j] == ' ' {
+					j++
+				}
+				i = j - 1
+				continue
+			}
+		}
+		b.WriteByte(val[i])
+	}
+	return b.String()
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
 // Output turns HTML structure into a nested frontend.Text element.
 func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Text, error) {
 	// item is guaranteed to be in vertical direction
@@ -571,6 +635,9 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 				newte.Settings[frontend.SettingRowspan] = rowspan
 			}
 		}
+		if vlid, ok := item.Attributes["data-vlist-id"]; ok {
+			newte.Settings[frontend.SettingPrerenderedVListID] = vlid
+		}
 	case "col":
 		// First check data-width (from XTS), then CSS width
 		if wd, ok := item.Attributes["data-width"]; ok {
@@ -590,44 +657,71 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 		styles.OlCounter = 0
 		styles.ListPaddingLeft = styles.PaddingLeft
 	case "li":
-		var item string
-		if strings.HasPrefix(styles.ListStyleType, `"`) && strings.HasSuffix(styles.ListStyleType, `"`) {
-			item = strings.TrimPrefix(styles.ListStyleType, `"`)
-			item = strings.TrimSuffix(item, `"`)
+		var marker string
+		// Check for ::before pseudo-element with content
+		if beforeContent, ok := item.Styles["before::content"]; ok {
+			marker = parseCSSContentValue(beforeContent)
+		} else if strings.HasPrefix(styles.ListStyleType, `"`) && strings.HasSuffix(styles.ListStyleType, `"`) {
+			marker = strings.TrimPrefix(styles.ListStyleType, `"`)
+			marker = strings.TrimSuffix(marker, `"`)
 		} else {
 			switch styles.ListStyleType {
 			case "disc":
-				item = "•"
+				marker = "•"
 			case "circle":
-				item = "◦"
+				marker = "◦"
 			case "none":
-				item = ""
+				marker = ""
 			case "square":
-				item = "□"
+				marker = "□"
 			case "decimal":
-				item = fmt.Sprintf("%d.", styles.OlCounter)
+				marker = fmt.Sprintf("%d.", styles.OlCounter)
 			default:
-				// logger.Error(fmt.Sprintf("unhandled list-style-type: %q", styles.ListStyleType))
-				item = "•"
+				marker = "•"
 			}
 		}
-		n, err := df.BuildNodelistFromString(newte.Settings, item)
-		if err != nil {
-			return nil, err
+		markerSettings := make(frontend.TypesettingSettings, len(newte.Settings))
+		for k, v := range newte.Settings {
+			markerSettings[k] = v
 		}
-		glue1 := node.NewGlue()
-		glue1.Width = -styles.ListPaddingLeft
-		glue1.Stretch = 1 * bag.Factor
-		glue1.StretchOrder = node.StretchFil
+		// Apply ::before styles to the marker
+		for sKey, sVal := range item.Styles {
+			if !strings.HasPrefix(sKey, "before::") {
+				continue
+			}
+			prop := strings.TrimPrefix(sKey, "before::")
+			switch prop {
+			case "color":
+				if c := df.GetColor(sVal); c != nil {
+					markerSettings[frontend.SettingColor] = c
+				}
+			case "font-weight":
+				if fw, err := strconv.Atoi(sVal); err == nil {
+					markerSettings[frontend.SettingFontWeight] = frontend.FontWeight(fw)
+				} else if sVal == "bold" {
+					markerSettings[frontend.SettingFontWeight] = frontend.FontWeight700
+				}
+			}
+		}
+		if marker != "" {
+			n, err := df.BuildNodelistFromString(markerSettings, marker)
+			if err != nil {
+				return nil, err
+			}
+			glue1 := node.NewGlue()
+			glue1.Width = -styles.ListPaddingLeft
+			glue1.Stretch = 1 * bag.Factor
+			glue1.StretchOrder = node.StretchFil
 
-		gap := node.NewKern()
-		gap.Kern = styles.Fontsize / 3 // ~0.33em
+			gap := node.NewKern()
+			gap.Kern = styles.Fontsize / 3 // ~0.33em
 
-		node.InsertBefore(n, n, glue1)
-		node.InsertAfter(glue1, node.Tail(n), gap)
-		hbox := node.HpackTo(glue1, 0)
+			node.InsertBefore(n, n, glue1)
+			node.InsertAfter(glue1, node.Tail(n), gap)
+			hbox := node.HpackTo(glue1, 0)
 
-		newte.Settings[frontend.SettingPrepend] = hbox
+			newte.Settings[frontend.SettingPrepend] = hbox
+		}
 	}
 
 	var te *frontend.Text
