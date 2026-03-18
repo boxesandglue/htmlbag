@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/csshtml"
@@ -27,6 +28,16 @@ func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) str
 	return sb.String()
 }
 
+// firstContentURL returns the URL from the first ContentURL token, or "".
+func firstContentURL(tokens []csshtml.ContentToken) string {
+	for _, tok := range tokens {
+		if tok.Type == csshtml.ContentURL {
+			return tok.Value
+		}
+	}
+	return ""
+}
+
 // BeforeShipout should be called when placing a CSS page in the PDF. It adds
 // page margin boxes to the current page.
 func (cb *CSSBuilder) BeforeShipout() error {
@@ -44,6 +55,11 @@ func (cb *CSSBuilder) BeforeShipout() error {
 			if wd, ok := attr["width"]; ok {
 				if wd != "auto" {
 					pmb.areaWidth = ParseRelativeSize(wd, dimensions.Width, dimensions.Width)
+				}
+			}
+			if ht, ok := attr["height"]; ok {
+				if ht != "auto" {
+					pmb.areaHeight = ParseRelativeSize(ht, dimensions.Height, dimensions.Height)
 				}
 			}
 
@@ -130,8 +146,41 @@ func (cb *CSSBuilder) BeforeShipout() error {
 				vl := node.NewVList()
 				var err error
 				cb.Counters["page"] = len(cb.frontend.Doc.Pages)
+
+				// Check for url() content (image in margin box).
+				if imgURL := firstContentURL(contentTokens); imgURL != "" {
+					if cb.css.FileFinder != nil {
+						if resolved, ferr := cb.css.FileFinder(imgURL); ferr == nil && resolved != "" {
+						imgURL = resolved
+					}
+					}
+					imgfile, imgErr := df.Doc.LoadImageFile(imgURL)
+					if imgErr == nil {
+						imgNode := df.Doc.CreateImageNodeFromImagefile(imgfile, 1, "/MediaBox")
+						boxHt := pmb.ht - styles.BorderTopWidth - styles.BorderBottomWidth
+						if pmb.areaHeight > 0 {
+							boxHt = pmb.areaHeight
+						}
+						// Scale proportionally to fit the margin box height.
+						scale := float64(boxHt) / float64(imgNode.Height)
+						imgNode.Height = boxHt
+						imgNode.Width = bag.ScaledPoint(float64(imgNode.Width) * scale)
+						vl = node.Vpack(imgNode)
+						// Align image within the margin box area.
+						boxWd := pmb.wd - styles.BorderLeftWidth - styles.BorderRightWidth
+						switch pmb.halign {
+						case frontend.HAlignCenter:
+							pmb.x += (boxWd - imgNode.Width) / 2
+						case frontend.HAlignRight:
+							pmb.x += boxWd - imgNode.Width
+						}
+					}
+				}
+
 				c := evaluateContent(contentTokens, cb.Counters)
-				if c != "" {
+				if vl.List != nil {
+					// Image content — skip text rendering.
+				} else if c != "" {
 					txt := frontend.NewText()
 					ApplySettings(txt.Settings, styles)
 					if styles.Fontsize > 0 {
@@ -184,7 +233,18 @@ func (cb *CSSBuilder) BeforeShipout() error {
 					BackgroundColor:         styles.BackgroundColor,
 				}
 				vl = cb.HTMLBorder(vl, hv)
-				df.Doc.CurrentPage.OutputAt(pmb.x, pmb.y, vl)
+				// PDF/UA: mark margin boxes as pagination artifacts
+				if cb.enableTagging {
+					if vl.Attributes == nil {
+						vl.Attributes = node.H{}
+					}
+					vl.Attributes["artifact"] = document.ArtifactPagination
+				}
+				outputY := pmb.y
+				if pmb.areaHeight > 0 && pmb.areaHeight < pmb.ht {
+					outputY -= pmb.ht - pmb.areaHeight
+				}
+				df.Doc.CurrentPage.OutputAt(pmb.x, outputY, vl)
 				cb.stylesStack.PopStyles()
 			}
 		}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
@@ -54,6 +55,25 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	}
 
 	if isBox, ok := settings[frontend.SettingBox]; ok && isBox.(bool) {
+		// PDF/UA: push a container structure element for this block
+		var containerSE *document.StructureElement
+		var savedStructureCurrent *document.StructureElement
+		if cb.enableTagging {
+			if tag, ok := settings[frontend.SettingDebug].(string); ok {
+				if role := pdfRoleForTag(tag); role != "" {
+					containerSE = &document.StructureElement{Role: role}
+					cb.structureCurrent.AddChild(containerSE)
+					savedStructureCurrent = cb.structureCurrent
+					cb.structureCurrent = containerSE
+					// LI must contain LBody (PDF/UA 7.2)
+					if role == "LI" {
+						lbody := &document.StructureElement{Role: "LBody"}
+						containerSE.AddChild(lbody)
+						cb.structureCurrent = lbody
+					}
+				}
+			}
+		}
 		// If this box container has a prepend (e.g., list bullet), pass it
 		// to the first child Text element so FormatParagraph can render it.
 		if prep, ok := settings[frontend.SettingPrepend]; ok {
@@ -239,6 +259,11 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			vls = cb.HTMLBorder(vls, hv)
 		}
 
+		// PDF/UA: pop structure element back to parent
+		if containerSE != nil {
+			cb.structureCurrent = savedStructureCurrent
+		}
+
 		return vls, nil
 	}
 
@@ -259,6 +284,41 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		vl = cb.HTMLBorder(vl, hv)
 	}
 
+	// PDF/UA: tag leaf block elements (p, h1-h6, pre, code)
+	if cb.enableTagging {
+		if tag, ok := settings[frontend.SettingDebug].(string); ok {
+			role := pdfRoleForTag(tag)
+
+			// If this paragraph contains an image, use Figure role with alt text
+			if role == "P" {
+				if alt := findImageAlt(te); alt != "" {
+					role = "Figure"
+				}
+			}
+
+			if role != "" {
+				se := &document.StructureElement{Role: role}
+				if role == "Figure" {
+					se.Alt = findImageAlt(te)
+				} else {
+					se.ActualText = extractTextContent(te)
+				}
+				// LI must contain exactly one LBody (PDF/UA 7.2)
+				if role == "LI" {
+					cb.structureCurrent.AddChild(se)
+					lbody := &document.StructureElement{Role: "LBody"}
+					lbody.ActualText = se.ActualText
+					se.ActualText = ""
+					se.AddChild(lbody)
+					tagVList(vl, lbody)
+				} else {
+					cb.structureCurrent.AddChild(se)
+					tagVList(vl, se)
+				}
+			}
+		}
+	}
+
 	return vl, nil
 }
 
@@ -274,6 +334,26 @@ func extractTextContent(te *frontend.Text) string {
 		}
 	}
 	return b.String()
+}
+
+// findImageAlt checks if a Text element contains an image (VList with "alt"
+// attribute) and returns its alt text. Returns empty string if no image found.
+func findImageAlt(te *frontend.Text) string {
+	for _, itm := range te.Items {
+		switch t := itm.(type) {
+		case *node.VList:
+			if t.Attributes != nil {
+				if alt, ok := t.Attributes["alt"].(string); ok {
+					return alt
+				}
+			}
+		case *frontend.Text:
+			if alt := findImageAlt(t); alt != "" {
+				return alt
+			}
+		}
+	}
+	return ""
 }
 
 // settingsToHTMLValues extracts border/padding/background settings into HTMLValues.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/boxesandglue/frontend/pdfdraw"
@@ -46,6 +47,9 @@ type CSSBuilder struct {
 	frontend              *frontend.Document
 	css                   *csshtml.CSS
 	stylesStack           StylesStack
+	structureRoot         *document.StructureElement
+	structureCurrent      *document.StructureElement
+	enableTagging         bool
 	ElementCallback       ElementCallbackFunc
 	PageInitCallback      PageInitCallbackFunc
 	// Counters holds named counter values used when evaluating CSS content
@@ -75,6 +79,17 @@ func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
 	}
 	if err := LoadIncludedFonts(fd); err != nil {
 		return nil, err
+	}
+
+	// Enable automatic structure tagging for PDF/UA
+	if fd.Doc.Format == document.FormatPDFUA {
+		cb.enableTagging = true
+		cb.structureRoot = fd.Doc.RootStructureElement
+		if cb.structureRoot == nil {
+			cb.structureRoot = &document.StructureElement{Role: "Document"}
+			fd.Doc.RootStructureElement = cb.structureRoot
+		}
+		cb.structureCurrent = cb.structureRoot
 	}
 
 	return &cb, nil
@@ -285,6 +300,41 @@ func (cb *CSSBuilder) NewPage() error {
 	}
 	cb.frontend.Doc.CurrentPage.Shipout()
 	cb.frontend.Doc.NewPage()
+	// Update page dimensions for the new page (different @page selector may apply).
+	if pt := cb.getPageType(); pt != nil {
+		cb.currentPageDimensions.masterpage = pt
+		// Recalculate margins from the new page type.
+		if str := pt.MarginTop; str != "" {
+			if v, err := bag.SP(str); err == nil {
+				cb.currentPageDimensions.MarginTop = v
+			}
+		}
+		if str := pt.MarginBottom; str != "" {
+			if v, err := bag.SP(str); err == nil {
+				cb.currentPageDimensions.MarginBottom = v
+			}
+		}
+		if str := pt.MarginLeft; str != "" {
+			if v, err := bag.SP(str); err == nil {
+				cb.currentPageDimensions.MarginLeft = v
+			}
+		}
+		if str := pt.MarginRight; str != "" {
+			if v, err := bag.SP(str); err == nil {
+				cb.currentPageDimensions.MarginRight = v
+			}
+		}
+		mt := cb.currentPageDimensions.MarginTop
+		mb := cb.currentPageDimensions.MarginBottom
+		ml := cb.currentPageDimensions.MarginLeft
+		mr := cb.currentPageDimensions.MarginRight
+		wd := cb.currentPageDimensions.Width
+		ht := cb.currentPageDimensions.Height
+		cb.currentPageDimensions.PageAreaLeft = ml
+		cb.currentPageDimensions.PageAreaTop = mt
+		cb.currentPageDimensions.ContentWidth = wd - ml - mr
+		cb.currentPageDimensions.ContentHeight = ht - mt - mb
+	}
 	// Store page dimensions on the new page for callback access.
 	if pd, err := cb.PageSize(); err == nil {
 		storePageDimensions(cb, pd)
@@ -345,6 +395,19 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 	pageHasContent := false // true once a VList/HList has been placed on the page
 	cur := contentList
 
+	// refreshPage updates layout variables from the current page dimensions.
+	refreshPage := func() error {
+		var err error
+		if pd, err = cb.PageSize(); err != nil {
+			return err
+		}
+		yStart = pd.Height - pd.MarginTop
+		yLimit = pd.MarginBottom
+		y = yStart
+		pageHasContent = false
+		return nil
+	}
+
 	for cur != nil {
 		next := cur.Next()
 		h := vlistNodeHeight(cur)
@@ -355,8 +418,9 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
-			y = yStart
-			pageHasContent = false
+			if err := refreshPage(); err != nil {
+				return err
+			}
 		}
 
 		// page-break-after: avoid — if this node has the attribute, look
@@ -374,8 +438,9 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 				if err := cb.NewPage(); err != nil {
 					return err
 				}
-				y = yStart
-				pageHasContent = false
+				if err := refreshPage(); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -384,8 +449,9 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
-			y = yStart
-			pageHasContent = false
+			if err := refreshPage(); err != nil {
+				return err
+			}
 		}
 
 		// Detach the node from the original list.
@@ -420,8 +486,9 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
-			y = yStart
-			pageHasContent = false
+			if err := refreshPage(); err != nil {
+				return err
+			}
 		}
 
 		cur = next
@@ -431,6 +498,199 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		return err
 	}
 	cb.frontend.Doc.CurrentPage.Shipout()
+	return nil
+}
+
+// OutputPagesFromText takes a Text tree (from HTMLToText), splits it at forced
+// page breaks, and formats each group with the content width of its target page.
+// This ensures that different @page margins produce different text widths.
+func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
+	// Find the body-level Text element (unwrap html > body wrappers).
+	body := findBody(te)
+
+	// Split body items into groups at pageBreakBefore boundaries.
+	groups := splitTextAtPageBreaks(body)
+
+	for i, group := range groups {
+		if i > 0 {
+			if err := cb.NewPage(); err != nil {
+				return err
+			}
+		}
+
+		pd, err := cb.PageSize()
+		if err != nil {
+			return err
+		}
+
+		// Create a wrapper Text with the body's settings for this group.
+		wrapper := &frontend.Text{
+			Settings: body.Settings,
+			Items:    group,
+		}
+
+		vl, err := cb.CreateVlist(wrapper, pd.ContentWidth)
+		if err != nil {
+			return err
+		}
+
+		// Place nodes from this group's vlist onto pages.
+		// Within a group there are no forced page breaks, but content may
+		// overflow and require automatic page breaks.
+		if err := cb.outputGroupNodes(vl, pd); err != nil {
+			return err
+		}
+	}
+
+	if err := cb.BeforeShipout(); err != nil {
+		return err
+	}
+	cb.frontend.Doc.CurrentPage.Shipout()
+	return nil
+}
+
+// findBody descends through single-child Text wrappers (html > body) to find
+// the innermost Text that contains the actual content items.
+func findBody(te *frontend.Text) *frontend.Text {
+	for {
+		// If this Text has exactly one child that is also a Text with
+		// SettingBox=true, descend into it.
+		if len(te.Items) == 1 {
+			if child, ok := te.Items[0].(*frontend.Text); ok {
+				te = child
+				continue
+			}
+		}
+		return te
+	}
+}
+
+// splitTextAtPageBreaks splits the Items of a body-level Text into groups.
+// A new group starts whenever a child Text has SettingPageBreakBefore = "always".
+func splitTextAtPageBreaks(body *frontend.Text) [][]any {
+	var groups [][]any
+	var current []any
+
+	for _, itm := range body.Items {
+		if t, ok := itm.(*frontend.Text); ok {
+			if pbb, ok := t.Settings[frontend.SettingPageBreakBefore]; ok && pbb == "always" {
+				if len(current) > 0 {
+					groups = append(groups, current)
+				}
+				current = []any{itm}
+				continue
+			}
+		}
+		current = append(current, itm)
+	}
+	if len(current) > 0 {
+		groups = append(groups, current)
+	}
+	return groups
+}
+
+// outputGroupNodes places the nodes from a single vlist onto the current page,
+// breaking to new pages if the content overflows (no forced breaks expected).
+func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error {
+	// Unwrap nested single-child VLists.
+	contentList := vl.List
+	contentWidth := vl.Width
+	for {
+		inner, ok := contentList.(*node.VList)
+		if !ok || inner.Next() != nil {
+			break
+		}
+		contentList = inner.List
+		if inner.Width > 0 {
+			contentWidth = inner.Width
+		}
+	}
+
+	storePageDimensions(cb, pd)
+
+	yStart := pd.Height - pd.MarginTop
+	yLimit := pd.MarginBottom
+	y := yStart
+	pageHasContent := false
+	cur := contentList
+
+	refreshPage := func() error {
+		var err error
+		if pd, err = cb.PageSize(); err != nil {
+			return err
+		}
+		yStart = pd.Height - pd.MarginTop
+		yLimit = pd.MarginBottom
+		y = yStart
+		pageHasContent = false
+		return nil
+	}
+
+	for cur != nil {
+		next := cur.Next()
+		h := vlistNodeHeight(cur)
+
+		// page-break-after: avoid
+		if avoidBreakAfter(cur) && next != nil {
+			peekH := h
+			peekH += vlistNodeHeight(next)
+			if nn := next.Next(); nn != nil {
+				peekH += vlistNodeHeight(nn)
+			}
+			if y-peekH < yLimit && pageHasContent {
+				if err := cb.NewPage(); err != nil {
+					return err
+				}
+				if err := refreshPage(); err != nil {
+					return err
+				}
+			}
+		}
+
+		// Overflow — start a new page.
+		if y-h < yLimit && pageHasContent {
+			if err := cb.NewPage(); err != nil {
+				return err
+			}
+			if err := refreshPage(); err != nil {
+				return err
+			}
+		}
+
+		cur.SetPrev(nil)
+		cur.SetNext(nil)
+
+		box := node.NewVList()
+		box.List = cur
+		box.Width = contentWidth
+		box.Height = h
+
+		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, y, box)
+		y -= h
+
+		if vl, ok := cur.(*node.VList); ok && vl.Attributes != nil {
+			if idx, ok := vl.Attributes["_heading_idx"].(int); ok && idx < len(cb.Headings) {
+				cb.Headings[idx].Page = len(cb.frontend.Doc.Pages)
+			}
+		}
+
+		switch cur.(type) {
+		case *node.VList, *node.HList:
+			pageHasContent = true
+		}
+
+		if forceBreakAfter(cur) && next != nil {
+			if err := cb.NewPage(); err != nil {
+				return err
+			}
+			if err := refreshPage(); err != nil {
+				return err
+			}
+		}
+
+		cur = next
+	}
+
 	return nil
 }
 
@@ -551,6 +811,7 @@ type pageMarginBox struct {
 	minWidth    bag.ScaledPoint
 	maxWidth    bag.ScaledPoint
 	areaWidth   bag.ScaledPoint
+	areaHeight  bag.ScaledPoint
 	hasContents bool
 	widthAuto   bool
 	halign      frontend.HorizontalAlignment

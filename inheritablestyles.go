@@ -43,12 +43,14 @@ func ParseVerticalAlign(align string, styles *FormattingStyles) frontend.Vertica
 // HorizontalAlignment value.
 func ParseHorizontalAlign(align string, styles *FormattingStyles) frontend.HorizontalAlignment {
 	switch align {
-	case "left":
+	case "left", "start":
 		return frontend.HAlignLeft
 	case "center":
 		return frontend.HAlignCenter
-	case "right":
+	case "right", "end":
 		return frontend.HAlignRight
+	case "justify":
+		return frontend.HAlignJustified
 	case "inherit":
 		return styles.Halign
 	default:
@@ -317,6 +319,12 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 				ih.yoffset = -1 * ih.Fontsize * 1000 / 5000
 			case "super":
 				ih.yoffset = ih.Fontsize * 1000 / 5000
+			case "top":
+				ih.Valign = frontend.VAlignTop
+			case "middle":
+				ih.Valign = frontend.VAlignMiddle
+			case "bottom":
+				ih.Valign = frontend.VAlignBottom
 			}
 		case "width":
 			ih.width = v
@@ -609,6 +617,10 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 	}
 	ApplySettings(newte.Settings, styles)
 	newte.Settings[frontend.SettingDebug] = item.Data
+	// Any element with an id attribute creates a named PDF destination.
+	if id, ok := item.Attributes["id"]; ok {
+		newte.Settings[frontend.SettingDest] = id
+	}
 	switch item.Data {
 	case "html":
 		if fs, ok := item.Styles["font-size"]; ok {
@@ -798,7 +810,7 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 	case html.TextNode:
 		te.Items = append(te.Items, item.Data)
 	case html.ElementNode:
-		childSettings := make(frontend.TypesettingSettings)
+		childSettings := make(frontend.TypesettingSettings, 8)
 		switch item.Data {
 		case "a":
 			var href, link string
@@ -808,10 +820,18 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 					href = v
 				case "link":
 					link = v
+				case "id":
+					childSettings[frontend.SettingDest] = v
 				}
 			}
-			hl := document.Hyperlink{URI: href, Local: link}
-			childSettings[frontend.SettingHyperlink] = hl
+			if strings.HasPrefix(href, "#") {
+				link = strings.TrimPrefix(href, "#")
+				href = ""
+			}
+			if href != "" || link != "" {
+				hl := document.Hyperlink{URI: href, Local: link}
+				childSettings[frontend.SettingHyperlink] = hl
+			}
 		case "img":
 			cs := ss.CurrentStyle()
 			var filename string
@@ -854,6 +874,9 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 					"origin": "svg",
 					"attr":   item.Attributes,
 				}
+				if alt, ok := item.Attributes["alt"]; ok {
+					svgVL.Attributes["alt"] = alt
+				}
 				te.Items = append(te.Items, svgVL)
 			} else {
 				// Raster image (PNG, JPEG, PDF)
@@ -879,6 +902,9 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 				imgNode.Attributes["wd"] = wd
 				imgNode.Attributes["ht"] = ht
 				imgNode.Attributes["attr"] = item.Attributes
+				if alt, ok := item.Attributes["alt"]; ok {
+					imgNode.Attributes["alt"] = alt
+				}
 				te.Items = append(te.Items, imgNode)
 			}
 		case "br":

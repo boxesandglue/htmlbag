@@ -6,6 +6,7 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
@@ -79,7 +80,9 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 				continue
 			}
 			if elt == "thead" {
+				rowsBefore := len(tbl.Rows)
 				cb.buildTBody(t, tbl)
+				tbl.HeaderRows = len(tbl.Rows) - rowsBefore
 			}
 		}
 	}
@@ -100,6 +103,12 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	if err != nil {
 		return nil, err
 	}
+
+	// PDF/UA: tag the table structure
+	if cb.enableTagging {
+		cb.tagTable(vl[0], tbl)
+	}
+
 	return vl[0], nil
 }
 
@@ -150,15 +159,16 @@ func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
 				continue
 			}
 			if elt == "td" || elt == "th" {
-				cb.buildTD(t, tr)
+				cb.buildTD(t, tr, elt == "th")
 			}
 		}
 	}
 	tbl.Rows = append(tbl.Rows, tr)
 }
 
-func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow) {
+func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeader bool) {
 	td := &frontend.TableCell{}
+	td.IsHeader = isHeader
 
 	// Extract colspan and rowspan
 	settings := te.Settings
@@ -260,4 +270,85 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow) {
 		}
 	}
 	row.Cells = append(row.Cells, td)
+}
+
+// tagTable walks the table VList and creates Table/TR/TH/TD structure elements.
+func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table) {
+	tableSE := &document.StructureElement{Role: "Table"}
+	cb.structureCurrent.AddChild(tableSE)
+
+	// Create THead/TBody grouping SEs
+	var theadSE, tbodySE *document.StructureElement
+	if tbl.HeaderRows > 0 {
+		theadSE = &document.StructureElement{Role: "THead"}
+		tableSE.AddChild(theadSE)
+	}
+	tbodySE = &document.StructureElement{Role: "TBody"}
+	tableSE.AddChild(tbodySE)
+
+	// Walk rows: each child of the table VList is an HList (row)
+	rowIdx := 0
+	for cur := tableVL.List; cur != nil; cur = cur.Next() {
+		rowHL, ok := cur.(*node.HList)
+		if !ok {
+			continue
+		}
+		if rowIdx >= len(tbl.Rows) {
+			break
+		}
+
+		// Determine parent: THead for header rows, TBody otherwise
+		rowParent := tbodySE
+		if theadSE != nil && rowIdx < tbl.HeaderRows {
+			rowParent = theadSE
+		}
+
+		trSE := &document.StructureElement{Role: "TR"}
+		rowParent.AddChild(trSE)
+
+		// Walk cells in this row
+		row := tbl.Rows[rowIdx]
+		cellIdx := 0
+		for cellCur := rowHL.List; cellCur != nil; cellCur = cellCur.Next() {
+			cellVL, ok := cellCur.(*node.VList)
+			if !ok {
+				continue
+			}
+			if cellIdx >= len(row.Cells) {
+				break
+			}
+
+			cell := row.Cells[cellIdx]
+			role := "TD"
+			if cell.IsHeader {
+				role = "TH"
+			}
+			cellSE := &document.StructureElement{Role: role}
+			// Set Scope for TH cells
+			if cell.IsHeader {
+				if rowIdx < tbl.HeaderRows {
+					cellSE.Scope = "Column"
+				} else {
+					cellSE.Scope = "Row"
+				}
+			}
+			cellSE.ActualText = extractCellText(cell)
+			trSE.AddChild(cellSE)
+			tagVList(cellVL, cellSE)
+			cellIdx++
+		}
+		rowIdx++
+	}
+}
+
+// extractCellText extracts text content from a table cell's contents.
+func extractCellText(cell *frontend.TableCell) string {
+	var b strings.Builder
+	for _, cc := range cell.Contents {
+		switch t := cc.(type) {
+		case *frontend.Text:
+			b.WriteString(extractTextContent(t))
+		}
+	}
+	return b.String()
 }
