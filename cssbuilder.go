@@ -630,6 +630,18 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 		next := cur.Next()
 		h := vlistNodeHeight(cur)
 
+		// Tables with header rows: unpack into individual rows so the
+		// page breaker can split the table naturally and repeat headers.
+		if tableVL, ok := cur.(*node.VList); ok && tableVL.Attributes != nil {
+			if buildHeadersFn, ok := tableVL.Attributes["_buildHeaders"]; ok {
+				if err := cb.outputTableRows(tableVL, buildHeadersFn, &y, &yLimit, &pageHasContent, &pd); err != nil {
+					return err
+				}
+				cur = next
+				continue
+			}
+		}
+
 		// page-break-after: avoid
 		if avoidBreakAfter(cur) && next != nil {
 			peekH := h
@@ -689,6 +701,81 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 		}
 
 		cur = next
+	}
+
+	return nil
+}
+
+// outputTableRows unpacks a table VList into individual rows and places them
+// on pages, repeating header rows after each page break.
+func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y *bag.ScaledPoint, yLimit *bag.ScaledPoint, pageHasContent *bool, pd *PageDimensions) error {
+	buildHeaders := buildHeadersFn.(func() ([]*node.HList, error))
+	headerCount := tableVL.Attributes["_headerCount"].(int)
+	tableWidth := tableVL.Width
+
+	// Collect all row nodes from the table VList.
+	var rows []node.Node
+	for n := tableVL.List; n != nil; n = n.Next() {
+		rows = append(rows, n)
+	}
+
+	refreshPage := func() error {
+		var err error
+		*pd, err = cb.PageSize()
+		if err != nil {
+			return err
+		}
+		*y = pd.Height - pd.MarginTop
+		*yLimit = pd.MarginBottom
+		*pageHasContent = false
+		return nil
+	}
+
+	for i, row := range rows {
+		h := vlistNodeHeight(row)
+
+		// Check if row fits on current page.
+		if *y-h < *yLimit && *pageHasContent {
+			if err := cb.NewPage(); err != nil {
+				return err
+			}
+			if err := refreshPage(); err != nil {
+				return err
+			}
+
+			// Repeat header rows on the new page (skip if this IS a header row).
+			if i >= headerCount {
+				headers, err := buildHeaders()
+				if err != nil {
+					return err
+				}
+				for _, hdr := range headers {
+					hdrH := hdr.Height + hdr.Depth
+					hdr.SetPrev(nil)
+					hdr.SetNext(nil)
+					box := node.NewVList()
+					box.List = hdr
+					box.Width = tableWidth
+					box.Height = hdrH
+					cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, *y, box)
+					*y -= hdrH
+				}
+				*pageHasContent = true
+			}
+		}
+
+		// Detach row from linked list and place it.
+		row.SetPrev(nil)
+		row.SetNext(nil)
+
+		box := node.NewVList()
+		box.List = row
+		box.Width = tableWidth
+		box.Height = h
+
+		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, *y, box)
+		*y -= h
+		*pageHasContent = true
 	}
 
 	return nil

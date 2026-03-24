@@ -151,8 +151,8 @@ func (cb *CSSBuilder) BeforeShipout() error {
 				if imgURL := firstContentURL(contentTokens); imgURL != "" {
 					if cb.css.FileFinder != nil {
 						if resolved, ferr := cb.css.FileFinder(imgURL); ferr == nil && resolved != "" {
-						imgURL = resolved
-					}
+							imgURL = resolved
+						}
 					}
 					imgfile, imgErr := df.Doc.LoadImageFile(imgURL)
 					if imgErr == nil {

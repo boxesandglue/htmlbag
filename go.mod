@@ -4,8 +4,8 @@ go 1.24.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
-	github.com/boxesandglue/boxesandglue v0.2.9
-	github.com/boxesandglue/csshtml v0.0.6
+	github.com/boxesandglue/boxesandglue v0.2.10
+	github.com/boxesandglue/csshtml v0.0.7
 	github.com/boxesandglue/svgreader v0.0.2
 	github.com/boxesandglue/textshape v0.0.9
 	golang.org/x/net v0.48.0
@@ -13,7 +13,6 @@ require (
 
 require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
-	github.com/beevik/etree v1.6.0 // indirect
 	github.com/boxesandglue/baseline-pdf v1.1.7 // indirect
 	github.com/boxesandglue/gofpdi v1.0.22 // indirect
 	github.com/google/uuid v1.6.0 // indirect

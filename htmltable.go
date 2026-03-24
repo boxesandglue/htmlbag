@@ -99,17 +99,21 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 			}
 		}
 	}
-	vl, err := cb.frontend.BuildTable(tbl)
+	vls, err := cb.frontend.BuildTable(tbl)
 	if err != nil {
 		return nil, err
 	}
 
-	// PDF/UA: tag the table structure
+	vl := vls[0]
+
+	// PDF/UA: tag the table structure.
+	// Repeated headers on continuation pages are left untagged
+	// (the backend will wrap them as artifacts in PDF/UA mode).
 	if cb.enableTagging {
-		cb.tagTable(vl[0], tbl)
+		cb.tagTable(vl, tbl)
 	}
 
-	return vl[0], nil
+	return vl, nil
 }
 
 func (cb *CSSBuilder) buildColgroup(te *frontend.Text, tbl *frontend.Table) {
