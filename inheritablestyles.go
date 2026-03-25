@@ -907,6 +907,52 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 				}
 				te.Items = append(te.Items, imgNode)
 			}
+		case "barcode":
+			var value, typ, eclevelStr string
+			var wd, ht bag.ScaledPoint
+			for k, v := range item.Attributes {
+				switch k {
+				case "value":
+					value = v
+				case "type":
+					typ = v
+				case "width":
+					if sp, err := bag.SP(v); err == nil {
+						wd = sp
+					} else {
+						return fmt.Errorf("barcode: invalid width %q: %w", v, err)
+					}
+				case "!width":
+					cs := ss.CurrentStyle()
+					if !strings.HasSuffix(v, "%") {
+						wd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
+					}
+				case "height":
+					if sp, err := bag.SP(v); err == nil {
+						ht = sp
+					} else {
+						return fmt.Errorf("barcode: invalid height %q: %w", v, err)
+					}
+				case "eclevel":
+					eclevelStr = v
+				}
+			}
+			if value == "" {
+				return fmt.Errorf("barcode: missing value attribute")
+			}
+			if wd == 0 {
+				wd = bag.MustSP("3cm")
+			}
+			bcType, err := parseBarcodeType(typ)
+			if err != nil {
+				return err
+			}
+			ecl := parseQRECLevel(eclevelStr)
+			bcNode, err := createBarcode(bcType, value, wd, ht, df, ecl)
+			if err != nil {
+				return err
+			}
+			te.Items = append(te.Items, bcNode)
 		case "br":
 			br := node.NewPenalty()
 			br.Penalty = -10000

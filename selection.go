@@ -65,6 +65,14 @@ func (itm *HTMLItem) String() string {
 	}
 }
 
+// isCustomVoidElement returns true for custom element names that should be
+// treated as void (self-closing) elements. The HTML5 parser does not recognize
+// custom tags as void, so <barcode ... /> gets parsed as an opening tag that
+// swallows subsequent siblings as children.
+func isCustomVoidElement(name string) bool {
+	return name == "barcode"
+}
+
 // GetHTMLItemFromHTMLNode fills the firstItem with the contents of thisNode. Comments and
 // DocumentNodes are ignored.
 func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTMLItem) error {
@@ -111,7 +119,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			switch eltname {
 			case "body", "address", "article", "aside", "blockquote", "canvas", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
 				newDir = ModeVertical
-			case "b", "big", "i", "small", "tt", "abbr", "acronym", "cite", "code", "dfn", "em", "kbd", "strong", "samp", "var", "a", "bdo", "img", "map", "object", "q", "script", "span", "sub", "sup", "button", "input", "label", "select", "textarea":
+			case "b", "big", "i", "small", "tt", "abbr", "acronym", "cite", "code", "dfn", "em", "kbd", "strong", "samp", "var", "a", "barcode", "bdo", "img", "map", "object", "q", "script", "span", "sub", "sup", "button", "input", "label", "select", "textarea":
 				newDir = ModeHorizontal
 			default:
 				// keep dir
@@ -142,9 +150,19 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 				}
 			}
 			if thisNode.FirstChild != nil {
-				preserveWhitespace = append(preserveWhitespace, ws)
-				GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, itm)
-				preserveWhitespace = preserveWhitespace[:len(preserveWhitespace)-1]
+				if isCustomVoidElement(eltname) {
+					// Custom void elements like <barcode> are not
+					// recognized as self-closing by the HTML5 parser,
+					// so subsequent siblings get incorrectly nested as
+					// children. Promote them back to the parent level.
+					preserveWhitespace = append(preserveWhitespace, ws)
+					GetHTMLItemFromHTMLNode(thisNode.FirstChild, direction, firstItem)
+					preserveWhitespace = preserveWhitespace[:len(preserveWhitespace)-1]
+				} else {
+					preserveWhitespace = append(preserveWhitespace, ws)
+					GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, itm)
+					preserveWhitespace = preserveWhitespace[:len(preserveWhitespace)-1]
+				}
 			}
 		case html.DocumentNode:
 			// just passthrough
