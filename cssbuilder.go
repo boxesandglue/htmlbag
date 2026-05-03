@@ -65,17 +65,76 @@ type CSSBuilder struct {
 	// Used to pass already-rendered content (e.g. group contents) through
 	// the HTML/CSS pipeline into table cells.
 	PendingVLists map[string]*node.VList
+	// pageInserts accumulates inserts (per class) whose marks have been
+	// placed on the current page. Flushed by flushInserts, which is called
+	// automatically from cb.NewPage() before shipout, and must also be
+	// called once for the last page before its final shipout.
+	pageInserts map[InsertClass][]*Insert
+	// pageInsertHeight tracks the result of the per-class height summary
+	// (e.g. totalFootnoteHeight for InsertFootnote), kept in sync to avoid
+	// recomputing it on every overflow check.
+	pageInsertHeight map[InsertClass]bag.ScaledPoint
+	// tableInserts accumulates inserts encountered while building the
+	// currently in-flight table. Saved/restored across nested buildTable
+	// calls. Drained into the table VList's "inserts" attribute at the
+	// end of buildTable.
+	tableInserts []*Insert
+	// tableInsertWidth is the width to format insert bodies inside a
+	// table cell. Set by buildTable at entry, read by buildTD.
+	tableInsertWidth bag.ScaledPoint
+	// pageBuf collects body content for the current page that has been
+	// committed by the page builder but not yet painted. flushInserts
+	// drains it at shipout time, *after* the float reservation at the top
+	// is known, so the body cursor can start below the (final) float
+	// stack. Phase 3: two-pass page assembly enables multiple floats per
+	// page without forcing page breaks.
+	pageBuf []pageBufEntry
+	// pageBufHeight is the running sum of pageBuf entry heights, kept in
+	// sync to avoid recomputing it on every fit check.
+	pageBufHeight bag.ScaledPoint
+	// FootnoteSeparatorHeight overrides the default footnote rule thickness.
+	// Zero falls back to the package default (0.4pt).
+	FootnoteSeparatorHeight bag.ScaledPoint
+	// FootnoteSeparatorSkip overrides the default skip between content area
+	// and the rule. Zero falls back to the package default (6pt).
+	FootnoteSeparatorSkip bag.ScaledPoint
+	// FootnoteInterSkip overrides the default skip between consecutive
+	// footnote bodies. Zero falls back to the package default (2pt).
+	FootnoteInterSkip bag.ScaledPoint
+	// FootnoteCallSizeRatio overrides the marker-call font-size relative to
+	// the surrounding text. Zero falls back to 0.7.
+	FootnoteCallSizeRatio float64
+	// FootnoteCallRiseRatio overrides the marker-call rise (PDF Ts operator)
+	// relative to the surrounding font size. Zero falls back to 0.4.
+	FootnoteCallRiseRatio float64
+	// FloatTopInterSkip overrides the default skip between consecutive
+	// top-floats and below the stack (separating it from body content).
+	// Zero falls back to the package default (6pt).
+	FloatTopInterSkip bag.ScaledPoint
+	// FloatBottomInterSkip overrides the default skip between consecutive
+	// bottom-floats and above the stack (separating it from body content).
+	// Zero falls back to the package default (6pt).
+	FloatBottomInterSkip bag.ScaledPoint
 }
 
 // New creates an instance of the CSSBuilder.
 func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
 	cb := CSSBuilder{
-		css:           c,
-		frontend:      fd,
-		stylesStack:   make(StylesStack, 0),
-		pagebox:       []node.Node{},
-		Counters:      map[string]int{},
-		PendingVLists: map[string]*node.VList{},
+		css:                     c,
+		frontend:                fd,
+		stylesStack:             make(StylesStack, 0),
+		pagebox:                 []node.Node{},
+		Counters:                map[string]int{},
+		PendingVLists:           map[string]*node.VList{},
+		pageInserts:             map[InsertClass][]*Insert{},
+		pageInsertHeight:        map[InsertClass]bag.ScaledPoint{},
+		FootnoteSeparatorHeight: defaultFootnoteSeparatorHeight,
+		FootnoteSeparatorSkip:   defaultFootnoteSeparatorSkip,
+		FootnoteInterSkip:       defaultFootnoteInterSkip,
+		FootnoteCallSizeRatio:   defaultFootnoteCallSizeRatio,
+		FootnoteCallRiseRatio:   defaultFootnoteCallRiseRatio,
+		FloatTopInterSkip:       defaultFloatTopInterSkip,
+		FloatBottomInterSkip:    defaultFloatBottomInterSkip,
 	}
 	if err := LoadIncludedFonts(fd); err != nil {
 		return nil, err
@@ -295,6 +354,10 @@ func (cb *CSSBuilder) NewPage() error {
 	if err := cb.InitPage(); err != nil {
 		return err
 	}
+	// Flush accumulated inserts onto this page before it ships out.
+	if err := cb.flushInserts(); err != nil {
+		return err
+	}
 	if err := cb.BeforeShipout(); err != nil {
 		return err
 	}
@@ -371,14 +434,20 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		return err
 	}
 
-	// Unwrap nested single-child VLists (html > body > content).
+	// Unwrap nested single-child VLists (html > body > content). Each unwrap
+	// step strips one VList; if it carried an inserts attribute, propagate
+	// it onto the next inner node so the page builder can still see it.
 	contentList := vl.List
 	contentWidth := vl.Width
+	if vl.Attributes != nil {
+		propagateInsertsAttr(vl, contentList)
+	}
 	for {
 		inner, ok := contentList.(*node.VList)
 		if !ok || inner.Next() != nil {
 			break
 		}
+		propagateInsertsAttr(inner, inner.List)
 		contentList = inner.List
 		if inner.Width > 0 {
 			contentWidth = inner.Width
@@ -389,32 +458,47 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 	// can access margins.
 	storePageDimensions(cb, pd)
 
-	yStart := pd.Height - pd.MarginTop
-	yLimit := pd.MarginBottom
-	y := yStart
-	pageHasContent := false // true once a VList/HList has been placed on the page
 	cur := contentList
 
-	// refreshPage updates layout variables from the current page dimensions.
+	// refreshPage re-reads page dimensions after a NewPage advanced the
+	// document. Phase 3 doesn't track a y-cursor here — the body cursor's
+	// position is computed at flushInserts time from the final float
+	// reservation.
 	refreshPage := func() error {
 		var err error
 		if pd, err = cb.PageSize(); err != nil {
 			return err
 		}
-		yStart = pd.Height - pd.MarginTop
-		yLimit = pd.MarginBottom
-		y = yStart
-		pageHasContent = false
 		return nil
+	}
+
+	// trialPageHeight estimates what the current page's total content
+	// footprint would be if `incoming` inserts were committed and a body
+	// box of height addBodyH were buffered: top-float stack + body buffer
+	// + addBodyH + footnote stack. The page builder uses this to decide
+	// whether the next node still fits.
+	trialPageHeight := func(incoming []*Insert, addBodyH bag.ScaledPoint) bag.ScaledPoint {
+		topFloatTrial := append([]*Insert{}, cb.pageInserts[InsertFloatTop]...)
+		topFloatTrial = append(topFloatTrial, filterInserts(incoming, InsertFloatTop)...)
+		bottomFloatTrial := append([]*Insert{}, cb.pageInserts[InsertFloatBottom]...)
+		bottomFloatTrial = append(bottomFloatTrial, filterInserts(incoming, InsertFloatBottom)...)
+		footnoteTrial := append([]*Insert{}, cb.pageInserts[InsertFootnote]...)
+		footnoteTrial = append(footnoteTrial, filterInserts(incoming, InsertFootnote)...)
+		return cb.totalFloatTopHeight(topFloatTrial) +
+			cb.pageBufHeight + addBodyH +
+			cb.totalFloatBottomHeight(bottomFloatTrial) +
+			cb.totalFootnoteHeight(footnoteTrial)
 	}
 
 	for cur != nil {
 		next := cur.Next()
 		h := vlistNodeHeight(cur)
+		incoming := insertsOnNode(cur)
+		contentArea := pd.Height - pd.MarginTop - pd.MarginBottom
 
-		// page-break-before: always — force a new page before this node
-		// (but not if the page has no real content yet).
-		if forceBreakBefore(cur) && pageHasContent {
+		// page-break-before: always — only fires if the page has any
+		// buffered body (else it would create a leading blank page).
+		if forceBreakBefore(cur) && cb.pageBufHeight > 0 {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
@@ -423,18 +507,14 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 			}
 		}
 
-		// page-break-after: avoid — if this node has the attribute, look
-		// ahead at the next nodes (typically kern + following block) and
-		// break before this node if all of them wouldn't fit.
+		// page-break-after: avoid — if the next ~2 nodes wouldn't fit on
+		// the current page either, break before cur instead.
 		if avoidBreakAfter(cur) && next != nil {
-			peekH := h
-			// Add the next node (usually a margin kern)
-			peekH += vlistNodeHeight(next)
-			// Add the node after that (the actual following content)
+			peekH := h + vlistNodeHeight(next)
 			if nn := next.Next(); nn != nil {
 				peekH += vlistNodeHeight(nn)
 			}
-			if y-peekH < yLimit && pageHasContent {
+			if trialPageHeight(incoming, peekH) > contentArea && cb.pageBufHeight > 0 {
 				if err := cb.NewPage(); err != nil {
 					return err
 				}
@@ -444,8 +524,11 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 			}
 		}
 
-		// Start a new page if this node would overflow (but not on an empty page).
-		if y-h < yLimit && pageHasContent {
+		// Overflow: cur (with its inserts) doesn't fit on the current
+		// page. Ship what's buffered and start fresh. Skip the break if
+		// the buffer is empty — cur is forcibly placed on the empty page
+		// (single-node-too-tall case, accept truncation).
+		if trialPageHeight(incoming, h) > contentArea && cb.pageBufHeight > 0 {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
@@ -454,34 +537,38 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 			}
 		}
 
-		// Detach the node from the original list.
+		// Commit cur's inserts (both classes) to the current page's
+		// accumulators. Heights are kept in sync for trialPageHeight.
+		if len(incoming) > 0 {
+			for _, ins := range incoming {
+				cb.pageInserts[ins.Class] = append(cb.pageInserts[ins.Class], ins)
+			}
+			cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
+			cb.pageInsertHeight[InsertFloatBottom] = cb.totalFloatBottomHeight(cb.pageInserts[InsertFloatBottom])
+			cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
+		}
+
+		// Detach and wrap.
 		cur.SetPrev(nil)
 		cur.SetNext(nil)
-
-		// Wrap in a VList for OutputAt.
 		box := node.NewVList()
 		box.List = cur
 		box.Width = contentWidth
 		box.Height = h
 
-		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, y, box)
-		y -= h
-
-		// Assign page number to heading if this node carries a heading index.
+		// Heading index for page-number tracking happens at flush time,
+		// not here, so the page number reflects the page actually painted.
+		headingIdx := -1
 		if vl, ok := cur.(*node.VList); ok && vl.Attributes != nil {
-			if idx, ok := vl.Attributes["_heading_idx"].(int); ok && idx < len(cb.Headings) {
-				cb.Headings[idx].Page = len(cb.frontend.Doc.Pages)
+			if idx, ok := vl.Attributes["_heading_idx"].(int); ok {
+				headingIdx = idx
 			}
 		}
 
-		// Track whether real content (not just spacing) has been placed.
-		switch cur.(type) {
-		case *node.VList, *node.HList:
-			pageHasContent = true
-		}
+		cb.bufferBody(box, h, headingIdx)
 
-		// break-after: always — force a new page after this node
-		// (but only if there is more content to come).
+		// page-break-after: always — ship the page now if more content
+		// follows.
 		if forceBreakAfter(cur) && next != nil {
 			if err := cb.NewPage(); err != nil {
 				return err
@@ -494,6 +581,10 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		cur = next
 	}
 
+	// Flush any inserts accumulated on the final page before its shipout.
+	if err := cb.flushInserts(); err != nil {
+		return err
+	}
 	if err := cb.BeforeShipout(); err != nil {
 		return err
 	}
@@ -542,6 +633,10 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 		}
 	}
 
+	// Flush any inserts accumulated on the final page before its shipout.
+	if err := cb.flushInserts(); err != nil {
+		return err
+	}
 	if err := cb.BeforeShipout(); err != nil {
 		return err
 	}
@@ -592,14 +687,20 @@ func splitTextAtPageBreaks(body *frontend.Text) [][]any {
 // outputGroupNodes places the nodes from a single vlist onto the current page,
 // breaking to new pages if the content overflows (no forced breaks expected).
 func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error {
-	// Unwrap nested single-child VLists.
+	// Unwrap nested single-child VLists. Each unwrap step strips one VList;
+	// if it carried an inserts attribute, propagate it onto the next inner
+	// node so the page builder can still see it.
 	contentList := vl.List
 	contentWidth := vl.Width
+	if vl.Attributes != nil {
+		propagateInsertsAttr(vl, contentList)
+	}
 	for {
 		inner, ok := contentList.(*node.VList)
 		if !ok || inner.Next() != nil {
 			break
 		}
+		propagateInsertsAttr(inner, inner.List)
 		contentList = inner.List
 		if inner.Width > 0 {
 			contentWidth = inner.Width
@@ -608,10 +709,6 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 
 	storePageDimensions(cb, pd)
 
-	yStart := pd.Height - pd.MarginTop
-	yLimit := pd.MarginBottom
-	y := yStart
-	pageHasContent := false
 	cur := contentList
 
 	refreshPage := func() error {
@@ -619,37 +716,83 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 		if pd, err = cb.PageSize(); err != nil {
 			return err
 		}
-		yStart = pd.Height - pd.MarginTop
-		yLimit = pd.MarginBottom
-		y = yStart
-		pageHasContent = false
 		return nil
+	}
+
+	trialPageHeight := func(incoming []*Insert, addBodyH bag.ScaledPoint) bag.ScaledPoint {
+		topFloatTrial := append([]*Insert{}, cb.pageInserts[InsertFloatTop]...)
+		topFloatTrial = append(topFloatTrial, filterInserts(incoming, InsertFloatTop)...)
+		bottomFloatTrial := append([]*Insert{}, cb.pageInserts[InsertFloatBottom]...)
+		bottomFloatTrial = append(bottomFloatTrial, filterInserts(incoming, InsertFloatBottom)...)
+		footnoteTrial := append([]*Insert{}, cb.pageInserts[InsertFootnote]...)
+		footnoteTrial = append(footnoteTrial, filterInserts(incoming, InsertFootnote)...)
+		return cb.totalFloatTopHeight(topFloatTrial) +
+			cb.pageBufHeight + addBodyH +
+			cb.totalFloatBottomHeight(bottomFloatTrial) +
+			cb.totalFootnoteHeight(footnoteTrial)
 	}
 
 	for cur != nil {
 		next := cur.Next()
 		h := vlistNodeHeight(cur)
+		contentArea := pd.Height - pd.MarginTop - pd.MarginBottom
 
-		// Tables with header rows: unpack into individual rows so the
-		// page breaker can split the table naturally and repeat headers.
+		// Special path: tables with repeating headers. outputTableRows
+		// uses direct OutputAt, so we have to ship the body buffer
+		// (and any pending inserts) before invoking it, then force a
+		// fresh page after so subsequent buffered body doesn't overlap
+		// with table rows that were painted directly.
 		if tableVL, ok := cur.(*node.VList); ok && tableVL.Attributes != nil {
-			if buildHeadersFn, ok := tableVL.Attributes["_buildHeaders"]; ok {
-				if err := cb.outputTableRows(tableVL, buildHeadersFn, &y, &yLimit, &pageHasContent, &pd); err != nil {
+			if buildHeadersFn, tok := tableVL.Attributes["_buildHeaders"]; tok {
+				if cb.pageBufHeight > 0 || len(cb.pageInserts[InsertFloatTop]) > 0 || len(cb.pageInserts[InsertFootnote]) > 0 {
+					if err := cb.NewPage(); err != nil {
+						return err
+					}
+					if err := refreshPage(); err != nil {
+						return err
+					}
+				}
+				yLocal := pd.Height - pd.MarginTop
+				yLimitLocal := pd.MarginBottom
+				phc := false
+				if err := cb.outputTableRows(tableVL, buildHeadersFn, &yLocal, &yLimitLocal, &phc, &pd); err != nil {
 					return err
+				}
+				// Commit the table's own inserts (typically footnotes
+				// from cells) to the page that holds the table's last
+				// rows; they paint at the next flushInserts.
+				if incoming := insertsOnNode(cur); len(incoming) > 0 {
+					for _, ins := range incoming {
+						cb.pageInserts[ins.Class] = append(cb.pageInserts[ins.Class], ins)
+					}
+					cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
+					cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
+				}
+				// Force a fresh page for whatever follows so the body
+				// buffer doesn't paint over the directly-placed rows.
+				// Skip if no more content — the caller's final flush
+				// will ship the table's last page cleanly.
+				if next != nil {
+					if err := cb.NewPage(); err != nil {
+						return err
+					}
+					if err := refreshPage(); err != nil {
+						return err
+					}
 				}
 				cur = next
 				continue
 			}
 		}
 
-		// page-break-after: avoid
+		incoming := insertsOnNode(cur)
+
 		if avoidBreakAfter(cur) && next != nil {
-			peekH := h
-			peekH += vlistNodeHeight(next)
+			peekH := h + vlistNodeHeight(next)
 			if nn := next.Next(); nn != nil {
 				peekH += vlistNodeHeight(nn)
 			}
-			if y-peekH < yLimit && pageHasContent {
+			if trialPageHeight(incoming, peekH) > contentArea && cb.pageBufHeight > 0 {
 				if err := cb.NewPage(); err != nil {
 					return err
 				}
@@ -659,8 +802,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 			}
 		}
 
-		// Overflow — start a new page.
-		if y-h < yLimit && pageHasContent {
+		if trialPageHeight(incoming, h) > contentArea && cb.pageBufHeight > 0 {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
@@ -669,27 +811,30 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 			}
 		}
 
+		if len(incoming) > 0 {
+			for _, ins := range incoming {
+				cb.pageInserts[ins.Class] = append(cb.pageInserts[ins.Class], ins)
+			}
+			cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
+			cb.pageInsertHeight[InsertFloatBottom] = cb.totalFloatBottomHeight(cb.pageInserts[InsertFloatBottom])
+			cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
+		}
+
 		cur.SetPrev(nil)
 		cur.SetNext(nil)
-
 		box := node.NewVList()
 		box.List = cur
 		box.Width = contentWidth
 		box.Height = h
 
-		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, y, box)
-		y -= h
-
+		headingIdx := -1
 		if vl, ok := cur.(*node.VList); ok && vl.Attributes != nil {
-			if idx, ok := vl.Attributes["_heading_idx"].(int); ok && idx < len(cb.Headings) {
-				cb.Headings[idx].Page = len(cb.frontend.Doc.Pages)
+			if idx, ok := vl.Attributes["_heading_idx"].(int); ok {
+				headingIdx = idx
 			}
 		}
 
-		switch cur.(type) {
-		case *node.VList, *node.HList:
-			pageHasContent = true
-		}
+		cb.bufferBody(box, h, headingIdx)
 
 		if forceBreakAfter(cur) && next != nil {
 			if err := cb.NewPage(); err != nil {

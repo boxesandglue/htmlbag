@@ -762,8 +762,33 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 				styles = ss.PushStyles()
 			}
 			ApplySettings(te.Settings, styles)
-			if err := collectHorizontalNodes(te, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df); err != nil {
-				return nil, err
+			if isFootnoteElement(itm) {
+				// Footnote inline element: collect its contents into a
+				// separate Text and append a sentinel to te. extractFootnotes
+				// will later replace the sentinel with a marker call and
+				// format the body as a standalone paragraph.
+				fnText := frontend.NewText()
+				ApplySettings(fnText.Settings, styles)
+				if err := collectHorizontalNodes(fnText, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df); err != nil {
+					return nil, err
+				}
+				te.Items = append(te.Items, insertMarker{Class: InsertFootnote, Body: fnText})
+			} else if isFloatElement(itm) {
+				// Float element (top or bottom, per position attribute):
+				// collect contents into a separate Text and leave a
+				// sentinel. extractFloats replaces the sentinel with an
+				// empty placeholder (no in-text glyph) and formats the
+				// body for placement at the appropriate page edge.
+				flText := frontend.NewText()
+				ApplySettings(flText.Settings, styles)
+				if err := collectHorizontalNodes(flText, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df); err != nil {
+					return nil, err
+				}
+				te.Items = append(te.Items, insertMarker{Class: floatClassFor(itm), Body: flText})
+			} else {
+				if err := collectHorizontalNodes(te, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df); err != nil {
+					return nil, err
+				}
 			}
 			cur = ModeHorizontal
 		} else {
@@ -775,6 +800,19 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 				newte.Items = append(newte.Items, te)
 				newte.Settings[frontend.SettingBox] = true
 				te = nil
+			}
+			// Block-level float: build the body via a recursive Output()
+			// call (treats float children as block-level), and append a
+			// marker to the parent. extractFloats picks up the marker at
+			// paragraph-formatting time and lifts the body into the
+			// page-level insert system.
+			if isFloatElement(itm) {
+				floatBody, err := Output(itm, ss, df)
+				if err != nil {
+					return nil, err
+				}
+				newte.Items = append(newte.Items, insertMarker{Class: floatClassFor(itm), Body: floatBody})
+				continue
 			}
 			te, err := Output(itm, ss, df)
 			if err != nil {
@@ -988,7 +1026,13 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 			if err := collectHorizontalNodes(cld, itm, ss, currentFontsize, defaultFontsize, df); err != nil {
 				return err
 			}
-			te.Items = append(te.Items, cld)
+			if isFootnoteElement(itm) {
+				te.Items = append(te.Items, insertMarker{Class: InsertFootnote, Body: cld})
+			} else if isFloatElement(itm) {
+				te.Items = append(te.Items, insertMarker{Class: floatClassFor(itm), Body: cld})
+			} else {
+				te.Items = append(te.Items, cld)
+			}
 			ss.PopStyles()
 		}
 	}

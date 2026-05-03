@@ -57,6 +57,17 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 		}
 	}
 
+	// Push a fresh insert-collection scope; restore on exit so nested
+	// tables don't leak their inserts into the enclosing table.
+	savedInserts := cb.tableInserts
+	savedWidth := cb.tableInsertWidth
+	cb.tableInserts = nil
+	cb.tableInsertWidth = tbl.MaxWidth
+	defer func() {
+		cb.tableInserts = savedInserts
+		cb.tableInsertWidth = savedWidth
+	}()
+
 	// Process colgroup for column specifications
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
@@ -105,6 +116,17 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	}
 
 	vl := vls[0]
+
+	// Attach all inserts collected from this table's cells. The page
+	// builder will reserve space at the bottom of the page where the
+	// table lands. Multi-page tables (outputTableRows path) are a known
+	// limitation: all inserts attach to the first row's VList.
+	if len(cb.tableInserts) > 0 {
+		if vl.Attributes == nil {
+			vl.Attributes = node.H{}
+		}
+		vl.Attributes["inserts"] = cb.tableInserts
+	}
 
 	// PDF/UA: tag the table structure.
 	// Repeated headers on continuation pages are left untagged
@@ -242,6 +264,24 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
 		case *frontend.Text:
+			// Pull any insertMarkers out of this cell's text tree before
+			// it reaches FormatParagraph / BuildTable. Footnote markers
+			// become in-text superscript calls; float markers become
+			// empty placeholders. Bodies are collected on the CSSBuilder
+			// for attachment to the table VList; the page builder then
+			// dispatches each by class.
+			fns, err := cb.extractFootnotes(t, cb.tableInsertWidth)
+			if err == nil && len(fns) > 0 {
+				cb.tableInserts = append(cb.tableInserts, fns...)
+			}
+			topFls, err := cb.extractFloats(t, cb.tableInsertWidth, InsertFloatTop)
+			if err == nil && len(topFls) > 0 {
+				cb.tableInserts = append(cb.tableInserts, topFls...)
+			}
+			bottomFls, err := cb.extractFloats(t, cb.tableInsertWidth, InsertFloatBottom)
+			if err == nil && len(bottomFls) > 0 {
+				cb.tableInserts = append(cb.tableInserts, bottomFls...)
+			}
 			// For box elements (ul, ol, div, etc.), create a FormatToVList function
 			// that uses CreateVlist - this ensures the same code path as outside tables
 			if isBox, ok := t.Settings[frontend.SettingBox]; ok && isBox.(bool) {

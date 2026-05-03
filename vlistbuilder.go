@@ -48,6 +48,40 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		}
 	}
 
+	// SHALLOW extract: only direct insertMarkers in te.Items (no recursion
+	// into nested *frontend.Text). Catches block-level markers that sit
+	// as siblings of paragraph subtrees in a body container; inline
+	// markers (footnote inside a span inside a <p>) stay nested and are
+	// caught by the paragraph-branch's deep extractFootnotes below.
+	inserts, err := cb.extractFootnotesShallow(te, wd)
+	if err != nil {
+		return nil, err
+	}
+	topFloats, err := cb.extractFloatsShallow(te, wd, InsertFloatTop)
+	if err != nil {
+		return nil, err
+	}
+	bottomFloats, err := cb.extractFloatsShallow(te, wd, InsertFloatBottom)
+	if err != nil {
+		return nil, err
+	}
+	inserts = append(inserts, topFloats...)
+	inserts = append(inserts, bottomFloats...)
+
+	// attachInserts is called by either branch on the resulting top-level
+	// VList just before returning, so the page builder sees the inserts
+	// attribute regardless of whether te was a block container or a
+	// single paragraph.
+	attachInserts := func(vl *node.VList) {
+		if len(inserts) == 0 {
+			return
+		}
+		if vl.Attributes == nil {
+			vl.Attributes = node.H{}
+		}
+		vl.Attributes["inserts"] = inserts
+	}
+
 	// Get padding-left from this element to pass to children (for ul/ol lists)
 	var paddingLeft bag.ScaledPoint
 	if pl, ok := settings[frontend.SettingPaddingLeft]; ok {
@@ -264,6 +298,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			cb.structureCurrent = savedStructureCurrent
 		}
 
+		attachInserts(vls)
 		return vls, nil
 	}
 
@@ -273,11 +308,32 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// Reduce width by border and padding (CSS box-sizing: border-box behavior)
 	contentWidth := wd - hv.BorderLeftWidth - hv.BorderRightWidth - hv.PaddingLeft - hv.PaddingRight
 
-	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points)
+	// DEEP extract: nested insertMarkers (e.g. footnote inside a span
+	// inside this <p>). Top-of-function shallow only caught direct
+	// te.Items, so inline markers still need a recursive pass here.
+	deepFootnotes, err := cb.extractFootnotes(te, contentWidth)
+	if err != nil {
+		return nil, err
+	}
+	deepTopFloats, err := cb.extractFloats(te, contentWidth, InsertFloatTop)
+	if err != nil {
+		return nil, err
+	}
+	deepBottomFloats, err := cb.extractFloats(te, contentWidth, InsertFloatBottom)
+	if err != nil {
+		return nil, err
+	}
+	inserts = append(inserts, deepFootnotes...)
+	inserts = append(inserts, deepTopFloats...)
+	inserts = append(inserts, deepBottomFloats...)
+
+	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points).
 	vl, _, err := cb.frontend.FormatParagraph(te, contentWidth)
 	if err != nil {
 		return nil, err
 	}
+
+	attachInserts(vl)
 
 	// Apply borders if any are defined
 	if hv.hasBorder() || hv.BackgroundColor != nil {
