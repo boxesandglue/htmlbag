@@ -49,3 +49,18 @@ func tagVList(vl *node.VList, se *document.StructureElement) {
 	}
 	vl.Attributes["tag"] = se
 }
+
+// tagVListAsXObjectFigure marks the VList as a Figure whose body is a single
+// imported PDF Form XObject. Instead of emitting a BDC/EMC pair on the page
+// around the /Do, the backend will route the structure attachment via a
+// /StructParent on the XObject and an OBJR entry in se.K — PDF 1.7 §14.7.4.4
+// + PDF/UA-1 §7.1 Note 1. This is the only path that stops Adobe Acrobat's
+// tag inspector from expanding the imported XObject's path operators into a
+// "Pfad / Path" list under the Figure tag.
+func tagVListAsXObjectFigure(vl *node.VList, se *document.StructureElement) {
+	if vl.Attributes == nil {
+		vl.Attributes = node.H{}
+	}
+	vl.Attributes["tag"] = se
+	vl.Attributes["xobject-figure"] = true
+}

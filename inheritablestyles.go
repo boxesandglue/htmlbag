@@ -11,6 +11,7 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
 	"github.com/boxesandglue/boxesandglue/backend/document"
+	"github.com/boxesandglue/boxesandglue/backend/lang"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/svgreader"
@@ -40,17 +41,23 @@ func ParseVerticalAlign(align string, styles *FormattingStyles) frontend.Vertica
 }
 
 // ParseHorizontalAlign parses the input ("left","center") and returns the
-// HorizontalAlignment value.
+// HorizontalAlignment value. CSS Text 3 §7 logical keywords "start" and "end"
+// stay logical here; FormatParagraph resolves them to physical Left/Right
+// after paragraph direction is known.
 func ParseHorizontalAlign(align string, styles *FormattingStyles) frontend.HorizontalAlignment {
 	switch align {
-	case "left", "start":
+	case "left":
 		return frontend.HAlignLeft
 	case "center":
 		return frontend.HAlignCenter
-	case "right", "end":
+	case "right":
 		return frontend.HAlignRight
 	case "justify":
 		return frontend.HAlignJustified
+	case "start":
+		return frontend.HAlignStart
+	case "end":
+		return frontend.HAlignEnd
 	case "inherit":
 		return styles.Halign
 	default:
@@ -139,7 +146,12 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "font-size":
 			// already set
 		case "hyphens":
-			// ignore for now
+			// CSS Text 3 §6: "none" suppresses automatic and soft-hyphen
+			// breaks; "manual" allows only soft-hyphen (U+00AD) breaks;
+			// "auto" lets the UA hyphenate per language patterns. We carry
+			// the keyword as-is and translate to the no-op language at
+			// ApplySettings when it's "none" or "manual".
+			ih.hyphens = strings.ToLower(strings.TrimSpace(v))
 		case "display":
 			ih.Hide = (v == "none")
 		case "background-color":
@@ -379,9 +391,11 @@ type FormattingStyles struct {
 	fontexpansion           *float64
 	Halign                  frontend.HorizontalAlignment
 	hangingPunctuation      frontend.HangingPunctuation
+	hyphens                 string // CSS hyphens: "" (auto), "auto", "manual", "none"
 	indent                  bag.ScaledPoint
 	indentRows              int
-	language                string
+	language                string     // BCP47 tag (e.g. "en", "ar", "de-DE")
+	langPattern             *lang.Lang // resolved hyphenator for {language, hyphens}; nil = use parent / doc default
 	letterSpacing           bag.ScaledPoint
 	lineheight              bag.ScaledPoint
 	lineheightFactor        float64 // unitless line-height factor (e.g. 1.2); recalculated per element
@@ -434,7 +448,9 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		fontstyle:          is.fontstyle,
 		Fontweight:         is.Fontweight,
 		hangingPunctuation: is.hangingPunctuation,
+		hyphens:            is.hyphens,
 		language:           is.language,
+		langPattern:        is.langPattern,
 		letterSpacing:      is.letterSpacing,
 		lineheight:         is.lineheight,
 		lineheightFactor:   is.lineheightFactor,
@@ -448,6 +464,52 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		Halign:             is.Halign,
 	}
 	return newis
+}
+
+// noHyphenationKey is the cache key used for the document-wide no-op
+// hyphenator. Any string that does not match a known BCP47 tag would do; this
+// one is reserved enough to avoid colliding with a real language id.
+const noHyphenationKey = "x-htmlbag-nohyphenation"
+
+// applyLangAndHyphens reads HTML lang= / xml:lang= from item.Attributes and
+// resolves the effective hyphenation language for ih. The resolution follows
+// CSS Text 3 §6:
+//
+//   - hyphens: "none"   → no-op hyphenator (no breakpoints inserted)
+//   - hyphens: "manual" → no-op hyphenator. Soft-hyphen (U+00AD) breaks are
+//                         created at glyph-build time, independent of patterns.
+//   - hyphens: "" / "auto" → frontend.GetLanguage(language). Unknown tags
+//                            resolve to a no-op hyphenator (UA must not
+//                            hyphenate without matching patterns).
+//
+// HTML5 treats lang as the inheritable language tag; xml:lang is honoured as
+// a fallback only when lang is missing.
+func applyLangAndHyphens(ih *FormattingStyles, attrs map[string]string, df *frontend.Document) {
+	if v, ok := attrs["lang"]; ok {
+		ih.language = strings.TrimSpace(v)
+	} else if v, ok := attrs["xml:lang"]; ok {
+		ih.language = strings.TrimSpace(v)
+	}
+	switch ih.hyphens {
+	case "none", "manual":
+		l, err := df.GetLanguageCached(noHyphenationKey)
+		if err != nil {
+			bag.Logger.Error("Cannot create no-op hyphenator", "err", err)
+			return
+		}
+		ih.langPattern = l
+	default:
+		// "auto" or empty — honour the language tag.
+		if ih.language == "" {
+			return
+		}
+		l, err := df.GetLanguageCached(ih.language)
+		if err != nil {
+			bag.Logger.Error("Cannot resolve language", "tag", ih.language, "err", err)
+			return
+		}
+		ih.langPattern = l
+	}
 }
 
 // ApplySettings converts the inheritable settings to boxes and glue text
@@ -521,6 +583,12 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	if ih.leaderContent != "" {
 		settings[frontend.SettingLeader] = ih.leaderContent
+	}
+	if ih.langPattern != nil {
+		settings[frontend.SettingLanguage] = ih.langPattern
+	}
+	if ih.hyphens != "" {
+		settings[frontend.SettingHyphens] = ih.hyphens
 	}
 }
 
@@ -615,6 +683,7 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err
 	}
+	applyLangAndHyphens(styles, item.Attributes, df)
 	ApplySettings(newte.Settings, styles)
 	newte.Settings[frontend.SettingDebug] = item.Data
 	// Any element with an id attribute creates a named PDF destination.
@@ -1007,6 +1076,7 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 				ss.PopStyles()
 				return err
 			}
+			applyLangAndHyphens(sty, item.Attributes, df)
 			ApplySettings(leaderText.Settings, sty)
 			te.Items = append(te.Items, leaderText)
 			ss.PopStyles()
@@ -1019,6 +1089,7 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 			if err := StylesToStyles(sty, item.Styles, df, currentFontsize); err != nil {
 				return err
 			}
+			applyLangAndHyphens(sty, item.Attributes, df)
 			ApplySettings(cld.Settings, sty)
 			for k, v := range childSettings {
 				cld.Settings[k] = v

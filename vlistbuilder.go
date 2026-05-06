@@ -360,14 +360,23 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					se.ActualText = extractTextContent(te)
 				}
 				// LI must contain exactly one LBody (PDF/UA 7.2)
-				if role == "LI" {
+				switch {
+				case role == "LI":
 					cb.structureCurrent.AddChild(se)
 					lbody := &document.StructureElement{Role: "LBody"}
 					lbody.ActualText = se.ActualText
 					se.ActualText = ""
 					se.AddChild(lbody)
 					tagVList(vl, lbody)
-				} else {
+				case role == "Figure" && hasFormXObjectImage(te):
+					// PDF/UA-1 §7.1 Note 1: a Figure whose entire body is a
+					// Form XObject (imported PDF) attaches via /StructParent
+					// on the XObject and an OBJR entry in se.K — no marked
+					// content sequence on the page. This stops Acrobat's
+					// tag inspector from expanding XObject path operators.
+					cb.structureCurrent.AddChild(se)
+					tagVListAsXObjectFigure(vl, se)
+				default:
 					cb.structureCurrent.AddChild(se)
 					tagVList(vl, se)
 				}
@@ -392,11 +401,70 @@ func extractTextContent(te *frontend.Text) string {
 	return b.String()
 }
 
-// findImageAlt checks if a Text element contains an image (VList with "alt"
-// attribute) and returns its alt text. Returns empty string if no image found.
+// hasFormXObjectImage reports whether the (recursively inspected) Text tree
+// contains an *node.Image whose underlying Imagefile is a PDF import (Format
+// == "pdf"). Only PDF imports are written as Form XObjects whose internal
+// path operators trip Acrobat's tag inspector; raster images (PNG/JPEG) go
+// through a /Subtype /Image XObject which Acrobat treats as atomic, so they
+// can keep using the conventional MCID-on-page tagging path.
+func hasFormXObjectImage(te *frontend.Text) bool {
+	for _, itm := range te.Items {
+		switch t := itm.(type) {
+		case *node.Image:
+			if t.ImageFile != nil && t.ImageFile.Format == "pdf" {
+				return true
+			}
+		case *frontend.Text:
+			if hasFormXObjectImage(t) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// findImageNodeForXObjectFigure walks a VList looking for the *node.Image
+// whose underlying Imagefile is a PDF import. The backend uses this at
+// shipout time to attach the /StructParent index to the right Imagefile.
+func findImageNodeForXObjectFigure(head node.Node) *node.Image {
+	for n := head; n != nil; n = n.Next() {
+		switch t := n.(type) {
+		case *node.Image:
+			if t.ImageFile != nil && t.ImageFile.Format == "pdf" {
+				return t
+			}
+		case *node.HList:
+			if img := findImageNodeForXObjectFigure(t.List); img != nil {
+				return img
+			}
+		case *node.VList:
+			if img := findImageNodeForXObjectFigure(t.List); img != nil {
+				return img
+			}
+		}
+	}
+	return nil
+}
+
+// findImageAlt checks if a Text element contains an image and returns its
+// alt text. Two image carriers are recognised:
+//
+//   - *node.Image — produced by the raster/PDF path in inheritablestyles.go
+//     (the alt attribute is stamped onto imgNode.Attributes["alt"]).
+//   - *node.VList — produced by the SVG path, which wraps the SVG render
+//     in a Vpack and stamps alt onto its Attributes.
+//
+// Returns the empty string when neither is present in the (recursively
+// inspected) Text tree.
 func findImageAlt(te *frontend.Text) string {
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
+		case *node.Image:
+			if t.Attributes != nil {
+				if alt, ok := t.Attributes["alt"].(string); ok {
+					return alt
+				}
+			}
 		case *node.VList:
 			if t.Attributes != nil {
 				if alt, ok := t.Attributes["alt"].(string); ok {
