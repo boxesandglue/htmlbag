@@ -152,6 +152,18 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			// the keyword as-is and translate to the no-op language at
 			// ApplySettings when it's "none" or "manual".
 			ih.hyphens = strings.ToLower(strings.TrimSpace(v))
+		case "-bag-linebreak-hyphen-penalty":
+			// boxesandglue-specific: Knuth-Plass hyphen penalty (int).
+			// Lower values encourage hyphenation.
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				ih.hyphenPenalty = n
+			}
+		case "-bag-linebreak-tolerance":
+			// boxesandglue-specific: Knuth-Plass tolerance (float).
+			// Higher values allow looser lines.
+			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+				ih.linebreakTolerance = f
+			}
 		case "display":
 			ih.Hide = (v == "none")
 		case "background-color":
@@ -392,6 +404,8 @@ type FormattingStyles struct {
 	Halign                  frontend.HorizontalAlignment
 	hangingPunctuation      frontend.HangingPunctuation
 	hyphens                 string // CSS hyphens: "" (auto), "auto", "manual", "none"
+	hyphenPenalty           int    // -bag-linebreak-hyphen-penalty (0 = inherit/default)
+	linebreakTolerance      float64 // -bag-linebreak-tolerance (0 = inherit/default)
 	indent                  bag.ScaledPoint
 	indentRows              int
 	language                string     // BCP47 tag (e.g. "en", "ar", "de-DE")
@@ -449,6 +463,8 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		Fontweight:         is.Fontweight,
 		hangingPunctuation: is.hangingPunctuation,
 		hyphens:            is.hyphens,
+		hyphenPenalty:      is.hyphenPenalty,
+		linebreakTolerance: is.linebreakTolerance,
 		language:           is.language,
 		langPattern:        is.langPattern,
 		letterSpacing:      is.letterSpacing,
@@ -589,6 +605,12 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	if ih.hyphens != "" {
 		settings[frontend.SettingHyphens] = ih.hyphens
+	}
+	if ih.hyphenPenalty != 0 {
+		settings[frontend.SettingHyphenPenalty] = ih.hyphenPenalty
+	}
+	if ih.linebreakTolerance != 0 {
+		settings[frontend.SettingLinebreakTolerance] = ih.linebreakTolerance
 	}
 }
 
@@ -1061,10 +1083,7 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 			}
 			te.Items = append(te.Items, bcNode)
 		case "br":
-			br := node.NewPenalty()
-			br.Penalty = -10000
-			br.Attributes = node.H{"htmlbr": true}
-			te.Items = append(te.Items, br)
+			te.Items = append(te.Items, node.NewHardBreak())
 			return nil
 		}
 
