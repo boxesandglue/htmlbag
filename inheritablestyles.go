@@ -622,7 +622,7 @@ type StylesStack []*FormattingStyles
 func (ss *StylesStack) PushStyles() *FormattingStyles {
 	var is *FormattingStyles
 	if len(*ss) == 0 {
-		is = &FormattingStyles{}
+		is = &FormattingStyles{Halign: frontend.HAlignStart}
 	} else {
 		is = (*ss)[len(*ss)-1].Clone()
 	}
