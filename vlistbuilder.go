@@ -290,7 +290,28 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// Apply borders/background to this block container
 		if hasBorderOrBg {
 			vls.Width = childBaseWidth
+			// Snapshot the inner children before HTMLBorder mutates the
+			// list (it prepends a bg-rule and re-wraps in hpack/vpack).
+			// outputBlockSplit reuses this snapshot to fragment the block
+			// across pages when it's taller than the content area.
+			var splittableInner []node.Node
+			for n := vls.List; n != nil; n = n.Next() {
+				splittableInner = append(splittableInner, n)
+			}
+			splittableHv := hv
+			splittableInnerWidth := childBaseWidth
+
 			vls = cb.HTMLBorder(vls, hv)
+
+			if len(splittableInner) > 0 {
+				if vls.Attributes == nil {
+					vls.Attributes = node.H{}
+				}
+				vls.Attributes["_splittable"] = true
+				vls.Attributes["_splittableInner"] = splittableInner
+				vls.Attributes["_splittableHv"] = splittableHv
+				vls.Attributes["_splittableInnerWidth"] = splittableInnerWidth
+			}
 		}
 
 		// PDF/UA: pop structure element back to parent
@@ -337,7 +358,28 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 
 	// Apply borders if any are defined
 	if hv.hasBorder() || hv.BackgroundColor != nil {
+		// Snapshot the inner children (typically HList lines for <pre>)
+		// before HTMLBorder mutates the list. outputBlockSplit reuses this
+		// snapshot to fragment the block across pages when its wrapped
+		// height exceeds the content area.
+		var splittableInner []node.Node
+		for n := vl.List; n != nil; n = n.Next() {
+			splittableInner = append(splittableInner, n)
+		}
+		splittableHv := hv
+		splittableInnerWidth := contentWidth
+
 		vl = cb.HTMLBorder(vl, hv)
+
+		if len(splittableInner) > 0 {
+			if vl.Attributes == nil {
+				vl.Attributes = node.H{}
+			}
+			vl.Attributes["_splittable"] = true
+			vl.Attributes["_splittableInner"] = splittableInner
+			vl.Attributes["_splittableHv"] = splittableHv
+			vl.Attributes["_splittableInnerWidth"] = splittableInnerWidth
+		}
 	}
 
 	// PDF/UA: tag leaf block elements (p, h1-h6, pre, code)

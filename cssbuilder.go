@@ -511,10 +511,26 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		// the current page either, break before cur instead.
 		if avoidBreakAfter(cur) && next != nil {
 			peekH := h + vlistNodeHeight(next)
-			if nn := next.Next(); nn != nil {
+			nn := next.Next()
+			if nn != nil {
 				peekH += vlistNodeHeight(nn)
 			}
-			if trialPageHeight(incoming, peekH) > contentArea && cb.pageBufHeight > 0 {
+			fits := trialPageHeight(incoming, peekH) <= contentArea
+			// Relaxation for splittable nn (e.g. <pre>): the orphan-heading
+			// rule only requires the heading + at least one line of the
+			// following block on the same page. The rest can split off via
+			// outputBlockSplit. Without this, a long <pre> after a heading
+			// pushes the heading to the next page even though splitting
+			// would let it stay in place.
+			if !fits && nn != nil {
+				if reduced, ok := splittablePeekHeight(nn); ok {
+					relaxedH := h + vlistNodeHeight(next) + reduced
+					if trialPageHeight(incoming, relaxedH) <= contentArea {
+						fits = true
+					}
+				}
+			}
+			if !fits && cb.pageBufHeight > 0 {
 				if err := cb.NewPage(); err != nil {
 					return err
 				}
@@ -738,61 +754,120 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 		contentArea := pd.Height - pd.MarginTop - pd.MarginBottom
 
 		// Special path: tables with repeating headers. outputTableRows
-		// uses direct OutputAt, so we have to ship the body buffer
-		// (and any pending inserts) before invoking it, then force a
-		// fresh page after so subsequent buffered body doesn't overlap
-		// with table rows that were painted directly.
+		// uses direct OutputAt and is boundary-isolated — it forces a
+		// page break before AND after, so any surrounding body content
+		// lands on its own page. Take it only when the table actually
+		// spans more than one page. Short tables (the typical Markdown
+		// case — GFM tables always carry a thead, so _buildHeaders is
+		// set unconditionally) go through the normal pageBuf path
+		// below, which composes them with adjacent paragraphs without
+		// spurious page breaks.
 		if tableVL, ok := cur.(*node.VList); ok && tableVL.Attributes != nil {
 			if buildHeadersFn, tok := tableVL.Attributes["_buildHeaders"]; tok {
-				if cb.pageBufHeight > 0 || len(cb.pageInserts[InsertFloatTop]) > 0 || len(cb.pageInserts[InsertFootnote]) > 0 {
-					if err := cb.NewPage(); err != nil {
+				tableIncoming := insertsOnNode(cur)
+				tableInsertsH := cb.totalFloatTopHeight(filterInserts(tableIncoming, InsertFloatTop)) +
+					cb.totalFloatBottomHeight(filterInserts(tableIncoming, InsertFloatBottom)) +
+					cb.totalFootnoteHeight(filterInserts(tableIncoming, InsertFootnote))
+				if h+tableInsertsH > contentArea {
+					if cb.pageBufHeight > 0 || len(cb.pageInserts[InsertFloatTop]) > 0 || len(cb.pageInserts[InsertFootnote]) > 0 {
+						if err := cb.NewPage(); err != nil {
+							return err
+						}
+						if err := refreshPage(); err != nil {
+							return err
+						}
+					}
+					yLocal := pd.Height - pd.MarginTop
+					yLimitLocal := pd.MarginBottom
+					phc := false
+					if err := cb.outputTableRows(tableVL, buildHeadersFn, &yLocal, &yLimitLocal, &phc, &pd); err != nil {
 						return err
 					}
-					if err := refreshPage(); err != nil {
-						return err
+					// Commit the table's own inserts (typically footnotes
+					// from cells) to the page that holds the table's last
+					// rows; they paint at the next flushInserts.
+					if len(tableIncoming) > 0 {
+						for _, ins := range tableIncoming {
+							cb.pageInserts[ins.Class] = append(cb.pageInserts[ins.Class], ins)
+						}
+						cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
+						cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
 					}
-				}
-				yLocal := pd.Height - pd.MarginTop
-				yLimitLocal := pd.MarginBottom
-				phc := false
-				if err := cb.outputTableRows(tableVL, buildHeadersFn, &yLocal, &yLimitLocal, &phc, &pd); err != nil {
-					return err
-				}
-				// Commit the table's own inserts (typically footnotes
-				// from cells) to the page that holds the table's last
-				// rows; they paint at the next flushInserts.
-				if incoming := insertsOnNode(cur); len(incoming) > 0 {
-					for _, ins := range incoming {
-						cb.pageInserts[ins.Class] = append(cb.pageInserts[ins.Class], ins)
+					// Force a fresh page for whatever follows so the body
+					// buffer doesn't paint over the directly-placed rows.
+					// Skip if no more content — the caller's final flush
+					// will ship the table's last page cleanly.
+					if next != nil {
+						if err := cb.NewPage(); err != nil {
+							return err
+						}
+						if err := refreshPage(); err != nil {
+							return err
+						}
 					}
-					cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
-					cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
+					cur = next
+					continue
 				}
-				// Force a fresh page for whatever follows so the body
-				// buffer doesn't paint over the directly-placed rows.
-				// Skip if no more content — the caller's final flush
-				// will ship the table's last page cleanly.
-				if next != nil {
-					if err := cb.NewPage(); err != nil {
-						return err
-					}
-					if err := refreshPage(); err != nil {
-						return err
-					}
-				}
-				cur = next
-				continue
 			}
 		}
 
 		incoming := insertsOnNode(cur)
 
+		// Splittable block (<pre>, block container with bg/border) that's
+		// taller than what fits even on an empty page: fragment it across
+		// pages instead of letting the wrapped vlist run off the bottom.
+		// Short splittable blocks fall through to the normal pageBuf path.
+		if vlS, ok := cur.(*node.VList); ok && vlS.Attributes != nil {
+			if isSplittable, _ := vlS.Attributes["_splittable"].(bool); isSplittable {
+				if trialPageHeight(incoming, h) > contentArea {
+					// Commit incoming inserts so outputBlockSplit's
+					// availOnPage sees the correct float/footnote
+					// reservations. Don't ship pageBuf here — the splitter
+					// appends its first fragment after whatever's already
+					// buffered (e.g. a heading just placed via the
+					// avoidBreakAfter relaxation), and only calls NewPage
+					// between fragments.
+					if len(incoming) > 0 {
+						for _, ins := range incoming {
+							cb.pageInserts[ins.Class] = append(cb.pageInserts[ins.Class], ins)
+						}
+						cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
+						cb.pageInsertHeight[InsertFloatBottom] = cb.totalFloatBottomHeight(cb.pageInserts[InsertFloatBottom])
+						cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
+					}
+					if err := cb.outputBlockSplit(vlS, &pd, refreshPage); err != nil {
+						return err
+					}
+					if forceBreakAfter(cur) && next != nil {
+						if err := cb.NewPage(); err != nil {
+							return err
+						}
+						if err := refreshPage(); err != nil {
+							return err
+						}
+					}
+					cur = next
+					continue
+				}
+			}
+		}
+
 		if avoidBreakAfter(cur) && next != nil {
 			peekH := h + vlistNodeHeight(next)
-			if nn := next.Next(); nn != nil {
+			nn := next.Next()
+			if nn != nil {
 				peekH += vlistNodeHeight(nn)
 			}
-			if trialPageHeight(incoming, peekH) > contentArea && cb.pageBufHeight > 0 {
+			fits := trialPageHeight(incoming, peekH) <= contentArea
+			if !fits && nn != nil {
+				if reduced, ok := splittablePeekHeight(nn); ok {
+					relaxedH := h + vlistNodeHeight(next) + reduced
+					if trialPageHeight(incoming, relaxedH) <= contentArea {
+						fits = true
+					}
+				}
+			}
+			if !fits && cb.pageBufHeight > 0 {
 				if err := cb.NewPage(); err != nil {
 					return err
 				}
@@ -848,6 +923,179 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 		cur = next
 	}
 
+	return nil
+}
+
+// outputBlockSplit fragments a splittable block (e.g. <pre>) across pages
+// when its wrapped height exceeds the available content area. The block was
+// marked in vlistbuilder.go with `_splittableInner` (slice of inner children),
+// `_splittableHv` (HTMLValues), and `_splittableInnerWidth`.
+//
+// Per-fragment wrapping rules (CSS-style fragmentation):
+//   - top fragment    keeps padding-top + border-top, drops bottom side
+//   - middle fragment drops both top and bottom sides
+//   - bottom fragment drops top side, keeps padding-bottom + border-bottom
+//
+// Padding-left/right and side-borders are emitted on every fragment.
+//
+// Each fragment is buffered via bufferBody so it composes correctly with
+// surrounding paragraphs in the page buffer; NewPage is called between
+// fragments to ship the partial page.
+func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, refreshPage func() error) error {
+	children, _ := blockVL.Attributes["_splittableInner"].([]node.Node)
+	hv, _ := blockVL.Attributes["_splittableHv"].(HTMLValues)
+	innerWidth, _ := blockVL.Attributes["_splittableInnerWidth"].(bag.ScaledPoint)
+
+	if len(children) == 0 {
+		return nil
+	}
+
+	// Detach so children can be re-linked into per-fragment vlists.
+	for _, c := range children {
+		c.SetPrev(nil)
+		c.SetNext(nil)
+	}
+
+	const (
+		fragTop = iota
+		fragMiddle
+		fragBottom
+		fragOnly
+	)
+
+	// buildFragment wraps a slice of inner children with HTMLBorder using a
+	// per-fragment HTMLValues that drops paddings/borders on the cut sides.
+	buildFragment := func(items []node.Node, kind int) (*node.VList, bag.ScaledPoint) {
+		innerVL := node.NewVList()
+		innerVL.Width = innerWidth
+		var totalH bag.ScaledPoint
+		for i, n := range items {
+			if i == 0 {
+				innerVL.List = n
+			} else {
+				innerVL.List = node.InsertAfter(innerVL.List, node.Tail(innerVL.List), n)
+			}
+			totalH += vlistNodeHeight(n)
+		}
+		innerVL.Height = totalH
+		fragHv := hv
+		if kind != fragTop && kind != fragOnly {
+			fragHv.PaddingTop = 0
+			fragHv.BorderTopWidth = 0
+		}
+		if kind != fragBottom && kind != fragOnly {
+			fragHv.PaddingBottom = 0
+			fragHv.BorderBottomWidth = 0
+		}
+		wrapped := cb.HTMLBorder(innerVL, fragHv)
+		return wrapped, vlistNodeHeight(wrapped)
+	}
+
+	availOnPage := func() bag.ScaledPoint {
+		contentArea := pd.Height - pd.MarginTop - pd.MarginBottom
+		used := cb.pageBufHeight +
+			cb.pageInsertHeight[InsertFloatTop] +
+			cb.pageInsertHeight[InsertFloatBottom] +
+			cb.pageInsertHeight[InsertFootnote]
+		return contentArea - used
+	}
+
+	totalH := func(items []node.Node) bag.ScaledPoint {
+		var s bag.ScaledPoint
+		for _, n := range items {
+			s += vlistNodeHeight(n)
+		}
+		return s
+	}
+
+	i := 0
+	isFirst := true
+	for i < len(children) {
+		avail := availOnPage()
+
+		// Try to fit all remaining children with bottom-fragment overhead.
+		topOverhead := bag.ScaledPoint(0)
+		if isFirst {
+			topOverhead = hv.PaddingTop + hv.BorderTopWidth
+		}
+		bottomOverhead := hv.PaddingBottom + hv.BorderBottomWidth
+		remaining := totalH(children[i:])
+
+		if topOverhead+remaining+bottomOverhead <= avail {
+			kind := fragBottom
+			if isFirst {
+				kind = fragOnly
+			}
+			wrapped, h := buildFragment(children[i:], kind)
+			cb.bufferBody(wrapped, h, -1)
+			return nil
+		}
+
+		// Doesn't all fit: collect a top/middle fragment that does fit.
+		var batch []node.Node
+		batchH := bag.ScaledPoint(0)
+		for ; i < len(children); i++ {
+			ch := vlistNodeHeight(children[i])
+			if topOverhead+batchH+ch > avail && len(batch) > 0 {
+				break
+			}
+			batch = append(batch, children[i])
+			batchH += ch
+		}
+		if len(batch) == 0 {
+			// One child is taller than a full empty page. Place it anyway —
+			// truncation is unavoidable. Advance so the loop terminates.
+			batch = append(batch, children[i])
+			i++
+		}
+
+		// Widow protection: count actual lines (HList nodes) — children
+		// alternate HList,Glue,HList,Glue so raw count doubles. The next
+		// page must carry at least minLines HLists; otherwise pull items
+		// back from this batch until it does, while leaving at least
+		// minLines in the current batch (don't trade a widow for an
+		// orphan).
+		const minLines = 2
+		countHL := func(items []node.Node) int {
+			n := 0
+			for _, c := range items {
+				if _, ok := c.(*node.HList); ok {
+					n++
+				}
+			}
+			return n
+		}
+		if i < len(children) {
+			remainingLines := countHL(children[i:])
+			for remainingLines < minLines && countHL(batch) > minLines {
+				last := batch[len(batch)-1]
+				batchH -= vlistNodeHeight(last)
+				batch = batch[:len(batch)-1]
+				i--
+				if _, ok := last.(*node.HList); ok {
+					remainingLines++
+				}
+			}
+		}
+
+		kind := fragTop
+		if !isFirst {
+			kind = fragMiddle
+		}
+		wrapped, h := buildFragment(batch, kind)
+		cb.bufferBody(wrapped, h, -1)
+		isFirst = false
+
+		// More fragments to come: ship this page and start fresh.
+		if i < len(children) {
+			if err := cb.NewPage(); err != nil {
+				return err
+			}
+			if err := refreshPage(); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -954,6 +1202,27 @@ func forceBreakBefore(n node.Node) bool {
 		}
 	}
 	return false
+}
+
+// splittablePeekHeight returns the minimum vertical extent of a splittable
+// block that must travel with a preceding break-after:avoid heading on the
+// same page. That's the top padding/border plus the first inner child
+// (typically a single code line for <pre>). Returns ok=false for nodes that
+// can't be split — callers fall back to the full vlistNodeHeight.
+func splittablePeekHeight(n node.Node) (bag.ScaledPoint, bool) {
+	vl, ok := n.(*node.VList)
+	if !ok || vl.Attributes == nil {
+		return 0, false
+	}
+	if isSplittable, _ := vl.Attributes["_splittable"].(bool); !isSplittable {
+		return 0, false
+	}
+	children, _ := vl.Attributes["_splittableInner"].([]node.Node)
+	if len(children) == 0 {
+		return 0, false
+	}
+	hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
+	return hv.PaddingTop + hv.BorderTopWidth + vlistNodeHeight(children[0]), true
 }
 
 // vlistNodeHeight returns the vertical extent of a node in a vertical list.
