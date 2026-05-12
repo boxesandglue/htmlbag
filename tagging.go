@@ -29,8 +29,15 @@ var htmlToPDFRole = map[string]string{
 	"ol":         "L",
 	"li":         "LI",
 	"blockquote": "BlockQuote",
-	"code":       "Code",
-	"pre":        "Code",
+	"code": "Code",
+	// PDF/UA-1 (ISO 14289-1, based on PDF 1.7) treats Code as an inline
+	// structure element — peer of Span/Quote/Link, never a top-level block.
+	// Goldmark renders Markdown code blocks as <pre><code>…</code></pre>;
+	// mapping <pre> to P keeps the inner <code> as inline Code inside a
+	// proper block container, which is what PAC expects. Without this
+	// PAC reports "Possibly inappropriate use of a Code structure element"
+	// for every fenced code block in the document.
+	"pre": "P",
 	"section":    "Sect",
 	"article":    "Art",
 }

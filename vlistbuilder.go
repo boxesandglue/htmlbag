@@ -410,6 +410,23 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					se.ActualText = ""
 					se.AddChild(lbody)
 					tagVList(vl, lbody)
+				case tag == "pre":
+					// PDF/UA-1 (ISO 14289-1, based on PDF 1.7 §14.8) treats
+					// Code as an inline structure element — it must live
+					// inside a block container, never at the block level
+					// itself. Markdown fenced code blocks render as
+					// <pre><code>…</code></pre>; the natural structure tree
+					// is therefore P > Code > glyphs. We mirror the LI/LBody
+					// pattern: the outer VList stays untouched (visual
+					// layout unchanged), the StructElem hierarchy gains a
+					// Code child, and the glyph-level marked content
+					// attaches under Code via the inner tag.
+					cb.structureCurrent.AddChild(se)
+					code := &document.StructureElement{Role: "Code"}
+					code.ActualText = se.ActualText
+					se.ActualText = ""
+					se.AddChild(code)
+					tagVList(vl, code)
 				case role == "Figure" && hasFormXObjectImage(te):
 					// PDF/UA-1 §7.1 Note 1: a Figure whose entire body is a
 					// Form XObject (imported PDF) attaches via /StructParent

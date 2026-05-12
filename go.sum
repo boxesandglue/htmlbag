@@ -2,10 +2,10 @@ github.com/PuerkitoBio/goquery v1.11.0 h1:jZ7pwMQXIITcUXNH83LLk+txlaEy6NVOfTuP43
 github.com/PuerkitoBio/goquery v1.11.0/go.mod h1:wQHgxUOU3JGuj3oD/QFfxUdlzW6xPHfqyHre6VMY4DQ=
 github.com/andybalholm/cascadia v1.3.3 h1:AG2YHrzJIm4BZ19iwJ/DAua6Btl3IwJX+VI4kktS1LM=
 github.com/andybalholm/cascadia v1.3.3/go.mod h1:xNd9bqTn98Ln4DwST8/nG+H0yuB8Hmgu1YHNnWw0GeA=
-github.com/boxesandglue/baseline-pdf v1.1.10 h1:QaT+z5TFtbxYr4UVxK9waN5leNZNt7FbV+MZ4OzDZZs=
-github.com/boxesandglue/baseline-pdf v1.1.10/go.mod h1:3TUZ/WkquofWJCXygtjf60SSKNPN7sI8R8ueSJe8JLc=
-github.com/boxesandglue/boxesandglue v0.2.19 h1:oG8l3GzbFVHONIpFErXFgYUla57a33sVudS9zDtuJYY=
-github.com/boxesandglue/boxesandglue v0.2.19/go.mod h1:lkhIzk73b4xwlySXD+LfCy/RPi50uGiIPoAFkO6yMDU=
+github.com/boxesandglue/baseline-pdf v1.1.11 h1:BkgsKltroSFFgsq5dZkiBKpE2qYtNwtLK1qIOEFFuno=
+github.com/boxesandglue/baseline-pdf v1.1.11/go.mod h1:3TUZ/WkquofWJCXygtjf60SSKNPN7sI8R8ueSJe8JLc=
+github.com/boxesandglue/boxesandglue v0.2.20 h1:724HUP6F/kD10qh1qfd48BKfqJZD5AKpnPJvZOvB3Eg=
+github.com/boxesandglue/boxesandglue v0.2.20/go.mod h1:qeXWjgAuBeUQhoNMYJAAvmb+Qj0GUU6YKbcLqb1lVWA=
 github.com/boxesandglue/csshtml v0.0.9 h1:WAcTKPsQdmu6ditmtBQEjs4cGv5CHbe9be3HuNNfJbA=
 github.com/boxesandglue/csshtml v0.0.9/go.mod h1:d4YDYIASwL2S4nH4VOPwUXESipLhBlfC/pp6LR+7K+w=
 github.com/boxesandglue/gofpdi v1.0.23 h1:1dDjmFC97QDrGi3whCX2qCG03bkFXY+dLk85+ZnZ2og=
