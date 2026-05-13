@@ -11,14 +11,17 @@ import (
 )
 
 // TestInlinePaddingSymmetry guards the contract that Mknodes inserts BOTH a
-// padding-left and a padding-right glue around an inline run carrying CSS
+// padding-left and a padding-right Kern around an inline run carrying CSS
 // padding. Regression history: through 2026-05-11 only the padding-right
 // branch existed in nodebuilding.go, so any inline `<code>` or `<span>` with
 // `padding: 0 4pt` rendered visibly asymmetric — 4pt on the right, 0 on the
 // left. Symptom: a wide gap before the comma in `(H1, H2)` rendered through
-// the markdown showcase. Fix lives in Mknodes (Inline-glue insertion) plus
+// the markdown showcase. Fix lives in Mknodes (inline-Kern insertion) plus
 // FormatParagraph (which now deletes SettingPaddingLeft after consuming it
 // as IndentLeft so the inline path doesn't double-apply at the block level).
+// 2026-05-13: switched from Glue to Kern — inline padding is rigid space
+// without a Knuth-Plass breakpoint, so a trailing ")" can no longer wrap to
+// the next line across the </code> font boundary.
 func TestInlinePaddingSymmetry(t *testing.T) {
 	var buf bytes.Buffer
 	fe, err := frontend.NewForWriter(&buf)
@@ -67,29 +70,29 @@ func TestInlinePaddingSymmetry(t *testing.T) {
 	var sawLeft, sawRight bool
 	var leftWidth, rightWidth bag.ScaledPoint
 	for n := head; n != nil; n = n.Next() {
-		g, ok := n.(*node.Glue)
-		if !ok || g.Attributes == nil {
+		k, ok := n.(*node.Kern)
+		if !ok || k.Attributes == nil {
 			continue
 		}
-		switch g.Attributes["origin"] {
+		switch k.Attributes["origin"] {
 		case "padding left":
 			sawLeft = true
-			leftWidth = g.Width
+			leftWidth = k.Kern
 		case "padding right":
 			sawRight = true
-			rightWidth = g.Width
+			rightWidth = k.Kern
 		}
 	}
 	want := bag.MustSP("4pt")
 	if !sawLeft {
-		t.Error("no padding-left glue inserted around inline Text")
+		t.Error("no padding-left Kern inserted around inline Text")
 	} else if leftWidth != want {
-		t.Errorf("padding-left glue width = %s, want %s", leftWidth, want)
+		t.Errorf("padding-left Kern width = %s, want %s", leftWidth, want)
 	}
 	if !sawRight {
-		t.Error("no padding-right glue inserted around inline Text")
+		t.Error("no padding-right Kern inserted around inline Text")
 	} else if rightWidth != want {
-		t.Errorf("padding-right glue width = %s, want %s", rightWidth, want)
+		t.Errorf("padding-right Kern width = %s, want %s", rightWidth, want)
 	}
 }
 
