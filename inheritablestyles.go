@@ -14,6 +14,7 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/lang"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"github.com/boxesandglue/csshtml"
 	"github.com/boxesandglue/svgreader"
 	"golang.org/x/net/html"
 )
@@ -131,6 +132,43 @@ func ParseRelativeSize(fs string, cur bag.ScaledPoint, root bag.ScaledPoint) bag
 	}
 	// logger.Error(fmt.Sprintf("Could not convert %s from default %s", fs, cur))
 	return cur
+}
+
+// cssGenericFontFamilyAliases maps CSS Fonts 4 generic-family keywords to the
+// internal htmlbag family names. The codebase registers "sans" / "serif" /
+// "monospace" (htmlbag/fonts.go); CSS uses "sans-serif" as the spec keyword,
+// so a verbatim FindFontFamily lookup misses. Only sans-serif needs aliasing
+// — "serif" and "monospace" already match by identity, and the remaining
+// generics (cursive, fantasy, system-ui, …) are not registered, so they fall
+// through to the surrounding fallback.
+var cssGenericFontFamilyAliases = map[string]string{
+	"sans-serif": "sans",
+}
+
+// resolveCSSFontFamily parses a CSS font-family value (a comma-separated
+// prioritised list per CSS Fonts 4 §3.1) and returns the first family that
+// resolves against the document's registered families. Each candidate is
+// trimmed of surrounding whitespace and CSS string quotes, then looked up
+// directly first and via the generic-keyword alias table if the direct
+// lookup misses. Returns nil if no candidate resolves — the caller decides
+// the fallback.
+func resolveCSSFontFamily(v string, df *frontend.Document) *frontend.FontFamily {
+	for _, part := range strings.Split(v, ",") {
+		name := strings.TrimSpace(part)
+		name = strings.Trim(name, `"'`)
+		if name == "" {
+			continue
+		}
+		if ff := df.FindFontFamily(name); ff != nil {
+			return ff
+		}
+		if alias, ok := cssGenericFontFamilyAliases[name]; ok {
+			if ff := df.FindFontFamily(alias); ff != nil {
+				return ff
+			}
+		}
+	}
+	return nil
 }
 
 // StylesToStyles updates the inheritable formattingStyles from the attributes
@@ -265,8 +303,7 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "list-style-type":
 			ih.ListStyleType = v
 		case "font-family":
-			v = strings.Trim(v, `"`)
-			ih.fontfamily = df.FindFontFamily(v)
+			ih.fontfamily = resolveCSSFontFamily(v, df)
 			if ih.fontfamily == nil {
 				bag.Logger.Error("Font family not found, reverting to 'serif'", "requested family", v)
 				ih.fontfamily = df.FindFontFamily("serif")
@@ -337,6 +374,17 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			ih.indentRows = 1
 		case "user-select":
 			// ignore
+		case "counter-reset":
+			// CSS Lists 3 §3.1: counter-reset is a list of one or more
+			// "<name> [<integer>]?" pairs. Each pair creates a counter
+			// in this element's scope. The integer is optional and
+			// defaults to 0.
+			ih.counterReset = parseCounterList(v, 0)
+		case "counter-increment":
+			// CSS Lists 3 §3.2: counter-increment increments the nearest
+			// counter of the given name in the ancestor chain. The
+			// integer is optional and defaults to 1.
+			ih.counterIncrement = parseCounterList(v, 1)
 		case "vertical-align":
 			switch v {
 			case "sub":
@@ -420,6 +468,14 @@ type FormattingStyles struct {
 	marginTop               bag.ScaledPoint
 	paddingInlineStart      bag.ScaledPoint
 	OlCounter               int
+	// LocalCounters holds CSS counter values defined in this element's
+	// scope. Children look up counter values by walking the StylesStack
+	// from the top down, so siblings share counters declared on the
+	// nearest common ancestor (e.g. <ol counter-reset: list-item> seen
+	// from each <li counter-increment: list-item>).
+	LocalCounters    map[string]int
+	counterReset     map[string]int // CSS counter-reset on THIS element
+	counterIncrement map[string]int // CSS counter-increment on THIS element
 	ListPaddingLeft         bag.ScaledPoint
 	PaddingBottom           bag.ScaledPoint
 	PaddingLeft             bag.ScaledPoint
@@ -588,6 +644,10 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	settings[frontend.SettingTabSizeSpaces] = ih.tabsizeSpaces
 	settings[frontend.SettingTextDecorationLine] = ih.TextDecorationLine
 
+	if ih.Valign != frontend.VAlignDefault {
+		settings[frontend.SettingVAlign] = ih.Valign
+	}
+
 	if ih.pageBreakAfter != "" {
 		settings[frontend.SettingPageBreakAfter] = ih.pageBreakAfter
 	}
@@ -614,8 +674,99 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 }
 
+// parseCounterList parses a CSS counter-reset / counter-increment value
+// like "section" or "section 1 sub 0" — a whitespace-separated list of
+// names, each optionally followed by an integer. Names without a number
+// take defaultValue (0 for counter-reset, 1 for counter-increment).
+func parseCounterList(v string, defaultValue int) map[string]int {
+	out := map[string]int{}
+	fields := strings.Fields(v)
+	i := 0
+	for i < len(fields) {
+		name := fields[i]
+		i++
+		val := defaultValue
+		if i < len(fields) {
+			if n, err := strconv.Atoi(fields[i]); err == nil {
+				val = n
+				i++
+			}
+		}
+		out[name] = val
+	}
+	return out
+}
+
 // StylesStack mimics CSS style inheritance.
 type StylesStack []*FormattingStyles
+
+// applyCounters performs the per-element counter bookkeeping for the
+// styles at the top of the stack. counter-reset creates a counter in
+// the current scope; counter-increment finds the innermost counter of
+// the given name on the ancestor chain (creating one at the parent
+// scope when none exists, per CSS Lists 3 §3.2) and bumps it.
+func (ss *StylesStack) applyCounters() {
+	if len(*ss) == 0 {
+		return
+	}
+	cur := (*ss)[len(*ss)-1]
+	for name, n := range cur.counterReset {
+		if cur.LocalCounters == nil {
+			cur.LocalCounters = map[string]int{}
+		}
+		cur.LocalCounters[name] = n
+	}
+	for name, n := range cur.counterIncrement {
+		// Walk up the stack to find an existing counter of this name.
+		idx := -1
+		for j := len(*ss) - 1; j >= 0; j-- {
+			if _, ok := (*ss)[j].LocalCounters[name]; ok {
+				idx = j
+				break
+			}
+		}
+		if idx == -1 {
+			// Implicit reset at the parent (or root if no parent) per
+			// the spec. We anchor it at the parent scope so siblings
+			// share the counter; if we're already at root, anchor here.
+			anchor := 0
+			if len(*ss) >= 2 {
+				anchor = len(*ss) - 2
+			}
+			if (*ss)[anchor].LocalCounters == nil {
+				(*ss)[anchor].LocalCounters = map[string]int{}
+			}
+			(*ss)[anchor].LocalCounters[name] = 0
+			idx = anchor
+		}
+		(*ss)[idx].LocalCounters[name] += n
+	}
+}
+
+// CounterValue returns the value of the innermost counter with the given
+// name (walking the stack top-down). Returns 0 when no such counter
+// exists, matching the CSS fallback for counter(name).
+func (ss StylesStack) CounterValue(name string) int {
+	for i := len(ss) - 1; i >= 0; i-- {
+		if v, ok := ss[i].LocalCounters[name]; ok {
+			return v
+		}
+	}
+	return 0
+}
+
+// CounterValues returns every counter with the given name along the
+// ancestor chain, root-first. counters(name, sep) uses this for nested
+// numbering like "2.1.1".
+func (ss StylesStack) CounterValues(name string) []int {
+	var out []int
+	for i := 0; i < len(ss); i++ {
+		if v, ok := ss[i].LocalCounters[name]; ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
 
 // PushStyles creates a new style instance, pushes it onto the stack and returns
 // the new style.
@@ -706,6 +857,11 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 		return nil, err
 	}
 	applyLangAndHyphens(styles, item.Attributes, df)
+	// CSS Lists 3: process counter-reset / counter-increment on this
+	// element before any child sees the resulting counter values. The
+	// stack walks performed by counter()/counters() at content time read
+	// these values directly off the styles in the stack.
+	ss.applyCounters()
 	ApplySettings(newte.Settings, styles)
 	newte.Settings[frontend.SettingDebug] = item.Data
 	// Any element with an id attribute creates a named PDF destination.
@@ -758,12 +914,23 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 	// 	return newte, nil
 	case "ol", "ul":
 		styles.OlCounter = 0
-		styles.ListPaddingLeft = styles.PaddingLeft
+		// ListPaddingLeft is the gutter into which <li>'s marker hangs.
+		// Only overwrite it when THIS <ol>/<ul> declares an explicit
+		// padding-left; a nested list with padding-left: 0 keeps the
+		// outer list's gutter so its markers stay aligned with the
+		// outer markers rather than overlapping the body text.
+		if styles.PaddingLeft > 0 {
+			styles.ListPaddingLeft = styles.PaddingLeft
+		}
 	case "li":
 		var marker string
-		// Check for ::before pseudo-element with content
+		// Check for ::before pseudo-element with content. Parsing through
+		// csshtml.ParseContentValue lets us resolve counter() and
+		// counters() against the live StylesStack — without that the
+		// raw stringification would render as literal text.
 		if beforeContent, ok := item.Styles["before::content"]; ok {
-			marker = parseCSSContentValue(beforeContent)
+			tokens := csshtml.ParseContentValue(beforeContent)
+			marker = evaluateContentWithStack(tokens, ss)
 		} else if strings.HasPrefix(styles.ListStyleType, `"`) && strings.HasSuffix(styles.ListStyleType, `"`) {
 			marker = strings.TrimPrefix(styles.ListStyleType, `"`)
 			marker = strings.TrimSuffix(marker, `"`)
@@ -787,6 +954,12 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 		for k, v := range newte.Settings {
 			markerSettings[k] = v
 		}
+		// text-align on the ::before pseudo controls how the marker is
+		// laid out inside the gutter. CSS browsers render markers as if
+		// `text-align: right` (numbers right-aligned to the padding
+		// edge); we keep that as the default. `text-align: left` gives
+		// the legal-code look where every marker starts at the same X.
+		markerAlign := "right"
 		// Apply ::before styles to the marker
 		for sKey, sVal := range item.Styles {
 			if !strings.HasPrefix(sKey, "before::") {
@@ -804,6 +977,10 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 				} else if sVal == "bold" {
 					markerSettings[frontend.SettingFontWeight] = frontend.FontWeight700
 				}
+			case "text-align":
+				if sVal == "left" || sVal == "right" {
+					markerAlign = sVal
+				}
 			}
 		}
 		if marker != "" {
@@ -811,18 +988,48 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 			if err != nil {
 				return nil, err
 			}
-			glue1 := node.NewGlue()
-			glue1.Width = -styles.ListPaddingLeft
-			glue1.Stretch = 1 * bag.Factor
-			glue1.StretchOrder = node.StretchFil
-
 			gap := node.NewKern()
 			gap.Kern = styles.Fontsize / 3 // ~0.33em
 
-			node.InsertBefore(n, n, glue1)
-			node.InsertAfter(glue1, node.Tail(n), gap)
-			hbox := node.HpackTo(glue1, 0)
+			var hbox *node.HList
+			if markerAlign == "left" {
+				// Left-aligned: a hard -ListPaddingLeft shift puts the
+				// marker's leftmost edge flush at X = -ListPaddingLeft,
+				// then a fil-stretch glue after the gap absorbs the
+				// remaining space up to the body anchor.
+				leftShift := node.NewGlue()
+				leftShift.Width = -styles.ListPaddingLeft
+				fill := node.NewGlue()
+				fill.Stretch = 1 * bag.Factor
+				fill.StretchOrder = node.StretchFil
 
+				node.InsertBefore(n, n, leftShift)
+				markerTail := node.Tail(n) // last glyph of the marker
+				node.InsertAfter(leftShift, markerTail, gap)
+				node.InsertAfter(leftShift, gap, fill)
+				hbox = node.HpackTo(leftShift, 0)
+			} else {
+				// Right-aligned (default): a fil-stretch glue absorbs
+				// the space before the marker, so its rightmost edge
+				// stays anchored at X = 0 (minus the gap).
+				glue1 := node.NewGlue()
+				glue1.Width = -styles.ListPaddingLeft
+				glue1.Stretch = 1 * bag.Factor
+				glue1.StretchOrder = node.StretchFil
+
+				node.InsertBefore(n, n, glue1)
+				node.InsertAfter(glue1, node.Tail(n), gap)
+				hbox = node.HpackTo(glue1, 0)
+			}
+			// CSS list-style-position: outside — anchor the marker at
+			// the line's content origin (line.x + IndentLeft), so it
+			// stays in the gutter even when the body uses text-align:
+			// center/right. FormatParagraph stamps the IndentLeft
+			// value onto the second attribute just before Mknodes.
+			if hbox.Attributes == nil {
+				hbox.Attributes = node.H{}
+			}
+			hbox.Attributes["outside-marker"] = true
 			newte.Settings[frontend.SettingPrepend] = hbox
 		}
 	}

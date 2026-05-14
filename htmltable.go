@@ -234,6 +234,14 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 	if v, ok := settings[frontend.SettingBorderRightColor]; ok && v != nil {
 		td.BorderRightColor = v.(*color.Color)
 	}
+	// CSS vertical-align (top/middle/bottom) maps to TableCell.VAlign.
+	// Without this propagation cells default to middle, which mid-aligns
+	// short labels next to multi-line bodies in a hanging-indent layout.
+	if v, ok := settings[frontend.SettingVAlign]; ok && v != nil {
+		if va, ok := v.(frontend.VerticalAlignment); ok {
+			td.VAlign = va
+		}
+	}
 	// Extract padding settings
 	if v, ok := settings[frontend.SettingPaddingTop]; ok && v != nil {
 		td.PaddingTop = v.(bag.ScaledPoint)

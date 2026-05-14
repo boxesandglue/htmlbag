@@ -660,19 +660,27 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	return nil
 }
 
-// findBody descends through single-child Text wrappers (html > body) to find
-// the innermost Text that contains the actual content items.
+// findBody descends through the root → <html> → <body> wrapper chain to reach
+// the Text whose Items are the page-level content. It only descends through
+// untagged or <html>-tagged wrappers; once a deeper tag is encountered it
+// stops, so structural elements like <table> still reach their dedicated
+// builders. Previously this function descended through every single-child
+// Text, which silently unwrapped <body>/<table>/<tbody> when each layer had
+// only one child and broke the table layout.
 func findBody(te *frontend.Text) *frontend.Text {
 	for {
-		// If this Text has exactly one child that is also a Text with
-		// SettingBox=true, descend into it.
-		if len(te.Items) == 1 {
-			if child, ok := te.Items[0].(*frontend.Text); ok {
-				te = child
-				continue
-			}
+		dbg, _ := te.Settings[frontend.SettingDebug].(string)
+		if dbg != "" && dbg != "html" {
+			return te
 		}
-		return te
+		if len(te.Items) != 1 {
+			return te
+		}
+		child, ok := te.Items[0].(*frontend.Text)
+		if !ok {
+			return te
+		}
+		te = child
 	}
 }
 

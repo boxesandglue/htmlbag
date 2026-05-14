@@ -149,6 +149,21 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 					}
 				}
 			}
+			// CSS `display` can override the tag-based block/inline
+			// classification above. Only the two basic keywords are
+			// honoured; `display: none` is consumed downstream via
+			// FormattingStyles.Hide, and exotic values (flex, grid,
+			// inline-block, ...) keep the tag default.
+			if disp, ok := itm.Styles["display"]; ok {
+				switch disp {
+				case "block":
+					newDir = ModeVertical
+					itm.Dir = ModeVertical
+				case "inline":
+					newDir = ModeHorizontal
+					itm.Dir = ModeHorizontal
+				}
+			}
 			if thisNode.FirstChild != nil {
 				if isCustomVoidElement(eltname) {
 					// Custom void elements like <barcode> are not

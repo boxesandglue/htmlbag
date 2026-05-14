@@ -12,7 +12,8 @@ import (
 )
 
 // evaluateContent turns parsed CSS content tokens into a displayable string.
-// counters maps counter names (e.g. "page", "pages") to their current values.
+// counters maps counter names (e.g. "page", "pages") to their current values
+// — used for page-margin-box content and similar flat-scope lookups.
 func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) string {
 	var sb strings.Builder
 	for _, tok := range tokens {
@@ -21,6 +22,30 @@ func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) str
 			sb.WriteString(tok.Value)
 		case csshtml.ContentCounter:
 			if v, ok := counters[tok.Value]; ok {
+				sb.WriteString(strconv.Itoa(v))
+			}
+		}
+	}
+	return sb.String()
+}
+
+// evaluateContentWithStack turns parsed CSS content tokens into a string,
+// resolving counter() and counters() against the supplied StylesStack so
+// nested counters along the ancestor chain (e.g. "2.1.1") work.
+func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack) string {
+	var sb strings.Builder
+	for _, tok := range tokens {
+		switch tok.Type {
+		case csshtml.ContentString:
+			sb.WriteString(tok.Value)
+		case csshtml.ContentCounter:
+			sb.WriteString(strconv.Itoa(ss.CounterValue(tok.Value)))
+		case csshtml.ContentCounters:
+			vals := ss.CounterValues(tok.Value)
+			for i, v := range vals {
+				if i > 0 {
+					sb.WriteString(tok.Separator)
+				}
 				sb.WriteString(strconv.Itoa(v))
 			}
 		}
