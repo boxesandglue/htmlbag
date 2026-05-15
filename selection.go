@@ -194,8 +194,12 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 }
 
 // HTMLNodeToText converts an HTML node to a *frontend.Text element.
-func HTMLNodeToText(n *html.Node, ss StylesStack, df *frontend.Document) (*frontend.Text, error) {
+// cb is needed so Output can collect anchors and inline-anchor markers
+// onto the same builder state used at shipout. anchorPages is the
+// previous-pass id → page map used to resolve CSS target-counter().
+// Pass nil for anchorPages on a clean first pass.
+func HTMLNodeToText(cb *CSSBuilder, n *html.Node, ss StylesStack, df *frontend.Document, anchorPages map[string]int) (*frontend.Text, error) {
 	h := &HTMLItem{Dir: ModeVertical}
 	GetHTMLItemFromHTMLNode(n, ModeVertical, h)
-	return Output(h, ss, df)
+	return Output(cb, h, ss, df, anchorPages)
 }

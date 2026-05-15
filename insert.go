@@ -97,6 +97,47 @@ type insertMarker struct {
 	Body  *frontend.Text
 }
 
+// anchorMarker is a sentinel placed in frontend.Text.Items by
+// collectHorizontalNodes when an inline element with id="..." is
+// encountered. It carries the AnchorEntry index assigned at discovery
+// time; extractAnchorMarkers pulls them out before FormatParagraph
+// runs, leaving the inline run otherwise untouched. The page
+// assignment happens at shipout via the same _anchor_indices route
+// block anchors use.
+type anchorMarker struct {
+	Idx int
+}
+
+// extractAnchorMarkers walks te.Items, collects every anchorMarker
+// index (recursing into nested *frontend.Text), removes the markers
+// from the tree, and returns the indices in document order. The
+// caller is expected to attach the result to the paragraph VList as
+// _anchor_indices so flushInserts can stamp the page number.
+func extractAnchorMarkers(te *frontend.Text) []int {
+	if te == nil {
+		return nil
+	}
+	var out []int
+	var walk func(t *frontend.Text)
+	walk = func(t *frontend.Text) {
+		kept := make([]any, 0, len(t.Items))
+		for _, itm := range t.Items {
+			switch v := itm.(type) {
+			case anchorMarker:
+				out = append(out, v.Idx)
+			case *frontend.Text:
+				walk(v)
+				kept = append(kept, v)
+			default:
+				kept = append(kept, itm)
+			}
+		}
+		t.Items = kept
+	}
+	walk(te)
+	return out
+}
+
 // isFootnoteElement reports whether an HTMLItem should be treated as a
 // footnote by extraction. Called from collectHorizontalNodes.
 func isFootnoteElement(item *HTMLItem) bool {
@@ -321,19 +362,28 @@ func footnoteBaseSize(s frontend.TypesettingSettings) bag.ScaledPoint {
 }
 
 // pageBufEntry is one body box awaiting placement at shipout time.
-// headingIdx is -1 if the box doesn't carry a heading anchor.
+// headingIdx is -1 if the box doesn't carry a heading anchor. The
+// anchorIndices slice carries every AnchorEntry index that lives in
+// this box — block anchors contribute one index, paragraphs with
+// inline `<span id="...">` etc. can carry several.
 type pageBufEntry struct {
-	box        *node.VList
-	height     bag.ScaledPoint
-	headingIdx int
+	box            *node.VList
+	height         bag.ScaledPoint
+	headingIdx     int
+	anchorIndices  []int
 }
 
 // bufferBody appends a body box to the page buffer, updating the running
 // height. Called by the page builder in place of a direct OutputAt; the
 // buffered entries are painted at flushInserts time once the page's float
 // reservation is final.
-func (cb *CSSBuilder) bufferBody(box *node.VList, height bag.ScaledPoint, headingIdx int) {
-	cb.pageBuf = append(cb.pageBuf, pageBufEntry{box: box, height: height, headingIdx: headingIdx})
+func (cb *CSSBuilder) bufferBody(box *node.VList, height bag.ScaledPoint, headingIdx int, anchorIndices []int) {
+	cb.pageBuf = append(cb.pageBuf, pageBufEntry{
+		box:           box,
+		height:        height,
+		headingIdx:    headingIdx,
+		anchorIndices: anchorIndices,
+	})
 	cb.pageBufHeight += height
 }
 
@@ -473,6 +523,11 @@ func (cb *CSSBuilder) flushInserts() error {
 		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, yCursor, entry.box)
 		if entry.headingIdx >= 0 && entry.headingIdx < len(cb.Headings) {
 			cb.Headings[entry.headingIdx].Page = pageNum
+		}
+		for _, idx := range entry.anchorIndices {
+			if idx >= 0 && idx < len(cb.Anchors) {
+				cb.Anchors[idx].Page = pageNum
+			}
 		}
 		yCursor -= entry.height
 	}

@@ -14,6 +14,7 @@ import (
 // evaluateContent turns parsed CSS content tokens into a displayable string.
 // counters maps counter names (e.g. "page", "pages") to their current values
 // — used for page-margin-box content and similar flat-scope lookups.
+// target-* tokens are not resolved on this flat path; they collapse to "?".
 func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) string {
 	var sb strings.Builder
 	for _, tok := range tokens {
@@ -24,15 +25,35 @@ func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) str
 			if v, ok := counters[tok.Value]; ok {
 				sb.WriteString(strconv.Itoa(v))
 			}
+		case csshtml.ContentTargetCounter, csshtml.ContentTargetCounters, csshtml.ContentTargetText:
+			sb.WriteString("?")
 		}
 	}
 	return sb.String()
 }
 
+// resolveTargetID picks the explicit TargetID when set, otherwise falls
+// back to the attrLookup (typically attr(href) on an <a>). The leading
+// "#" is stripped for href values that point at fragments.
+func resolveTargetID(tok csshtml.ContentToken, attrLookup func(string) string) string {
+	if tok.TargetID != "" {
+		return tok.TargetID
+	}
+	if tok.TargetAttr != "" && attrLookup != nil {
+		raw := attrLookup(tok.TargetAttr)
+		return strings.TrimPrefix(raw, "#")
+	}
+	return ""
+}
+
 // evaluateContentWithStack turns parsed CSS content tokens into a string,
 // resolving counter() and counters() against the supplied StylesStack so
-// nested counters along the ancestor chain (e.g. "2.1.1") work.
-func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack) string {
+// nested counters along the ancestor chain (e.g. "2.1.1") work. The
+// optional anchorPages and anchorTexts (from the previous render pass)
+// plus attrLookup (current element's attribute resolver) feed
+// target-counter() / target-text() and friends; pass nil for any of
+// them when not in element scope.
+func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anchorPages map[string]int, anchorTexts map[string]string, attrLookup func(string) string) string {
 	var sb strings.Builder
 	for _, tok := range tokens {
 		switch tok.Type {
@@ -48,6 +69,37 @@ func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack) str
 				}
 				sb.WriteString(strconv.Itoa(v))
 			}
+		case csshtml.ContentTargetCounter:
+			// v1: only "page" is supported. Other counters fall through to
+			// "?" because they would need per-anchor counter snapshots,
+			// which we don't collect yet.
+			if tok.Value == "page" {
+				if id := resolveTargetID(tok, attrLookup); id != "" {
+					if p, ok := anchorPages[id]; ok && p > 0 {
+						sb.WriteString(strconv.Itoa(p))
+						break
+					}
+				}
+			}
+			sb.WriteString("?")
+		case csshtml.ContentTargetCounters:
+			// v1: not implemented (would need the counter stack at the
+			// anchor's position, not just the page number).
+			sb.WriteString("?")
+		case csshtml.ContentTargetText:
+			// v1 covers the default `content` (the anchor's text). The
+			// CSS GCPM spec also defines `before`, `after`, and
+			// `first-letter` — those need pseudo-element snapshots and
+			// fall through to "?" for now.
+			if tok.Value == "content" {
+				if id := resolveTargetID(tok, attrLookup); id != "" {
+					if t, ok := anchorTexts[id]; ok && t != "" {
+						sb.WriteString(t)
+						break
+					}
+				}
+			}
+			sb.WriteString("?")
 		}
 	}
 	return sb.String()

@@ -27,6 +27,33 @@ type HeadingEntry struct {
 	Page  int // 1-based page number, 0 until assigned
 }
 
+// AnchorEntry records an element with an id attribute (block or
+// inline). Used as the target side of CSS target-counter() and
+// target-text() cross-references. The Page field is filled during
+// shipout, mirroring HeadingEntry; Text is filled at collection time
+// from the element's contents (capped at 200 characters to keep the
+// aux file bounded — long block anchors get a trailing "…").
+type AnchorEntry struct {
+	ID   string
+	Text string
+	Page int // 1-based page number, 0 until assigned
+}
+
+// anchorTextCap is the character budget for AnchorEntry.Text. Block
+// anchors over this length are truncated with a U+2026 marker. Inline
+// anchors are almost always shorter than this.
+const anchorTextCap = 200
+
+// truncateAnchorText shortens s to at most anchorTextCap characters,
+// appending "…" when truncation happens.
+func truncateAnchorText(s string) string {
+	if len([]rune(s)) <= anchorTextCap {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:anchorTextCap-1]) + "…"
+}
+
 // ElementEvent holds information about a processed block element.
 type ElementEvent struct {
 	TagName     string
@@ -61,6 +88,21 @@ type CSSBuilder struct {
 	// Headings collects all h1–h6 headings encountered during VList
 	// construction. Page numbers are assigned during OutputPages.
 	Headings []HeadingEntry
+	// Anchors collects every block-level element with an id attribute
+	// encountered during VList construction. Page numbers are assigned
+	// during shipout, just like Headings. Read by the multi-pass aux
+	// loop to feed target-counter() resolution on the following pass.
+	Anchors     []AnchorEntry
+	anchorCount int
+	// anchorPages maps anchor id → page number from the *previous*
+	// render pass. Populated via SetAnchorPages before HTMLToText runs.
+	// Nil on the first pass; the evaluator renders "?" for unresolved
+	// references until the next pass fills the map in.
+	anchorPages map[string]int
+	// anchorTexts maps anchor id → captured text from the *previous*
+	// render pass (CSS target-text()). Same lifecycle as anchorPages:
+	// nil on first pass, populated via SetAnchorTexts before render.
+	anchorTexts map[string]string
 	// PendingVLists stores pre-rendered VLists keyed by a unique ID.
 	// Used to pass already-rendered content (e.g. group contents) through
 	// the HTML/CSS pipeline into table cells.
@@ -181,6 +223,20 @@ func (pd PageDimensions) PageAreas() map[string]map[string]string {
 // CSS returns the underlying CSS parser.
 func (cb *CSSBuilder) CSS() *csshtml.CSS {
 	return cb.css
+}
+
+// SetAnchorPages installs the id → page map collected on the previous
+// render pass. The CSS evaluator reads this when resolving
+// target-counter() references. Pass nil to clear.
+func (cb *CSSBuilder) SetAnchorPages(m map[string]int) {
+	cb.anchorPages = m
+}
+
+// SetAnchorTexts installs the id → text map collected on the previous
+// render pass. The CSS evaluator reads this when resolving
+// target-text() references. Pass nil to clear.
+func (cb *CSSBuilder) SetAnchorTexts(m map[string]string) {
+	cb.anchorTexts = m
 }
 
 func (cb *CSSBuilder) getPageType() *csshtml.Page {
@@ -572,16 +628,24 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		box.Width = contentWidth
 		box.Height = h
 
-		// Heading index for page-number tracking happens at flush time,
-		// not here, so the page number reflects the page actually painted.
+		// Heading and anchor indices for page-number tracking happen at
+		// flush time, not here, so the page number reflects the page
+		// actually painted.
 		headingIdx := -1
+		var anchorIndices []int
 		if vl, ok := cur.(*node.VList); ok && vl.Attributes != nil {
 			if idx, ok := vl.Attributes["_heading_idx"].(int); ok {
 				headingIdx = idx
 			}
+			if idx, ok := vl.Attributes["_anchor_idx"].(int); ok {
+				anchorIndices = append(anchorIndices, idx)
+			}
+			if list, ok := vl.Attributes["_anchor_indices"].([]int); ok {
+				anchorIndices = append(anchorIndices, list...)
+			}
 		}
 
-		cb.bufferBody(box, h, headingIdx)
+		cb.bufferBody(box, h, headingIdx, anchorIndices)
 
 		// page-break-after: always — ship the page now if more content
 		// follows.
@@ -911,13 +975,20 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 		box.Height = h
 
 		headingIdx := -1
+		var anchorIndices []int
 		if vl, ok := cur.(*node.VList); ok && vl.Attributes != nil {
 			if idx, ok := vl.Attributes["_heading_idx"].(int); ok {
 				headingIdx = idx
 			}
+			if idx, ok := vl.Attributes["_anchor_idx"].(int); ok {
+				anchorIndices = append(anchorIndices, idx)
+			}
+			if list, ok := vl.Attributes["_anchor_indices"].([]int); ok {
+				anchorIndices = append(anchorIndices, list...)
+			}
 		}
 
-		cb.bufferBody(box, h, headingIdx)
+		cb.bufferBody(box, h, headingIdx, anchorIndices)
 
 		if forceBreakAfter(cur) && next != nil {
 			if err := cb.NewPage(); err != nil {
@@ -1035,7 +1106,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 				kind = fragOnly
 			}
 			wrapped, h := buildFragment(children[i:], kind)
-			cb.bufferBody(wrapped, h, -1)
+			cb.bufferBody(wrapped, h, -1, nil)
 			return nil
 		}
 
@@ -1091,7 +1162,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			kind = fragMiddle
 		}
 		wrapped, h := buildFragment(batch, kind)
-		cb.bufferBody(wrapped, h, -1)
+		cb.bufferBody(wrapped, h, -1, nil)
 		isFirst = false
 
 		// More fragments to come: ship this page and start fresh.
@@ -1260,7 +1331,7 @@ func (cb *CSSBuilder) ParseHTMLFromNode(input *html.Node) (*frontend.Text, error
 	}
 	var te *frontend.Text
 	n := gq.Nodes[0]
-	if te, err = HTMLNodeToText(n, cb.stylesStack, cb.frontend); err != nil {
+	if te, err = HTMLNodeToText(cb, n, cb.stylesStack, cb.frontend, cb.anchorPages); err != nil {
 		return nil, err
 	}
 
@@ -1286,7 +1357,7 @@ func (cb *CSSBuilder) HTMLToText(html string) (*frontend.Text, error) {
 	}
 
 	var te *frontend.Text
-	if te, err = HTMLNodeToText(n, cb.stylesStack, cb.frontend); err != nil {
+	if te, err = HTMLNodeToText(cb, n, cb.stylesStack, cb.frontend, cb.anchorPages); err != nil {
 		return nil, err
 	}
 

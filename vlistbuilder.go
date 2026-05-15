@@ -8,6 +8,7 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"golang.org/x/net/html"
 )
 
 // CreateVlist builds a vlist (a vertical list) from the Text object.
@@ -82,7 +83,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		vl.Attributes["inserts"] = inserts
 	}
 
-	// Get padding-left from this element to pass to children (for ul/ol lists)
+	// Get padding-left from this element. It gets stamped onto the
+	// container VList as PadLeft so the backend renderer shifts every
+	// child (HList line or nested VList) to the right by that amount —
+	// CSS-conformant block-content indentation.
 	var paddingLeft bag.ScaledPoint
 	if pl, ok := settings[frontend.SettingPaddingLeft]; ok {
 		paddingLeft = pl.(bag.ScaledPoint)
@@ -178,36 +182,43 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						return nil, err
 					}
 				} else {
-					// Reduce width for children by padding-left (for lists).
-					// When the container has borders/background, HTMLBorder
-					// handles all padding, so skip the per-child shift.
+					// Two CSS shifts apply to every child of a block
+					// container: the parent's padding-left (an offset
+					// every child inherits) and the child's own
+					// margin-left (a per-child offset). Both stack onto
+					// the rendered VList's ShiftX. margin-right needs
+					// only a width adjustment.
+					var childMarginLeft, childMarginRight bag.ScaledPoint
+					if ml, ok := t.Settings[frontend.SettingMarginLeft]; ok {
+						childMarginLeft = ml.(bag.ScaledPoint)
+					}
+					if mr, ok := t.Settings[frontend.SettingMarginRight]; ok {
+						childMarginRight = mr.(bag.ScaledPoint)
+					}
+
+					// Reduce the formatting width by padding-left so the
+					// linebreaker builds lines that fit inside the
+					// post-shift content area. HTMLBorder handles the
+					// case with border/background.
 					childWidth := childBaseWidth
 					if !hasBorderOrBg && paddingLeft > 0 {
 						childWidth = childBaseWidth - paddingLeft
 					}
+					childWidth -= childMarginLeft + childMarginRight
 					var err error
 					vl, err = cb.buildVlistInternal(t, childWidth)
 					if err != nil {
 						return nil, err
 					}
-
-					// Shift content right by padding-left (only for lists
-					// without borders — HTMLBorder handles all other cases)
-					if !hasBorderOrBg && paddingLeft > 0 {
-						for cur := vl.List; cur != nil; cur = cur.Next() {
-							switch n := cur.(type) {
-							case *node.HList:
-								k := node.NewKern()
-								k.Kern = paddingLeft
-								k.Attributes = node.H{"origin": "padding-left"}
-								n.List = node.InsertBefore(n.List, n.List, k)
-								n.Width += paddingLeft
-							case *node.VList:
-								// Box container child (e.g. li with nested ul):
-								// shift the entire VList right.
-								n.ShiftX += paddingLeft
-							}
-						}
+					// CSS padding-left on the container shifts every
+					// child to the right. margin-left on the child
+					// itself stacks on top of that.
+					shift := childMarginLeft
+					if !hasBorderOrBg {
+						shift += paddingLeft
+					}
+					if shift > 0 {
+						vl.ShiftX += shift
 					}
 				}
 				// Propagate page-break-after to node attributes
@@ -252,6 +263,23 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						cb.Headings = append(cb.Headings, HeadingEntry{Level: tag, Text: extractTextContent(t)})
 						cb.headingCount++
 					}
+				}
+
+				// Block-level id="..." → record as an anchor target for
+				// CSS target-counter() and target-text(). A heading with
+				// an id ends up in both Headings and Anchors (same page
+				// assignment): intentional, the CSS reference uses the
+				// id while the outline uses the heading text.
+				if dest, ok := t.Settings[frontend.SettingDest].(string); ok && dest != "" {
+					if vl.Attributes == nil {
+						vl.Attributes = node.H{}
+					}
+					vl.Attributes["_anchor_idx"] = cb.anchorCount
+					cb.Anchors = append(cb.Anchors, AnchorEntry{
+						ID:   dest,
+						Text: truncateAnchorText(extractTextContent(t)),
+					})
+					cb.anchorCount++
 				}
 
 				// Store margin-bottom for next iteration
@@ -348,10 +376,23 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	inserts = append(inserts, deepTopFloats...)
 	inserts = append(inserts, deepBottomFloats...)
 
+	// Pull inline-anchor markers out of the Text tree before the
+	// paragraph builds so they don't confuse Mknodes. The indices
+	// land on the resulting VList so flushInserts can stamp the page.
+	inlineAnchorIndices := extractAnchorMarkers(te)
+
 	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points).
 	vl, _, err := cb.frontend.FormatParagraph(te, contentWidth)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(inlineAnchorIndices) > 0 {
+		if vl.Attributes == nil {
+			vl.Attributes = node.H{}
+		}
+		existing, _ := vl.Attributes["_anchor_indices"].([]int)
+		vl.Attributes["_anchor_indices"] = append(existing, inlineAnchorIndices...)
 	}
 
 	attachInserts(vl)
@@ -457,6 +498,28 @@ func extractTextContent(te *frontend.Text) string {
 			b.WriteString(extractTextContent(t))
 		}
 	}
+	return b.String()
+}
+
+// extractTextFromHTMLItem collects text content from an HTMLItem tree.
+// Used to capture an anchor's textual representation at collection
+// time, before the inline subtree has been rendered into frontend.Text.
+func extractTextFromHTMLItem(item *HTMLItem) string {
+	if item == nil {
+		return ""
+	}
+	var b strings.Builder
+	var walk func(it *HTMLItem)
+	walk = func(it *HTMLItem) {
+		if it.Typ == html.TextNode {
+			b.WriteString(it.Data)
+			return
+		}
+		for _, c := range it.Children {
+			walk(c)
+		}
+	}
+	walk(item)
 	return b.String()
 }
 

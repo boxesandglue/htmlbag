@@ -849,7 +849,10 @@ func isHexDigit(c byte) bool {
 }
 
 // Output turns HTML structure into a nested frontend.Text element.
-func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Text, error) {
+// anchorPages provides the id → page map from a previous render pass
+// (used to resolve CSS target-counter() references). Pass nil on the
+// first pass or when the call is not in a target-counter context.
+func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Document, anchorPages map[string]int) (*frontend.Text, error) {
 	// item is guaranteed to be in vertical direction
 	newte := frontend.NewText()
 	styles := ss.PushStyles()
@@ -930,7 +933,10 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 		// raw stringification would render as literal text.
 		if beforeContent, ok := item.Styles["before::content"]; ok {
 			tokens := csshtml.ParseContentValue(beforeContent)
-			marker = evaluateContentWithStack(tokens, ss)
+			attrLookup := func(name string) string {
+				return item.Attributes[name]
+			}
+			marker = evaluateContentWithStack(tokens, ss, anchorPages, cb.anchorTexts, attrLookup)
 		} else if strings.HasPrefix(styles.ListStyleType, `"`) && strings.HasSuffix(styles.ListStyleType, `"`) {
 			marker = strings.TrimPrefix(styles.ListStyleType, `"`)
 			marker = strings.TrimSuffix(marker, `"`)
@@ -1067,7 +1073,7 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 				// format the body as a standalone paragraph.
 				fnText := frontend.NewText()
 				ApplySettings(fnText.Settings, styles)
-				if err := collectHorizontalNodes(fnText, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df); err != nil {
+				if err := collectHorizontalNodes(cb, fnText, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 					return nil, err
 				}
 				te.Items = append(te.Items, insertMarker{Class: InsertFootnote, Body: fnText})
@@ -1079,12 +1085,12 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 				// body for placement at the appropriate page edge.
 				flText := frontend.NewText()
 				ApplySettings(flText.Settings, styles)
-				if err := collectHorizontalNodes(flText, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df); err != nil {
+				if err := collectHorizontalNodes(cb, flText, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 					return nil, err
 				}
 				te.Items = append(te.Items, insertMarker{Class: floatClassFor(itm), Body: flText})
 			} else {
-				if err := collectHorizontalNodes(te, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df); err != nil {
+				if err := collectHorizontalNodes(cb, te, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 					return nil, err
 				}
 			}
@@ -1105,14 +1111,14 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 			// paragraph-formatting time and lifts the body into the
 			// page-level insert system.
 			if isFloatElement(itm) {
-				floatBody, err := Output(itm, ss, df)
+				floatBody, err := Output(cb, itm, ss, df, anchorPages)
 				if err != nil {
 					return nil, err
 				}
 				newte.Items = append(newte.Items, insertMarker{Class: floatClassFor(itm), Body: floatBody})
 				continue
 			}
-			te, err := Output(itm, ss, df)
+			te, err := Output(cb, itm, ss, df, anchorPages)
 			if err != nil {
 				return nil, err
 			}
@@ -1141,12 +1147,93 @@ func Output(item *HTMLItem, ss StylesStack, df *frontend.Document) (*frontend.Te
 	return newte, nil
 }
 
-func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, currentFontsize bag.ScaledPoint, defaultFontsize bag.ScaledPoint, df *frontend.Document) error {
+func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, ss StylesStack, currentFontsize bag.ScaledPoint, defaultFontsize bag.ScaledPoint, df *frontend.Document, anchorPages map[string]int) error {
 	switch item.Typ {
 	case html.TextNode:
 		te.Items = append(te.Items, item.Data)
 	case html.ElementNode:
 		childSettings := make(frontend.TypesettingSettings, 8)
+
+		// Inline element with id="..." → record as anchor target for
+		// CSS target-counter() / target-text() and plant an anchorMarker
+		// in te.Items. The marker is pulled out before FormatParagraph
+		// runs by extractAnchorMarkers; the page assignment happens at
+		// shipout through the enclosing paragraph's _anchor_indices.
+		// Block-level ids are caught by Output() instead (different
+		// code path), so this only sees actually-inline elements.
+		if id, ok := item.Attributes["id"]; ok && id != "" {
+			childSettings[frontend.SettingDest] = id
+			cb.Anchors = append(cb.Anchors, AnchorEntry{
+				ID:   id,
+				Text: truncateAnchorText(extractTextFromHTMLItem(item)),
+			})
+			te.Items = append(te.Items, anchorMarker{Idx: cb.anchorCount})
+			cb.anchorCount++
+		}
+
+		// emitGeneratedContent renders a CSS content value (from
+		// ::before or ::after) into te.Items as one or more sub-Texts:
+		// strings accumulate, ContentLeader emits its own SettingLeader
+		// sub-Text so Mknodes can build the fil³ glue. Used for both
+		// pseudo elements; <li>::before goes through its own marker
+		// path elsewhere.
+		emitGeneratedContent := func(contentValue string) error {
+			tokens := csshtml.ParseContentValue(contentValue)
+			if len(tokens) == 0 {
+				return nil
+			}
+			attrLookup := func(name string) string {
+				return item.Attributes[name]
+			}
+			sty := ss.PushStyles()
+			if err := StylesToStyles(sty, item.Styles, df, currentFontsize); err != nil {
+				ss.PopStyles()
+				return err
+			}
+			applyLangAndHyphens(sty, item.Attributes, df)
+
+			flushString := func(s string) {
+				if s == "" {
+					return
+				}
+				txt := frontend.NewText()
+				ApplySettings(txt.Settings, sty)
+				txt.Items = append(txt.Items, s)
+				te.Items = append(te.Items, txt)
+			}
+
+			var buf strings.Builder
+			single := make([]csshtml.ContentToken, 1)
+			for _, tok := range tokens {
+				if tok.Type == csshtml.ContentLeader {
+					flushString(buf.String())
+					buf.Reset()
+					leaderTxt := frontend.NewText()
+					ApplySettings(leaderTxt.Settings, sty)
+					leaderTxt.Settings[frontend.SettingLeader] = tok.Value
+					te.Items = append(te.Items, leaderTxt)
+					continue
+				}
+				single[0] = tok
+				buf.WriteString(evaluateContentWithStack(single, ss, anchorPages, cb.anchorTexts, attrLookup))
+			}
+			flushString(buf.String())
+			ss.PopStyles()
+			return nil
+		}
+
+		// ::before pseudo-element on inline elements. Renders before
+		// the children. Skipped on <li> because the marker pseudo-
+		// content path handles ::before there with its own gutter
+		// positioning and would otherwise double-render.
+		if item.Data != "li" {
+			if beforeContent, ok := item.Styles["before::content"]; ok && beforeContent != "" {
+				if err := emitGeneratedContent(beforeContent); err != nil {
+					return err
+				}
+			}
+		}
+
 		switch item.Data {
 		case "a":
 			var href, link string
@@ -1156,8 +1243,6 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 					href = v
 				case "link":
 					link = v
-				case "id":
-					childSettings[frontend.SettingDest] = v
 				}
 			}
 			if strings.HasPrefix(href, "#") {
@@ -1320,7 +1405,7 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 			for k, v := range childSettings {
 				cld.Settings[k] = v
 			}
-			if err := collectHorizontalNodes(cld, itm, ss, currentFontsize, defaultFontsize, df); err != nil {
+			if err := collectHorizontalNodes(cb, cld, itm, ss, currentFontsize, defaultFontsize, df, anchorPages); err != nil {
 				return err
 			}
 			if isFootnoteElement(itm) {
@@ -1331,6 +1416,18 @@ func collectHorizontalNodes(te *frontend.Text, item *HTMLItem, ss StylesStack, c
 				te.Items = append(te.Items, cld)
 			}
 			ss.PopStyles()
+		}
+
+		// ::after pseudo-element on inline elements. Renders after the
+		// children, inheriting the element's typesetting settings.
+		// Skipped on <li> (marker path renders ::before through a
+		// different gutter mechanism).
+		if item.Data != "li" {
+			if afterContent, ok := item.Styles["after::content"]; ok && afterContent != "" {
+				if err := emitGeneratedContent(afterContent); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
