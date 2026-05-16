@@ -841,17 +841,21 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 					cb.totalFloatBottomHeight(filterInserts(tableIncoming, InsertFloatBottom)) +
 					cb.totalFootnoteHeight(filterInserts(tableIncoming, InsertFootnote))
 				if h+tableInsertsH > contentArea {
-					if cb.pageBufHeight > 0 || len(cb.pageInserts[InsertFloatTop]) > 0 || len(cb.pageInserts[InsertFootnote]) > 0 {
-						if err := cb.NewPage(); err != nil {
-							return err
-						}
-						if err := refreshPage(); err != nil {
-							return err
-						}
+					// Anything already buffered on this page (e.g. a heading
+					// that introduces the table) should be painted FIRST so
+					// the table can start directly below it, rather than
+					// being shipped off to its own short page. flushInserts
+					// paints the body and top-floats but does NOT advance
+					// to a new page, so outputTableRows can take over the
+					// current page with the correct y cursor.
+					flushedBodyH := cb.pageBufHeight
+					topFloatH := cb.pageInsertHeight[InsertFloatTop]
+					if err := cb.flushInserts(); err != nil {
+						return err
 					}
-					yLocal := pd.Height - pd.MarginTop
+					yLocal := pd.Height - pd.MarginTop - topFloatH - flushedBodyH
 					yLimitLocal := pd.MarginBottom
-					phc := false
+					phc := flushedBodyH > 0 || topFloatH > 0
 					if err := cb.outputTableRows(tableVL, buildHeadersFn, &yLocal, &yLimitLocal, &phc, &pd); err != nil {
 						return err
 					}

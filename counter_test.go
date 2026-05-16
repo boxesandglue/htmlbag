@@ -104,8 +104,8 @@ func TestApplyCounters_NestedCountersValues(t *testing.T) {
 // siblings then share that implicit counter.
 func TestApplyCounters_IncrementWithoutResetCreatesParentScopeCounter(t *testing.T) {
 	ss := &StylesStack{}
-	pushWithCounters(ss, nil, nil)                       // parent <div>
-	pushWithCounters(ss, nil, map[string]int{"foo": 1})  // first <li counter-increment: foo>
+	pushWithCounters(ss, nil, nil)                      // parent <div>
+	pushWithCounters(ss, nil, map[string]int{"foo": 1}) // first <li counter-increment: foo>
 	if got := ss.CounterValue("foo"); got != 1 {
 		t.Errorf("first child: CounterValue(foo) = %d; want 1", got)
 	}

@@ -451,8 +451,8 @@ type FormattingStyles struct {
 	fontexpansion           *float64
 	Halign                  frontend.HorizontalAlignment
 	hangingPunctuation      frontend.HangingPunctuation
-	hyphens                 string // CSS hyphens: "" (auto), "auto", "manual", "none"
-	hyphenPenalty           int    // -bag-linebreak-hyphen-penalty (0 = inherit/default)
+	hyphens                 string  // CSS hyphens: "" (auto), "auto", "manual", "none"
+	hyphenPenalty           int     // -bag-linebreak-hyphen-penalty (0 = inherit/default)
 	linebreakTolerance      float64 // -bag-linebreak-tolerance (0 = inherit/default)
 	indent                  bag.ScaledPoint
 	indentRows              int
@@ -473,24 +473,24 @@ type FormattingStyles struct {
 	// from the top down, so siblings share counters declared on the
 	// nearest common ancestor (e.g. <ol counter-reset: list-item> seen
 	// from each <li counter-increment: list-item>).
-	LocalCounters    map[string]int
-	counterReset     map[string]int // CSS counter-reset on THIS element
-	counterIncrement map[string]int // CSS counter-increment on THIS element
-	ListPaddingLeft         bag.ScaledPoint
-	PaddingBottom           bag.ScaledPoint
-	PaddingLeft             bag.ScaledPoint
-	PaddingRight            bag.ScaledPoint
-	PaddingTop              bag.ScaledPoint
-	TextDecorationLine      frontend.TextDecorationLine
-	leaderContent           string
-	preserveWhitespace      bool
-	tabsize                 bag.ScaledPoint
-	tabsizeSpaces           int
-	Valign                  frontend.VerticalAlignment
-	width                   string
-	pageBreakAfter          string
-	pageBreakBefore         string
-	yoffset                 bag.ScaledPoint
+	LocalCounters      map[string]int
+	counterReset       map[string]int // CSS counter-reset on THIS element
+	counterIncrement   map[string]int // CSS counter-increment on THIS element
+	ListPaddingLeft    bag.ScaledPoint
+	PaddingBottom      bag.ScaledPoint
+	PaddingLeft        bag.ScaledPoint
+	PaddingRight       bag.ScaledPoint
+	PaddingTop         bag.ScaledPoint
+	TextDecorationLine frontend.TextDecorationLine
+	leaderContent      string
+	preserveWhitespace bool
+	tabsize            bag.ScaledPoint
+	tabsizeSpaces      int
+	Valign             frontend.VerticalAlignment
+	width              string
+	pageBreakAfter     string
+	pageBreakBefore    string
+	yoffset            bag.ScaledPoint
 }
 
 // Clone mimics style inheritance.
@@ -549,10 +549,10 @@ const noHyphenationKey = "x-htmlbag-nohyphenation"
 //
 //   - hyphens: "none"   → no-op hyphenator (no breakpoints inserted)
 //   - hyphens: "manual" → no-op hyphenator. Soft-hyphen (U+00AD) breaks are
-//                         created at glyph-build time, independent of patterns.
+//     created at glyph-build time, independent of patterns.
 //   - hyphens: "" / "auto" → frontend.GetLanguage(language). Unknown tags
-//                            resolve to a no-op hyphenator (UA must not
-//                            hyphenate without matching patterns).
+//     resolve to a no-op hyphenator (UA must not
+//     hyphenate without matching patterns).
 //
 // HTML5 treats lang as the inheritable language tag; xml:lang is honoured as
 // a fallback only when lang is missing.
@@ -927,16 +927,23 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		}
 	case "li":
 		var marker string
-		// Check for ::before pseudo-element with content. Parsing through
-		// csshtml.ParseContentValue lets us resolve counter() and
-		// counters() against the live StylesStack — without that the
-		// raw stringification would render as literal text.
-		if beforeContent, ok := item.Styles["before::content"]; ok {
-			tokens := csshtml.ParseContentValue(beforeContent)
+		// CSS Lists 3 / CSS Pseudo 4 distinguish two pseudos for list
+		// items: ::marker is the dedicated marker pseudo (the bullet or
+		// number), ::before is generated content between the marker and
+		// the body. This codebase historically used ::before for both
+		// because ::marker was unimplemented; we keep that as a legacy
+		// path and let ::marker win when both are set.
+		resolveContent := func(raw string) string {
+			tokens := csshtml.ParseContentValue(raw)
 			attrLookup := func(name string) string {
 				return item.Attributes[name]
 			}
-			marker = evaluateContentWithStack(tokens, ss, anchorPages, cb.anchorTexts, attrLookup)
+			return evaluateContentWithStack(tokens, ss, anchorPages, cb.anchorTexts, attrLookup)
+		}
+		if markerContent, ok := item.Styles["marker::content"]; ok {
+			marker = resolveContent(markerContent)
+		} else if beforeContent, ok := item.Styles["before::content"]; ok {
+			marker = resolveContent(beforeContent)
 		} else if strings.HasPrefix(styles.ListStyleType, `"`) && strings.HasSuffix(styles.ListStyleType, `"`) {
 			marker = strings.TrimPrefix(styles.ListStyleType, `"`)
 			marker = strings.TrimSuffix(marker, `"`)
@@ -966,29 +973,54 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		// edge); we keep that as the default. `text-align: left` gives
 		// the legal-code look where every marker starts at the same X.
 		markerAlign := "right"
-		// Apply ::before styles to the marker
-		for sKey, sVal := range item.Styles {
-			if !strings.HasPrefix(sKey, "before::") {
-				continue
-			}
-			prop := strings.TrimPrefix(sKey, "before::")
-			switch prop {
-			case "color":
-				if c := df.GetColor(sVal); c != nil {
-					markerSettings[frontend.SettingColor] = c
+		// Apply ::before then ::marker properties to the marker
+		// settings. ::marker wins when both pseudos set the same
+		// property; the spec treats ::marker as the dedicated marker
+		// pseudo, ::before remains supported for legacy stylesheets.
+		applyMarkerProps := func(prefix string) {
+			for sKey, sVal := range item.Styles {
+				if !strings.HasPrefix(sKey, prefix) {
+					continue
 				}
-			case "font-weight":
-				if fw, err := strconv.Atoi(sVal); err == nil {
-					markerSettings[frontend.SettingFontWeight] = frontend.FontWeight(fw)
-				} else if sVal == "bold" {
-					markerSettings[frontend.SettingFontWeight] = frontend.FontWeight700
-				}
-			case "text-align":
-				if sVal == "left" || sVal == "right" {
-					markerAlign = sVal
+				switch strings.TrimPrefix(sKey, prefix) {
+				case "color":
+					if c := df.GetColor(sVal); c != nil {
+						markerSettings[frontend.SettingColor] = c
+					}
+				case "font-weight":
+					if fw, err := strconv.Atoi(sVal); err == nil {
+						markerSettings[frontend.SettingFontWeight] = frontend.FontWeight(fw)
+					} else if sVal == "bold" {
+						markerSettings[frontend.SettingFontWeight] = frontend.FontWeight700
+					}
+				case "font-style":
+					switch sVal {
+					case "italic", "oblique":
+						markerSettings[frontend.SettingStyle] = frontend.FontStyleItalic
+					case "normal":
+						markerSettings[frontend.SettingStyle] = frontend.FontStyleNormal
+					}
+				case "font-family":
+					if ff := resolveCSSFontFamily(sVal, df); ff != nil {
+						markerSettings[frontend.SettingFontFamily] = ff
+					}
+				case "font-size":
+					// em/% resolve against the <li>'s own font size,
+					// not the document root — a marker stays in scale
+					// with its surrounding line.
+					sz := ParseRelativeSize(sVal, styles.Fontsize, styles.Fontsize)
+					if sz > 0 {
+						markerSettings[frontend.SettingSize] = sz
+					}
+				case "text-align":
+					if sVal == "left" || sVal == "right" {
+						markerAlign = sVal
+					}
 				}
 			}
 		}
+		applyMarkerProps("before::")
+		applyMarkerProps("marker::")
 		if marker != "" {
 			n, err := df.BuildNodelistFromString(markerSettings, marker)
 			if err != nil {

@@ -367,10 +367,10 @@ func footnoteBaseSize(s frontend.TypesettingSettings) bag.ScaledPoint {
 // this box — block anchors contribute one index, paragraphs with
 // inline `<span id="...">` etc. can carry several.
 type pageBufEntry struct {
-	box            *node.VList
-	height         bag.ScaledPoint
-	headingIdx     int
-	anchorIndices  []int
+	box           *node.VList
+	height        bag.ScaledPoint
+	headingIdx    int
+	anchorIndices []int
 }
 
 // bufferBody appends a body box to the page buffer, updating the running

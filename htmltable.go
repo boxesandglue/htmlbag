@@ -110,6 +110,25 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 			}
 		}
 	}
+	// Third pass: process tfoot. HTML5 allows <tfoot> in any source
+	// order within <table>, but it always renders at the bottom of
+	// the table (after all body rows). Appending to tbl.Rows last
+	// matches that visual order; tagTable later marks the trailing
+	// FooterRows as TFoot in the structure tree.
+	for _, itm := range te.Items {
+		switch t := itm.(type) {
+		case *frontend.Text:
+			elt, ok := t.Settings[frontend.SettingDebug].(string)
+			if !ok {
+				continue
+			}
+			if elt == "tfoot" {
+				rowsBefore := len(tbl.Rows)
+				cb.buildTBody(t, tbl)
+				tbl.FooterRows += len(tbl.Rows) - rowsBefore
+			}
+		}
+	}
 	vls, err := cb.frontend.BuildTable(tbl)
 	if err != nil {
 		return nil, err
@@ -329,14 +348,22 @@ func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table) {
 	tableSE := &document.StructureElement{Role: "Table"}
 	cb.structureCurrent.AddChild(tableSE)
 
-	// Create THead/TBody grouping SEs
-	var theadSE, tbodySE *document.StructureElement
+	// Create THead/TBody/TFoot grouping SEs. PDF/UA-1 §7.5 maps these
+	// directly to the HTML element names; TFoot is added in source
+	// order after TBody, matching both the painted order on the page
+	// and the reading order expected by AT.
+	var theadSE, tbodySE, tfootSE *document.StructureElement
 	if tbl.HeaderRows > 0 {
 		theadSE = &document.StructureElement{Role: "THead"}
 		tableSE.AddChild(theadSE)
 	}
 	tbodySE = &document.StructureElement{Role: "TBody"}
 	tableSE.AddChild(tbodySE)
+	if tbl.FooterRows > 0 {
+		tfootSE = &document.StructureElement{Role: "TFoot"}
+		tableSE.AddChild(tfootSE)
+	}
+	footerStart := len(tbl.Rows) - tbl.FooterRows
 
 	// Walk rows: each child of the table VList is an HList (row)
 	rowIdx := 0
@@ -349,10 +376,13 @@ func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table) {
 			break
 		}
 
-		// Determine parent: THead for header rows, TBody otherwise
+		// Determine parent: THead for header rows, TFoot for trailing
+		// footer rows, TBody for everything in between.
 		rowParent := tbodySE
 		if theadSE != nil && rowIdx < tbl.HeaderRows {
 			rowParent = theadSE
+		} else if tfootSE != nil && rowIdx >= footerStart {
+			rowParent = tfootSE
 		}
 
 		trSE := &document.StructureElement{Role: "TR"}
