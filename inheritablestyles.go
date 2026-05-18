@@ -878,12 +878,18 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			ss.SetDefaultFontSize(rfs)
 		}
 		if ffs, ok := item.Styles["font-family"]; ok {
-			ff := df.FindFontFamily(ffs)
+			ff := resolveCSSFontFamily(ffs, df)
+			if ff == nil {
+				ff = df.FindFontFamily("serif")
+			}
 			ss.SetDefaultFontFamily(ff)
 		}
 	case "body":
 		if ffs, ok := item.Styles["font-family"]; ok {
-			ff := df.FindFontFamily(ffs)
+			ff := resolveCSSFontFamily(ffs, df)
+			if ff == nil {
+				ff = df.FindFontFamily("serif")
+			}
 			ss.SetDefaultFontFamily(ff)
 		}
 	case "td", "th":

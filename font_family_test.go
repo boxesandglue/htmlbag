@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"github.com/boxesandglue/csshtml"
+	"golang.org/x/net/html"
 )
 
 // TestResolveCSSFontFamilyAliasSansSerif guards CSS Fonts 4 §3.1.1 generic
@@ -91,5 +93,70 @@ func TestResolveCSSFontFamilyUnknownReturnsNil(t *testing.T) {
 	}
 	if got := resolveCSSFontFamily(`"Comic Sans MS", cursive`, fe); got != nil {
 		t.Errorf("resolveCSSFontFamily(unknown stack) = %v, want nil", got)
+	}
+}
+
+// TestOutputBodyHonorsCommaFontFamily verifies that the body switch in
+// Output() now routes font-family through resolveCSSFontFamily, so a
+// real-world list like `"Helvetica Neue", Arial, sans-serif` ends up
+// setting the sans default family. Through 2026-04 the body branch passed
+// the whole list string straight to FindFontFamily, which always missed.
+func TestOutputBodyHonorsCommaFontFamily(t *testing.T) {
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatalf("LoadIncludedFonts: %v", err)
+	}
+	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatalf("htmlbag.New: %v", err)
+	}
+	// Seed a base frame so SetDefaultFontFamily inside Output() mutates
+	// a frame whose pointer is also reachable through cb.stylesStack.
+	base := cb.stylesStack.PushStyles()
+	body := &HTMLItem{
+		Typ:        html.ElementNode,
+		Data:       "body",
+		Attributes: map[string]string{},
+		Styles:     map[string]string{"font-family": `"Helvetica Neue", Arial, sans-serif`},
+	}
+	if _, err := Output(cb, body, cb.stylesStack, fe, nil); err != nil {
+		t.Fatalf("Output(body): %v", err)
+	}
+	want := fe.FindFontFamily("sans")
+	if got := base.DefaultFontFamily; got != want {
+		t.Errorf("after Output(body): DefaultFontFamily = %v, want sans family", got)
+	}
+}
+
+// TestOutputHtmlHonorsCommaFontFamily mirrors the body test for the html
+// branch — both call sites previously used the raw FindFontFamily path.
+func TestOutputHtmlHonorsCommaFontFamily(t *testing.T) {
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatalf("LoadIncludedFonts: %v", err)
+	}
+	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatalf("htmlbag.New: %v", err)
+	}
+	base := cb.stylesStack.PushStyles()
+	htmlItem := &HTMLItem{
+		Typ:        html.ElementNode,
+		Data:       "html",
+		Attributes: map[string]string{},
+		Styles:     map[string]string{"font-family": "Georgia, serif"},
+	}
+	if _, err := Output(cb, htmlItem, cb.stylesStack, fe, nil); err != nil {
+		t.Fatalf("Output(html): %v", err)
+	}
+	want := fe.FindFontFamily("serif")
+	if got := base.DefaultFontFamily; got != want {
+		t.Errorf("after Output(html): DefaultFontFamily = %v, want serif family", got)
 	}
 }
