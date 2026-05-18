@@ -388,11 +388,57 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 					return vl, nil
 				}
 				td.Contents = append(td.Contents, frontend.FormatToVList(ftv))
+			} else if vl := singleDeferredFormattedVListInText(t); vl != nil {
+				// The Text contains exactly one VList carrying a
+				// deferred FormatToVList closure and no other content.
+				// FormatParagraph in the cell pipeline mishandles
+				// inline-VList-only paragraphs (the linebreaker
+				// produces empty lines and drops the VList), so
+				// short-circuit: hand the closure straight to the
+				// cell builder. The cell builder will call it at the
+				// final paraWidth.
+				td.Contents = append(td.Contents, getDeferredFormatter(vl))
+			} else if hasDeferredFormatterInTextTree(t) {
+				// Mixed inline content with a deferred closure somewhere
+				// inside — e.g. paragraph text + inline SVG. Resolve
+				// the closures against the real cell width, then run
+				// FormatParagraph.
+				tCaptured := t
+				td.Contents = append(td.Contents, frontend.FormatToVList(func(wd bag.ScaledPoint) (*node.VList, error) {
+					resolveDeferredSizing(tCaptured.Items, wd)
+					vl, _, err := cb.frontend.FormatParagraph(tCaptured, wd)
+					return vl, err
+				}))
 			} else {
 				td.Contents = append(td.Contents, itm)
 			}
 		default:
-			td.Contents = append(td.Contents, itm)
+			// frontend.BuildTable's TableCell pipeline only recognises
+			// *Text and FormatToVList in cell Contents — a raw
+			// *node.VList is silently dropped from the cell during
+			// build. Wrap any pre-built VList (typical carriers:
+			// inline-svg wrappers from collectHorizontalNodes, raster
+			// <img width=…%> wrappers from the deferred-sizing path)
+			// in a FormatToVList closure so the cell can include them.
+			// The closure is also the canonical materialization site
+			// for any DeferredSizer attached to the VList: it fires at
+			// the exact cell content width, after frontend.BuildTable
+			// has settled column widths.
+			if vl, ok := itm.(*node.VList); ok {
+				if ftv := getDeferredFormatter(vl); ftv != nil {
+					td.Contents = append(td.Contents, ftv)
+				} else {
+					// Bare *node.VList without deferred-sizing marker —
+					// wrap in a passthrough closure so the cell
+					// builder doesn't drop it.
+					vlCaptured := vl
+					td.Contents = append(td.Contents, frontend.FormatToVList(func(_ bag.ScaledPoint) (*node.VList, error) {
+						return vlCaptured, nil
+					}))
+				}
+			} else {
+				td.Contents = append(td.Contents, itm)
+			}
 		}
 	}
 	row.Cells = append(row.Cells, td)

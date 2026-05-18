@@ -392,6 +392,29 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// land on the resulting VList so flushInserts can stamp the page.
 	inlineAnchorIndices := extractAnchorMarkers(te)
 
+	// Resolve any DeferredSizer-marked replaced content against the
+	// contentWidth that actually reaches this leaf. Sizers were attached
+	// upstream (collectHorizontalNodes / similar) when the real container
+	// width was not yet known; this is the canonical materialization
+	// point for block flow. The cell path materializes separately at its
+	// own known cell width (Phase 2+). Sizers are idempotent, so a later
+	// pass at a different width re-renders correctly.
+	resolveDeferredSizing(te.Items, contentWidth)
+
+	// If HTMLBorder will wrap this leaf (background or border set), the
+	// padding-left / padding-right are applied by HTMLBorder as glue
+	// around the inner vl. FormatParagraph also reads SettingPaddingLeft
+	// from te.Settings and adds it as paragraph IndentLeft for every
+	// line — which would double-apply the padding (once as IndentLeft
+	// inside the inner vl, once as paddingLeftGlue around it). Strip
+	// the padding settings here so FormatParagraph does not consume
+	// them; HTMLBorder still sees them via the hv struct captured above.
+	hasBorderOrBg := hv.hasBorder() || hv.BackgroundColor != nil
+	if hasBorderOrBg {
+		delete(te.Settings, frontend.SettingPaddingLeft)
+		delete(te.Settings, frontend.SettingPaddingRight)
+	}
+
 	// Capture-and-strip settingPageBreakInside before FormatParagraph.
 	// Block-level Text that only contains inline children reaches the leaf
 	// branch (HTMLNodeToText leaves SettingBox off because cur flips to

@@ -1311,28 +1311,101 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				hl := document.Hyperlink{URI: href, Local: link}
 				childSettings[frontend.SettingHyperlink] = hl
 			}
+		case "svg":
+			// Inline <svg>. selection.go has serialised the subtree
+			// onto Attributes["_svgSource"]; parse it via svgreader and
+			// either render eagerly (absolute / missing width) or
+			// attach a DeferredSizer when width is percent-based.
+			src, _ := item.Attributes["_svgSource"]
+			if src == "" {
+				break
+			}
+			svgDoc, err := svgreader.Parse(strings.NewReader(src))
+			if err != nil {
+				return fmt.Errorf("parsing inline svg: %w", err)
+			}
+			cs := ss.CurrentStyle()
+			_ = cs
+			var wd, ht bag.ScaledPoint
+			rawWidth := item.Attributes["width"]
+			if h := item.Attributes["height"]; h != "" {
+				if sp, err := bag.SP(h); err == nil {
+					ht = sp
+				}
+			}
+			if pct, isPct := parseSVGPercentWidth(rawWidth); isPct {
+				// Defer: create a small placeholder VList (natural
+				// dimensions at zero width) and attach a sizer that
+				// materializes the real geometry when the container
+				// width is known.
+				placeholder := df.Doc.CreateSVGNodeFromDocument(svgDoc, 0, ht, frontend.NewSVGTextRenderer(df))
+				vl := node.Vpack(placeholder)
+				if vl.Attributes == nil {
+					vl.Attributes = node.H{}
+				}
+				vl.Attributes["origin"] = "inline-svg"
+				if alt, ok := item.Attributes["alt"]; ok {
+					vl.Attributes["alt"] = alt
+				}
+				setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, pct, ht, df))
+				te.Items = append(te.Items, vl)
+				break
+			}
+			// Non-percent width: render eagerly. Silently ignore
+			// unparseable widths (the SVG falls back to its viewBox
+			// natural size) rather than crashing the whole render.
+			if rawWidth != "" {
+				if sp, err := bag.SP(rawWidth); err == nil {
+					wd = sp
+				}
+			}
+			svgNode := df.Doc.CreateSVGNodeFromDocument(svgDoc, wd, ht, frontend.NewSVGTextRenderer(df))
+			vl := node.Vpack(svgNode)
+			if vl.Attributes == nil {
+				vl.Attributes = node.H{}
+			}
+			vl.Attributes["origin"] = "inline-svg"
+			if alt, ok := item.Attributes["alt"]; ok {
+				vl.Attributes["alt"] = alt
+			}
+			te.Items = append(te.Items, vl)
 		case "img":
 			cs := ss.CurrentStyle()
+			_ = cs
 			var filename string
 			var wd, ht bag.ScaledPoint
+			var widthPct float64 // 0 means: width is absolute (or absent)
 
 			for k, v := range item.Attributes {
 				switch k {
 				case "width":
-					wd = bag.MustSP(v)
+					// bag.MustSP panics on "100%" — guard via the
+					// percent parser first. Absolute values fall
+					// through to bag.SP (silent on parse failure).
+					if pct, isPct := parseSVGPercentWidth(v); isPct {
+						widthPct = pct
+					} else if sp, err := bag.SP(v); err == nil {
+						wd = sp
+					}
 				case "!width":
-					if !strings.HasSuffix(v, "%") {
+					if pct, isPct := parseSVGPercentWidth(v); isPct {
+						widthPct = pct
+					} else {
 						wd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
 					}
 				case "height":
-					ht = bag.MustSP(v)
+					if sp, err := bag.SP(v); err == nil {
+						ht = sp
+					}
 				case "src":
 					filename = v
 				}
 			}
 
 			if strings.ToLower(filepath.Ext(filename)) == ".svg" {
-				// SVG image
+				// SVG image via <img src=x.svg>. Same eager / deferred
+				// split as the inline <svg> case: percent-width gets a
+				// DeferredSizer, absolute width renders eagerly.
 				f, err := os.Open(filename)
 				if err != nil {
 					return fmt.Errorf("opening SVG %s: %w", filename, err)
@@ -1342,21 +1415,36 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				if err != nil {
 					return fmt.Errorf("parsing SVG %s: %w", filename, err)
 				}
-				textRenderer := frontend.NewSVGTextRenderer(df)
-				svgNode := df.Doc.CreateSVGNodeFromDocument(svgDoc, wd, ht, textRenderer)
-				// Wrap in VList so the SVG is correctly positioned in
-				// horizontal mode. The SVG renderer draws from (0,0)
-				// downward; a VList in an HList starts output from the
-				// top, which matches the SVG coordinate system.
-				svgVL := node.Vpack(svgNode)
-				svgVL.Attributes = node.H{
-					"origin": "svg",
-					"attr":   item.Attributes,
+				if widthPct > 0 {
+					placeholder := df.Doc.CreateSVGNodeFromDocument(svgDoc, 0, ht, frontend.NewSVGTextRenderer(df))
+					vl := node.Vpack(placeholder)
+					if vl.Attributes == nil {
+						vl.Attributes = node.H{}
+					}
+					vl.Attributes["origin"] = "svg"
+					vl.Attributes["attr"] = item.Attributes
+					if alt, ok := item.Attributes["alt"]; ok {
+						vl.Attributes["alt"] = alt
+					}
+					setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, widthPct, ht, df))
+					te.Items = append(te.Items, vl)
+				} else {
+					textRenderer := frontend.NewSVGTextRenderer(df)
+					svgNode := df.Doc.CreateSVGNodeFromDocument(svgDoc, wd, ht, textRenderer)
+					// Wrap in VList so the SVG is correctly positioned in
+					// horizontal mode. The SVG renderer draws from (0,0)
+					// downward; a VList in an HList starts output from the
+					// top, which matches the SVG coordinate system.
+					svgVL := node.Vpack(svgNode)
+					svgVL.Attributes = node.H{
+						"origin": "svg",
+						"attr":   item.Attributes,
+					}
+					if alt, ok := item.Attributes["alt"]; ok {
+						svgVL.Attributes["alt"] = alt
+					}
+					te.Items = append(te.Items, svgVL)
 				}
-				if alt, ok := item.Attributes["alt"]; ok {
-					svgVL.Attributes["alt"] = alt
-				}
-				te.Items = append(te.Items, svgVL)
 			} else {
 				// Raster image (PNG, JPEG, PDF)
 				imgfile, err := df.Doc.LoadImageFile(filename)
@@ -1364,25 +1452,46 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					return err
 				}
 				imgNode := df.Doc.CreateImageNodeFromImagefile(imgfile, 1, "/MediaBox")
-				// Apply user-specified dimensions
-				if wd > 0 && ht > 0 {
-					imgNode.Width = wd
-					imgNode.Height = ht
-				} else if wd > 0 {
-					// Scale height proportionally
-					imgNode.Height = bag.ScaledPoint(float64(imgNode.Height) * float64(wd) / float64(imgNode.Width))
-					imgNode.Width = wd
-				} else if ht > 0 {
-					// Scale width proportionally
-					imgNode.Width = bag.ScaledPoint(float64(imgNode.Width) * float64(ht) / float64(imgNode.Height))
-					imgNode.Height = ht
-				}
+				intrinsicWd, intrinsicHt := imgNode.Width, imgNode.Height
 				imgNode.Attributes = node.H{}
 				imgNode.Attributes["wd"] = wd
 				imgNode.Attributes["ht"] = ht
 				imgNode.Attributes["attr"] = item.Attributes
 				if alt, ok := item.Attributes["alt"]; ok {
 					imgNode.Attributes["alt"] = alt
+				}
+				if widthPct > 0 {
+					// Defer geometry resolution to layout time. The
+					// placeholder gets a small intrinsic-size rendering
+					// so debug dumps look sane; Materialize will
+					// rewrite Width/Height when the real container
+					// width is known.
+					imgNode.Width = intrinsicWd
+					imgNode.Height = intrinsicHt
+					vl := node.Vpack(imgNode)
+					if vl.Attributes == nil {
+						vl.Attributes = node.H{}
+					}
+					vl.Attributes["origin"] = "img"
+					vl.Attributes["attr"] = item.Attributes
+					if alt, ok := item.Attributes["alt"]; ok {
+						vl.Attributes["alt"] = alt
+					}
+					setDeferredFormatter(vl, newRasterImageFormatter(imgNode, intrinsicWd, intrinsicHt, widthPct, ht))
+					te.Items = append(te.Items, vl)
+					break
+				}
+				// Eager path: apply user-specified dimensions, preserve
+				// aspect ratio when only one dimension is given.
+				if wd > 0 && ht > 0 {
+					imgNode.Width = wd
+					imgNode.Height = ht
+				} else if wd > 0 {
+					imgNode.Height = bag.ScaledPoint(float64(intrinsicHt) * float64(wd) / float64(intrinsicWd))
+					imgNode.Width = wd
+				} else if ht > 0 {
+					imgNode.Width = bag.ScaledPoint(float64(intrinsicWd) * float64(ht) / float64(intrinsicHt))
+					imgNode.Height = ht
 				}
 				te.Items = append(te.Items, imgNode)
 			}

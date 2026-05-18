@@ -1,6 +1,7 @@
 package htmlbag
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
@@ -119,7 +120,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			switch eltname {
 			case "body", "address", "article", "aside", "blockquote", "canvas", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
 				newDir = ModeVertical
-			case "b", "big", "i", "small", "tt", "abbr", "acronym", "cite", "code", "dfn", "em", "kbd", "strong", "samp", "var", "a", "barcode", "bdo", "img", "map", "object", "q", "script", "span", "sub", "sup", "button", "input", "label", "select", "textarea":
+			case "b", "big", "i", "small", "tt", "abbr", "acronym", "cite", "code", "dfn", "em", "kbd", "strong", "samp", "var", "a", "barcode", "bdo", "img", "map", "object", "q", "script", "span", "sub", "sup", "button", "input", "label", "select", "textarea", "svg":
 				newDir = ModeHorizontal
 			default:
 				// keep dir
@@ -164,7 +165,20 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 					itm.Dir = ModeHorizontal
 				}
 			}
-			if thisNode.FirstChild != nil {
+			// Inline <svg> is an opaque leaf for the HTML pipeline: its
+			// children (rect / path / text / g / …) are not HTML
+			// elements and must not be walked as such. Serialise the
+			// subtree back to XML and stash it on the item; the
+			// collectHorizontalNodes svg-case will parse it via
+			// svgreader. The HTML5 parser already integrated the
+			// <svg> subtree into the html.Node tree with the correct
+			// nesting, so html.Render produces valid SVG XML.
+			if eltname == "svg" && thisNode.FirstChild != nil {
+				var buf bytes.Buffer
+				if err := html.Render(&buf, thisNode); err == nil {
+					itm.Attributes["_svgSource"] = buf.String()
+				}
+			} else if thisNode.FirstChild != nil {
 				if isCustomVoidElement(eltname) {
 					// Custom void elements like <barcode> are not
 					// recognized as self-closing by the HTML5 parser,
