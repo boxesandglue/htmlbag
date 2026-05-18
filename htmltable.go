@@ -129,12 +129,67 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 			}
 		}
 	}
+	// Collect source tr Texts in the same order BuildTable will emit row
+	// HLists (thead first, then tbody). Capture the page-break-inside
+	// sentinel off each tr's Settings before BuildTable runs, and delete
+	// the sentinel from Settings so it cannot leak into FormatParagraph
+	// (whose setting-type switch has a strict "unknown setting" default).
+	var trPageBreakInside []any
+	collectTRs := func(section *frontend.Text) {
+		for _, itm := range section.Items {
+			tr, ok := itm.(*frontend.Text)
+			if !ok {
+				continue
+			}
+			if elt, _ := tr.Settings[frontend.SettingDebug].(string); elt != "tr" {
+				continue
+			}
+			v := tr.Settings[settingPageBreakInside]
+			trPageBreakInside = append(trPageBreakInside, v)
+			delete(tr.Settings, settingPageBreakInside)
+		}
+	}
+	for _, itm := range te.Items {
+		if t, ok := itm.(*frontend.Text); ok {
+			if elt, _ := t.Settings[frontend.SettingDebug].(string); elt == "thead" {
+				collectTRs(t)
+			}
+		}
+	}
+	for _, itm := range te.Items {
+		if t, ok := itm.(*frontend.Text); ok {
+			if elt, _ := t.Settings[frontend.SettingDebug].(string); elt == "tbody" {
+				collectTRs(t)
+			}
+		}
+	}
+
 	vls, err := cb.frontend.BuildTable(tbl)
 	if err != nil {
 		return nil, err
 	}
 
 	vl := vls[0]
+
+	// Propagate page-break-inside from source tr Texts onto row HList
+	// Attributes. Rows are emitted in the same order we collected above,
+	// so walk vl.List in parallel with trPageBreakInside.
+	if len(trPageBreakInside) > 0 {
+		i := 0
+		for n := vl.List; n != nil && i < len(trPageBreakInside); n = n.Next() {
+			hl, ok := n.(*node.HList)
+			if !ok {
+				continue
+			}
+			if v := trPageBreakInside[i]; v != nil {
+				if hl.Attributes == nil {
+					hl.Attributes = node.H{}
+				}
+				hl.Attributes["pageBreakInside"] = v
+			}
+			i++
+		}
+	}
 
 	// Attach all inserts collected from this table's cells. The page
 	// builder will reserve space at the bottom of the page where the

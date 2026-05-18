@@ -234,6 +234,17 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					}
 					vl.Attributes["pageBreakBefore"] = pbb
 				}
+				// page-break-inside / break-inside rides on an htmlbag-
+				// private SettingType sentinel; move it to the VList's
+				// Attributes and delete it from Settings so the sentinel
+				// cannot leak into frontend.FormatParagraph.
+				if pbi, ok := t.Settings[settingPageBreakInside]; ok {
+					if vl.Attributes == nil {
+						vl.Attributes = node.H{}
+					}
+					vl.Attributes["pageBreakInside"] = pbi
+					delete(t.Settings, settingPageBreakInside)
+				}
 
 				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), vl)
 				if vl.Width > vls.Width {
@@ -381,10 +392,32 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// land on the resulting VList so flushInserts can stamp the page.
 	inlineAnchorIndices := extractAnchorMarkers(te)
 
+	// Capture-and-strip settingPageBreakInside before FormatParagraph.
+	// Block-level Text that only contains inline children reaches the leaf
+	// branch (HTMLNodeToText leaves SettingBox off because cur flips to
+	// ModeHorizontal after inline content), so the box branch above never
+	// sees the sentinel for those blocks. The negative sentinel would
+	// otherwise hit the strict "unknown setting" default inside
+	// FormatParagraph → Mknodes → BuildNodelistFromString.
+	pbi, hasPBI := te.Settings[settingPageBreakInside]
+	if hasPBI {
+		delete(te.Settings, settingPageBreakInside)
+	}
+
 	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points).
 	vl, _, err := cb.frontend.FormatParagraph(te, contentWidth)
 	if err != nil {
 		return nil, err
+	}
+	// Attach the captured page-break-inside value onto the returned VList.
+	// Done after FormatParagraph (and before HTMLBorder below) so the
+	// attribute sits on the outermost wrapper the paginator will see —
+	// matching the shape produced by the box branch.
+	if hasPBI {
+		if vl.Attributes == nil {
+			vl.Attributes = node.H{}
+		}
+		vl.Attributes["pageBreakInside"] = pbi
 	}
 
 	if len(inlineAnchorIndices) > 0 {

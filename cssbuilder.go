@@ -600,7 +600,18 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		// page. Ship what's buffered and start fresh. Skip the break if
 		// the buffer is empty — cur is forcibly placed on the empty page
 		// (single-node-too-tall case, accept truncation).
-		if trialPageHeight(incoming, h) > contentArea && cb.pageBufHeight > 0 {
+		//
+		// page-break-inside: avoid relaxes the "buffer empty" guard so
+		// an avoid-block lands on a fresh page even in edge cases where
+		// the body buffer is empty but inserts (footnotes, floats) have
+		// already eaten into the page. The fresh-page-fits gate
+		// (h <= contentArea) prevents infinite loops for blocks taller
+		// than a full page.
+		avoidForcesBreak := avoidBreakInside(cur) &&
+			trialPageHeight(incoming, h) > contentArea &&
+			cb.pageBufHeight == 0 &&
+			h <= contentArea
+		if (trialPageHeight(incoming, h) > contentArea && cb.pageBufHeight > 0) || avoidForcesBreak {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
@@ -1211,7 +1222,15 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		h := vlistNodeHeight(row)
 
 		// Check if row fits on current page.
-		if *y-h < *yLimit && *pageHasContent {
+		// page-break-inside: avoid tightens the fit check so an avoid-row
+		// is pushed onto a fresh page rather than placed partially off
+		// the page box. The existing pageHasContent guard is dropped for
+		// avoid rows, but only when a fresh page would actually fit the
+		// row — otherwise the loop is pointless and risks infinite breaks
+		// for rows taller than a full page.
+		pageContent := pd.Height - pd.MarginTop - pd.MarginBottom
+		avoidForcesBreak := avoidBreakInside(row) && *y-h < *yLimit && !*pageHasContent && h <= pageContent
+		if (*y-h < *yLimit && *pageHasContent) || avoidForcesBreak {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
@@ -1262,6 +1281,29 @@ func avoidBreakAfter(n node.Node) bool {
 	if vl, ok := n.(*node.VList); ok && vl.Attributes != nil {
 		if v, ok := vl.Attributes["pageBreakAfter"]; ok {
 			return v == "avoid"
+		}
+	}
+	return false
+}
+
+// avoidBreakInside reports whether a node carries the CSS
+// page-break-inside: avoid (or break-inside: avoid) directive. Both VList
+// and HList nodes are supported because table rows materialize as HLists
+// via frontend.BuildTable, while generic block nodes materialize as
+// VLists in vlistbuilder.go.
+func avoidBreakInside(n node.Node) bool {
+	switch t := n.(type) {
+	case *node.VList:
+		if t.Attributes != nil {
+			if v, ok := t.Attributes["pageBreakInside"]; ok {
+				return v == "avoid"
+			}
+		}
+	case *node.HList:
+		if t.Attributes != nil {
+			if v, ok := t.Attributes["pageBreakInside"]; ok {
+				return v == "avoid"
+			}
 		}
 	}
 	return false

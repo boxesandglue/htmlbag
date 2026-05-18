@@ -24,6 +24,20 @@ var (
 	tenptflt = bag.MustSP("10pt").ToPT()
 )
 
+// settingPageBreakInside is an htmlbag-private frontend.SettingType sentinel
+// used to stash the CSS page-break-inside / break-inside value on a
+// frontend.Text's Settings map so it survives the Text → VList/row
+// materialization pipeline. Upstream frontend.SettingType constants are
+// assigned via positive iota; a negative value cannot collide with any
+// current or future upstream constant, which avoids widening the external
+// frontend API for an htmlbag-internal concern. The sentinel is never
+// emitted outside htmlbag: buildVlistInternal and buildTable read it,
+// copy the value onto the resulting node's Attributes["pageBreakInside"],
+// and delete the sentinel from the source Text's Settings so it cannot
+// leak into frontend.FormatParagraph (whose setting-type switch has a
+// strict "unknown setting" default that would otherwise error).
+const settingPageBreakInside frontend.SettingType = -1
+
 // ParseVerticalAlign parses the input ("top","middle",...) and returns the
 // VerticalAlignment value.
 func ParseVerticalAlign(align string, styles *FormattingStyles) frontend.VerticalAlignment {
@@ -342,6 +356,8 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			ih.pageBreakAfter = v
 		case "page-break-before", "break-before":
 			ih.pageBreakBefore = v
+		case "page-break-inside", "break-inside":
+			ih.pageBreakInside = v
 		case "padding-inline-start":
 			ih.paddingInlineStart = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 		case "padding-bottom":
@@ -490,6 +506,7 @@ type FormattingStyles struct {
 	width              string
 	pageBreakAfter     string
 	pageBreakBefore    string
+	pageBreakInside    string
 	yoffset            bag.ScaledPoint
 }
 
@@ -653,6 +670,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	if ih.pageBreakBefore != "" {
 		settings[frontend.SettingPageBreakBefore] = ih.pageBreakBefore
+	}
+	if ih.pageBreakInside != "" {
+		settings[settingPageBreakInside] = ih.pageBreakInside
 	}
 	if ih.width != "" {
 		settings[frontend.SettingWidth] = ih.width
