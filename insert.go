@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
-	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/boxesandglue/frontend/pdfdraw"
@@ -210,10 +209,8 @@ func (cb *CSSBuilder) extractFootnotesShallow(te *frontend.Text, footnoteWidth b
 			return nil, err
 		}
 		if cb.enableTagging && cb.structureCurrent != nil {
-			noteSE := &document.StructureElement{
-				Role:       "Note",
-				ActualText: extractTextContent(t.Body),
-			}
+			noteSE := newSE("Note", cb.frontend.Doc.Format)
+			noteSE.ActualText = extractTextContent(t.Body)
 			cb.structureCurrent.AddChild(noteSE)
 			tagVList(body, noteSE)
 		}
@@ -296,10 +293,8 @@ func (cb *CSSBuilder) extractFootnotesInto(te *frontend.Text, footnoteWidth bag.
 			// block) — a closer-fitting parent (the actual paragraph SE)
 			// would require coordination with vlistbuilder, deferred.
 			if cb.enableTagging && cb.structureCurrent != nil {
-				noteSE := &document.StructureElement{
-					Role:       "Note",
-					ActualText: extractTextContent(t.Body),
-				}
+				noteSE := newSE("Note", cb.frontend.Doc.Format)
+				noteSE.ActualText = extractTextContent(t.Body)
 				cb.structureCurrent.AddChild(noteSE)
 				tagVList(body, noteSE)
 			}

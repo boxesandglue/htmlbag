@@ -20,11 +20,14 @@ var onecm = bag.MustSP("1cm")
 
 // HeadingEntry records a heading found during VList construction.
 // The Page field is filled later during OutputPages when the heading
-// is placed on a page.
+// is placed on a page. SE is filled at SE-construction time for tagged
+// documents; consumers (PDF outline generator) use it to emit
+// structure destinations as required by PDF/UA-2 §8.8.
 type HeadingEntry struct {
 	Level string // "h1", "h2", etc.
 	Text  string
-	Page  int // 1-based page number, 0 until assigned
+	Page  int                         // 1-based page number, 0 until assigned
+	SE    *document.StructureElement // nil unless tagging is enabled and this heading was tagged
 }
 
 // AnchorEntry records an element with an id attribute (block or
@@ -182,15 +185,25 @@ func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
 		return nil, err
 	}
 
-	// Enable automatic structure tagging for PDF/UA
-	if fd.Doc.Format == document.FormatPDFUA {
+	// Enable automatic structure tagging for PDF/UA (both UA-1 and UA-2)
+	if fd.Doc.Format == document.FormatPDFUA || fd.Doc.Format == document.FormatPDFUA2 {
 		cb.enableTagging = true
 		cb.structureRoot = fd.Doc.RootStructureElement
 		if cb.structureRoot == nil {
-			cb.structureRoot = &document.StructureElement{Role: "Document"}
+			cb.structureRoot = newSE("Document", fd.Doc.Format)
 			fd.Doc.RootStructureElement = cb.structureRoot
 		}
 		cb.structureCurrent = cb.structureRoot
+		// PDF/UA-2 (ISO 14289-2 §8.2.4): every structure role must
+		// belong to or be role-mapped to one of the standard namespaces
+		// (PDF 1.7 SSN / PDF 2.0 SSN / MathML). For the HTML5 namespace
+		// we install a RoleMapNS that targets the PDF 2.0 SSN equivalent
+		// for each canonical role we emit. Without this, veraPDF flags
+		// every HTML5-tagged element as SENonStandard.
+		if fd.Doc.Format == document.FormatPDFUA2 {
+			fd.Doc.DeclareNamespace(document.NamespacePDF20SSN)
+			fd.Doc.SetNamespaceRoleMap(document.NamespaceHTML5, html5RoleMap())
+		}
 	}
 
 	return &cb, nil

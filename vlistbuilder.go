@@ -98,14 +98,14 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		var savedStructureCurrent *document.StructureElement
 		if cb.enableTagging {
 			if tag, ok := settings[frontend.SettingDebug].(string); ok {
-				if role := pdfRoleForTag(tag); role != "" {
-					containerSE = &document.StructureElement{Role: role}
+				if canonical := canonicalRoleForTag(tag); canonical != "" {
+					containerSE = newSE(canonical, cb.frontend.Doc.Format)
 					cb.structureCurrent.AddChild(containerSE)
 					savedStructureCurrent = cb.structureCurrent
 					cb.structureCurrent = containerSE
 					// LI must contain LBody (PDF/UA 7.2)
-					if role == "LI" {
-						lbody := &document.StructureElement{Role: "LBody"}
+					if canonical == "LI" {
+						lbody := newSE("LBody", cb.frontend.Doc.Format)
 						containerSE.AddChild(lbody)
 						cb.structureCurrent = lbody
 					}
@@ -271,7 +271,11 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 							vl.Attributes = node.H{}
 						}
 						vl.Attributes["_heading_idx"] = cb.headingCount
-						cb.Headings = append(cb.Headings, HeadingEntry{Level: tag, Text: extractTextContent(t)})
+						entry := HeadingEntry{Level: tag, Text: extractTextContent(t)}
+						if se, ok := vl.Attributes["_heading_se"].(*document.StructureElement); ok {
+							entry.SE = se
+						}
+						cb.Headings = append(cb.Headings, entry)
 						cb.headingCount++
 					}
 				}
@@ -482,27 +486,38 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// PDF/UA: tag leaf block elements (p, h1-h6, pre, code)
 	if cb.enableTagging {
 		if tag, ok := settings[frontend.SettingDebug].(string); ok {
-			role := pdfRoleForTag(tag)
+			canonical := canonicalRoleForTag(tag)
 
 			// If this paragraph contains an image, use Figure role with alt text
-			if role == "P" {
+			if canonical == "P" {
 				if alt := findImageAlt(te); alt != "" {
-					role = "Figure"
+					canonical = "Figure"
 				}
 			}
 
-			if role != "" {
-				se := &document.StructureElement{Role: role}
-				if role == "Figure" {
+			if canonical != "" {
+				format := cb.frontend.Doc.Format
+				se := newSE(canonical, format)
+				if canonical == "Figure" {
 					se.Alt = findImageAlt(te)
 				} else {
 					se.ActualText = extractTextContent(te)
 				}
+				// Stash heading SE on the VList so the outer caller can
+				// link it to its HeadingEntry (UA-2 §8.8: outline
+				// destinations must be structure destinations).
+				switch canonical {
+				case "H1", "H2", "H3", "H4", "H5", "H6":
+					if vl.Attributes == nil {
+						vl.Attributes = node.H{}
+					}
+					vl.Attributes["_heading_se"] = se
+				}
 				// LI must contain exactly one LBody (PDF/UA 7.2)
 				switch {
-				case role == "LI":
+				case canonical == "LI":
 					cb.structureCurrent.AddChild(se)
-					lbody := &document.StructureElement{Role: "LBody"}
+					lbody := newSE("LBody", format)
 					lbody.ActualText = se.ActualText
 					se.ActualText = ""
 					se.AddChild(lbody)
@@ -519,12 +534,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// Code child, and the glyph-level marked content
 					// attaches under Code via the inner tag.
 					cb.structureCurrent.AddChild(se)
-					code := &document.StructureElement{Role: "Code"}
+					code := newSE("Code", format)
 					code.ActualText = se.ActualText
 					se.ActualText = ""
 					se.AddChild(code)
 					tagVList(vl, code)
-				case role == "Figure" && hasFormXObjectImage(te):
+				case canonical == "Figure" && hasFormXObjectImage(te):
 					// PDF/UA-1 §7.1 Note 1: a Figure whose entire body is a
 					// Form XObject (imported PDF) attaches via /StructParent
 					// on the XObject and an OBJR entry in se.K — no marked

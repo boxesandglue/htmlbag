@@ -446,7 +446,8 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 
 // tagTable walks the table VList and creates Table/TR/TH/TD structure elements.
 func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table) {
-	tableSE := &document.StructureElement{Role: "Table"}
+	format := cb.frontend.Doc.Format
+	tableSE := newSE("Table", format)
 	cb.structureCurrent.AddChild(tableSE)
 
 	// Create THead/TBody/TFoot grouping SEs. PDF/UA-1 §7.5 maps these
@@ -455,13 +456,13 @@ func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table) {
 	// and the reading order expected by AT.
 	var theadSE, tbodySE, tfootSE *document.StructureElement
 	if tbl.HeaderRows > 0 {
-		theadSE = &document.StructureElement{Role: "THead"}
+		theadSE = newSE("THead", format)
 		tableSE.AddChild(theadSE)
 	}
-	tbodySE = &document.StructureElement{Role: "TBody"}
+	tbodySE = newSE("TBody", format)
 	tableSE.AddChild(tbodySE)
 	if tbl.FooterRows > 0 {
-		tfootSE = &document.StructureElement{Role: "TFoot"}
+		tfootSE = newSE("TFoot", format)
 		tableSE.AddChild(tfootSE)
 	}
 	footerStart := len(tbl.Rows) - tbl.FooterRows
@@ -486,7 +487,7 @@ func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table) {
 			rowParent = tfootSE
 		}
 
-		trSE := &document.StructureElement{Role: "TR"}
+		trSE := newSE("TR", format)
 		rowParent.AddChild(trSE)
 
 		// Walk cells in this row
@@ -502,11 +503,11 @@ func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table) {
 			}
 
 			cell := row.Cells[cellIdx]
-			role := "TD"
+			canonical := "TD"
 			if cell.IsHeader {
-				role = "TH"
+				canonical = "TH"
 			}
-			cellSE := &document.StructureElement{Role: role}
+			cellSE := newSE(canonical, format)
 			// Set Scope for TH cells
 			if cell.IsHeader {
 				if rowIdx < tbl.HeaderRows {

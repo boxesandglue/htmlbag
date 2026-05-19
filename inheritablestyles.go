@@ -407,7 +407,12 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 				ih.yoffset = -1 * ih.Fontsize * 1000 / 5000
 			case "super":
 				ih.yoffset = ih.Fontsize * 1000 / 5000
-			case "top":
+			case "top", "text-top":
+				// CSS distinguishes between top (line-box top) and text-top
+				// (parent font ascent). htmlbag has no first-class line-box
+				// layout, so both map to VAlignTop. For inline images this is
+				// resolved to "image top at parent ascent" (text-top semantics)
+				// via the Height/Depth split in the img-case handler.
 				ih.Valign = frontend.VAlignTop
 			case "middle":
 				ih.Valign = frontend.VAlignMiddle
@@ -1370,8 +1375,16 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			}
 			te.Items = append(te.Items, vl)
 		case "img":
+			// Push the img element's own styles so its CSS (vertical-align,
+			// font-size for relative sizing, …) is visible via CurrentStyle().
+			// Without this, cs.Valign would always be the parent paragraph's
+			// vertical-align, masking img-level overrides.
+			imgSty := ss.PushStyles()
+			if err := StylesToStyles(imgSty, item.Styles, df, currentFontsize); err != nil {
+				ss.PopStyles()
+				return err
+			}
 			cs := ss.CurrentStyle()
-			_ = cs
 			var filename string
 			var wd, ht bag.ScaledPoint
 			var widthPct float64 // 0 means: width is absolute (or absent)
@@ -1408,11 +1421,13 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				// DeferredSizer, absolute width renders eagerly.
 				f, err := os.Open(filename)
 				if err != nil {
+					ss.PopStyles()
 					return fmt.Errorf("opening SVG %s: %w", filename, err)
 				}
 				svgDoc, err := svgreader.Parse(f)
 				f.Close()
 				if err != nil {
+					ss.PopStyles()
 					return fmt.Errorf("parsing SVG %s: %w", filename, err)
 				}
 				if widthPct > 0 {
@@ -1449,6 +1464,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				// Raster image (PNG, JPEG, PDF)
 				imgfile, err := df.Doc.LoadImageFile(filename)
 				if err != nil {
+					ss.PopStyles()
 					return err
 				}
 				imgNode := df.Doc.CreateImageNodeFromImagefile(imgfile, 1, "/MediaBox")
@@ -1479,6 +1495,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					}
 					setDeferredFormatter(vl, newRasterImageFormatter(imgNode, intrinsicWd, intrinsicHt, widthPct, ht))
 					te.Items = append(te.Items, vl)
+					ss.PopStyles()
 					break
 				}
 				// Eager path: apply user-specified dimensions, preserve
@@ -1493,8 +1510,23 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					imgNode.Width = bag.ScaledPoint(float64(intrinsicWd) * float64(ht) / float64(intrinsicHt))
 					imgNode.Height = ht
 				}
+				// CSS vertical-align: top|text-top — split the image into a
+				// (Height above baseline, Depth below baseline) pair so the
+				// image top sits at the parent font's ascent. ascent is
+				// approximated as 0.8 × font-size (typical typoAscender ratio
+				// across common fonts; deliberate heuristic to avoid loading
+				// the font at this stage). Only kicks in for the eager raster
+				// path; SVG and deferred percent-width remain baseline-anchored.
+				if cs.Valign == frontend.VAlignTop && imgNode.Height > 0 {
+					ascent := cs.Fontsize * 4 / 5
+					if imgNode.Height > ascent {
+						imgNode.Depth = imgNode.Height - ascent
+						imgNode.Height = ascent
+					}
+				}
 				te.Items = append(te.Items, imgNode)
 			}
+			ss.PopStyles()
 		case "barcode":
 			var value, typ, eclevelStr string
 			var wd, ht bag.ScaledPoint
