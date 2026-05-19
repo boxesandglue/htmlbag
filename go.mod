@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
-	github.com/boxesandglue/boxesandglue v0.2.25
+	github.com/boxesandglue/boxesandglue v0.2.26
 	github.com/boxesandglue/csshtml v0.0.11
 	github.com/boxesandglue/svgreader v0.0.2
 	github.com/boxesandglue/textshape v0.0.11

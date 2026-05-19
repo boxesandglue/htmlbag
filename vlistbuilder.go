@@ -176,10 +176,45 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 
 				var vl *node.VList
 				if dbg, ok := t.Settings[frontend.SettingDebug].(string); ok && dbg == "table" {
+					// CSS border/padding/background declared on the <table>
+					// element itself are not handled inside buildTable
+					// (which only paints cell borders). Wrap the resulting
+					// VList with HTMLBorder so they render around the whole
+					// table (CSS 2.1 §17.6, separated borders model).
+					//
+					// Skip the wrap when the table uses <thead>/<tfoot>:
+					// those tables go through the splittable multi-page row
+					// path in the backend (driven by _headerCount), and
+					// wrapping would convert the table into an opaque VList
+					// that the page builder cannot split — causing tail
+					// rows to be silently dropped.
+					tableHv := settingsToHTMLValues(t.Settings)
+					hasTableBorderOrBg := tableHv.hasBorder() || tableHv.BackgroundColor != nil
+					hasTheadOrTfoot := false
+					if hasTableBorderOrBg {
+						for _, itm := range t.Items {
+							tt, ok := itm.(*frontend.Text)
+							if !ok {
+								continue
+							}
+							if elt, _ := tt.Settings[frontend.SettingDebug].(string); elt == "thead" || elt == "tfoot" {
+								hasTheadOrTfoot = true
+								break
+							}
+						}
+					}
+					wrapTable := hasTableBorderOrBg && !hasTheadOrTfoot
+					tableWidth := wd
+					if wrapTable {
+						tableWidth = wd - tableHv.BorderLeftWidth - tableHv.BorderRightWidth - tableHv.PaddingLeft - tableHv.PaddingRight
+					}
 					var err error
-					vl, err = cb.buildTable(t, wd)
+					vl, err = cb.buildTable(t, tableWidth)
 					if err != nil {
 						return nil, err
+					}
+					if wrapTable {
+						vl = cb.HTMLBorder(vl, tableHv)
 					}
 				} else {
 					// Two CSS shifts apply to every child of a block

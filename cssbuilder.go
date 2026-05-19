@@ -1213,10 +1213,51 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 	headerCount := tableVL.Attributes["_headerCount"].(int)
 	tableWidth := tableVL.Width
 
-	// Collect all row nodes from the table VList.
+	// Footer support: tables with <tfoot> repeat the footer at the
+	// bottom of every page they span (HTML semantics, CSS Tables 3 §11.1).
+	var footerCount int
+	var footerHeight bag.ScaledPoint
+	var buildFooters func() ([]*node.HList, error)
+	if fc, ok := tableVL.Attributes["_footerCount"].(int); ok {
+		footerCount = fc
+	}
+	if fh, ok := tableVL.Attributes["_footerHeight"].(bag.ScaledPoint); ok {
+		footerHeight = fh
+	}
+	if bf, ok := tableVL.Attributes["_buildFooters"].(func() ([]*node.HList, error)); ok {
+		buildFooters = bf
+	}
+
+	// Collect all row nodes from the table VList. The trailing
+	// footerCount rows are pulled out of the normal stream and placed
+	// explicitly at the end of each page.
 	var rows []node.Node
 	for n := tableVL.List; n != nil; n = n.Next() {
 		rows = append(rows, n)
+	}
+	dataEnd := len(rows) - footerCount
+
+	placeFooters := func() error {
+		if footerCount == 0 {
+			return nil
+		}
+		footers, err := buildFooters()
+		if err != nil {
+			return err
+		}
+		for _, ft := range footers {
+			h := ft.Height + ft.Depth
+			ft.SetPrev(nil)
+			ft.SetNext(nil)
+			box := node.NewVList()
+			box.List = ft
+			box.Width = tableWidth
+			box.Height = h
+			cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, *y, box)
+			*y -= h
+		}
+		*pageHasContent = true
+		return nil
 	}
 
 	refreshPage := func() error {
@@ -1231,10 +1272,13 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		return nil
 	}
 
-	for i, row := range rows {
+	for i := 0; i < dataEnd; i++ {
+		row := rows[i]
 		h := vlistNodeHeight(row)
 
-		// Check if row fits on current page.
+		// Check if row fits on current page. The footer reserves space
+		// at the bottom on every page, so the effective limit is
+		// yLimit + footerHeight.
 		// page-break-inside: avoid tightens the fit check so an avoid-row
 		// is pushed onto a fresh page rather than placed partially off
 		// the page box. The existing pageHasContent guard is dropped for
@@ -1242,8 +1286,14 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		// row — otherwise the loop is pointless and risks infinite breaks
 		// for rows taller than a full page.
 		pageContent := pd.Height - pd.MarginTop - pd.MarginBottom
-		avoidForcesBreak := avoidBreakInside(row) && *y-h < *yLimit && !*pageHasContent && h <= pageContent
-		if (*y-h < *yLimit && *pageHasContent) || avoidForcesBreak {
+		effectiveLimit := *yLimit + footerHeight
+		avoidForcesBreak := avoidBreakInside(row) && *y-h < effectiveLimit && !*pageHasContent && h+footerHeight <= pageContent
+		if (*y-h < effectiveLimit && *pageHasContent) || avoidForcesBreak {
+			// Place footer at the bottom of the current page before
+			// breaking so it appears on every spanned page.
+			if err := placeFooters(); err != nil {
+				return err
+			}
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
@@ -1286,7 +1336,8 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		*pageHasContent = true
 	}
 
-	return nil
+	// Footer on the last page.
+	return placeFooters()
 }
 
 // avoidBreakAfter checks if a node has the page-break-after: avoid attribute.
@@ -1322,21 +1373,40 @@ func avoidBreakInside(n node.Node) bool {
 	return false
 }
 
-// forceBreakAfter checks if a node has the break-after: always attribute.
+// isForcedBreakValue reports whether a CSS break-after / break-before
+// keyword forces a page break. CSS Fragmentation 3 §3.1 lists `always`,
+// `all`, `page`, `left`, `right`, `recto`, and `verso` as forced-break
+// values (the legacy `page-break-*: always` and the modern `break-*: page`
+// are synonymous). Page-area variants (`left`/`right`/`recto`/`verso`)
+// degrade to a plain page break here since the page-area / named-page
+// machinery is not yet wired up.
+func isForcedBreakValue(v any) bool {
+	s, ok := v.(string)
+	if !ok {
+		return false
+	}
+	switch s {
+	case "always", "all", "page", "left", "right", "recto", "verso":
+		return true
+	}
+	return false
+}
+
+// forceBreakAfter checks if a node has a forced break-after keyword.
 func forceBreakAfter(n node.Node) bool {
 	if vl, ok := n.(*node.VList); ok && vl.Attributes != nil {
 		if v, ok := vl.Attributes["pageBreakAfter"]; ok {
-			return v == "always"
+			return isForcedBreakValue(v)
 		}
 	}
 	return false
 }
 
-// forceBreakBefore checks if a node has the break-before: always attribute.
+// forceBreakBefore checks if a node has a forced break-before keyword.
 func forceBreakBefore(n node.Node) bool {
 	if vl, ok := n.(*node.VList); ok && vl.Attributes != nil {
 		if v, ok := vl.Attributes["pageBreakBefore"]; ok {
-			return v == "always"
+			return isForcedBreakValue(v)
 		}
 	}
 	return false
