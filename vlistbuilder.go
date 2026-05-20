@@ -91,6 +91,16 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	if pl, ok := settings[frontend.SettingPaddingLeft]; ok {
 		paddingLeft = pl.(bag.ScaledPoint)
 	}
+	// padding-right narrows the content area on the right (no shift, no
+	// stamp). Without border/background the visual padding is invisible
+	// but the line-break width must still respect it — otherwise a
+	// `<ul>` with padding-inline-start resolved to padding-right (under
+	// `direction: rtl`) renders text up to the page margin and the
+	// outside marker drifts past the gutter.
+	var paddingRight bag.ScaledPoint
+	if pr, ok := settings[frontend.SettingPaddingRight]; ok {
+		paddingRight = pr.(bag.ScaledPoint)
+	}
 
 	if isBox, ok := settings[frontend.SettingBox]; ok && isBox.(bool) {
 		// PDF/UA: push a container structure element for this block
@@ -236,8 +246,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// post-shift content area. HTMLBorder handles the
 					// case with border/background.
 					childWidth := childBaseWidth
-					if !hasBorderOrBg && paddingLeft > 0 {
-						childWidth = childBaseWidth - paddingLeft
+					if !hasBorderOrBg {
+						childWidth = childBaseWidth - paddingLeft - paddingRight
 					}
 					childWidth -= childMarginLeft + childMarginRight
 					var err error

@@ -204,6 +204,28 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			// the keyword as-is and translate to the no-op language at
 			// ApplySettings when it's "none" or "manual".
 			ih.hyphens = strings.ToLower(strings.TrimSpace(v))
+		case "direction":
+			// CSS Writing Modes 3 §2.1: explicit base direction for the
+			// paragraph. Overrides the content-based auto-detection in
+			// FormatParagraph. Unknown values are dropped so the auto path
+			// still applies.
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "ltr", "rtl":
+				ih.direction = strings.ToLower(strings.TrimSpace(v))
+			}
+		case "unicode-bidi":
+			// CSS Writing Modes 3 §2.4. We only act on "plaintext" — that
+			// keyword opts a subtree into the "first strong character
+			// determines base direction" heuristic, i.e. the backend's
+			// detectParagraphDirection path. Other keywords (isolate,
+			// embed, bidi-override, isolate-override, normal) are
+			// recognised so ApplySettings can leave SettingDirection alone
+			// and the LTR-default branch applies; we do not yet implement
+			// their finer bidi-control semantics.
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "plaintext", "isolate", "embed", "bidi-override", "isolate-override", "normal":
+				ih.unicodeBidi = strings.ToLower(strings.TrimSpace(v))
+			}
 		case "-bag-linebreak-hyphen-penalty":
 			// boxesandglue-specific: Knuth-Plass hyphen penalty (int).
 			// Lower values encourage hyphenation.
@@ -472,6 +494,8 @@ type FormattingStyles struct {
 	fontexpansion           *float64
 	Halign                  frontend.HorizontalAlignment
 	hangingPunctuation      frontend.HangingPunctuation
+	direction               string  // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
+	unicodeBidi             string  // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
 	hyphens                 string  // CSS hyphens: "" (auto), "auto", "manual", "none"
 	hyphenPenalty           int     // -bag-linebreak-hyphen-penalty (0 = inherit/default)
 	linebreakTolerance      float64 // -bag-linebreak-tolerance (0 = inherit/default)
@@ -539,6 +563,8 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		Fontsize:           is.Fontsize,
 		fontstyle:          is.fontstyle,
 		Fontweight:         is.Fontweight,
+		direction:          is.direction,
+		unicodeBidi:        is.unicodeBidi,
 		hangingPunctuation: is.hangingPunctuation,
 		hyphens:            is.hyphens,
 		hyphenPenalty:      is.hyphenPenalty,
@@ -690,6 +716,22 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	if ih.hyphens != "" {
 		settings[frontend.SettingHyphens] = ih.hyphens
+	}
+	// Resolution rules (CSS Writing Modes 3 §2):
+	//   1. Explicit `direction: ltr|rtl` always wins.
+	//   2. Otherwise, if `unicode-bidi: plaintext` is in effect we leave
+	//      SettingDirection unset so the backend's detectParagraphDirection
+	//      heuristic fills it in from the first strong character.
+	//   3. Otherwise the CSS default applies: LTR.
+	switch ih.direction {
+	case "rtl":
+		settings[frontend.SettingDirection] = frontend.DirectionRTL
+	case "ltr":
+		settings[frontend.SettingDirection] = frontend.DirectionLTR
+	default:
+		if ih.unicodeBidi != "plaintext" {
+			settings[frontend.SettingDirection] = frontend.DirectionLTR
+		}
 	}
 	if ih.hyphenPenalty != 0 {
 		settings[frontend.SettingHyphenPenalty] = ih.hyphenPenalty
@@ -884,6 +926,35 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err
 	}
+	// Resolve `padding-inline-start` (CSS Logical Properties) into the
+	// matching physical padding for the resolved direction. Explicit
+	// physical padding wins on the matching side.
+	if styles.paddingInlineStart != 0 {
+		if styles.direction == "rtl" {
+			if styles.PaddingRight == 0 {
+				styles.PaddingRight = styles.paddingInlineStart
+			}
+		} else {
+			if styles.PaddingLeft == 0 {
+				styles.PaddingLeft = styles.paddingInlineStart
+			}
+		}
+		styles.paddingInlineStart = 0
+	}
+	// For RTL elements where the cascade landed `padding-left` on
+	// the element with no explicit `padding-right`, treat the value
+	// as logical inline-start padding and swap it onto the inline-
+	// start (right) side. This mirrors what browsers do when their
+	// UA stylesheet uses `padding-inline-start`: under `direction:
+	// rtl` the gutter ends up on the right, not the left. Authors
+	// who really want physical `padding-left: 40pt` on an RTL list
+	// can add an explicit `padding-right: 0` to suppress this swap
+	// (or set `padding-right` themselves, in which case nothing
+	// changes).
+	if styles.direction == "rtl" && styles.PaddingLeft > 0 && styles.PaddingRight == 0 {
+		styles.PaddingRight = styles.PaddingLeft
+		styles.PaddingLeft = 0
+	}
 	applyLangAndHyphens(styles, item.Attributes, df)
 	// CSS Lists 3: process counter-reset / counter-increment on this
 	// element before any child sees the resulting counter values. The
@@ -949,12 +1020,21 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	case "ol", "ul":
 		styles.OlCounter = 0
 		// ListPaddingLeft is the gutter into which <li>'s marker hangs.
-		// Only overwrite it when THIS <ol>/<ul> declares an explicit
-		// padding-left; a nested list with padding-left: 0 keeps the
-		// outer list's gutter so its markers stay aligned with the
-		// outer markers rather than overlapping the body text.
-		if styles.PaddingLeft > 0 {
-			styles.ListPaddingLeft = styles.PaddingLeft
+		// Read it from the inline-start side (padding-left for LTR,
+		// padding-right for RTL). The logical-to-physical resolution
+		// runs at the top of Output() so styles.PaddingLeft/Right are
+		// already the correct physical values here. Only overwrite
+		// when this list declares an explicit inline-start padding —
+		// nested lists with padding: 0 keep the outer gutter so markers
+		// stay aligned with the outer ones.
+		var inlineStartPad bag.ScaledPoint
+		if styles.direction == "rtl" {
+			inlineStartPad = styles.PaddingRight
+		} else {
+			inlineStartPad = styles.PaddingLeft
+		}
+		if inlineStartPad > 0 {
+			styles.ListPaddingLeft = inlineStartPad
 		}
 	case "li":
 		var marker string
@@ -1061,7 +1141,36 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			gap.Kern = styles.Fontsize / 3 // ~0.33em
 
 			var hbox *node.HList
-			if markerAlign == "left" {
+			rtl := styles.direction == "rtl"
+			_ = gap // RTL path replaces gap with a fil-stretch; LTR paths use it.
+			switch {
+			case rtl:
+				// RTL right-aligned marker (AntennaHouse / Prince
+				// convention): every marker's right edge lands at the
+				// same X = +ListPaddingLeft from the line's content
+				// origin (= the right page-padding edge once the
+				// backend paints the hbox at x+hsize). Multi-digit
+				// markers grow leftward toward the content, so
+				// numerical lists stay column-aligned regardless of
+				// directionality.
+				//
+				// Build [fil-stretch (natural=0), marker, closing
+				// (rigid, natural=-ListPaddingLeft)]. After HpackTo
+				// to width 0 the leading fil expands to
+				// ListPaddingLeft-mw, placing the marker at
+				// [ListPaddingLeft-mw, ListPaddingLeft]. The closing
+				// glue's negative width returns the hbox to X=0 so
+				// the running sumX in the backend is unaffected.
+				leadFill := node.NewGlue()
+				leadFill.Stretch = 1 * bag.Factor
+				leadFill.StretchOrder = node.StretchFil
+				closing := node.NewGlue()
+				closing.Width = -styles.ListPaddingLeft
+
+				node.InsertBefore(n, n, leadFill)
+				node.InsertAfter(leadFill, node.Tail(n), closing)
+				hbox = node.HpackTo(leadFill, 0)
+			case markerAlign == "left":
 				// Left-aligned: a hard -ListPaddingLeft shift puts the
 				// marker's leftmost edge flush at X = -ListPaddingLeft,
 				// then a fil-stretch glue after the gap absorbs the
@@ -1077,7 +1186,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				node.InsertAfter(leftShift, markerTail, gap)
 				node.InsertAfter(leftShift, gap, fill)
 				hbox = node.HpackTo(leftShift, 0)
-			} else {
+			default:
 				// Right-aligned (default): a fil-stretch glue absorbs
 				// the space before the marker, so its rightmost edge
 				// stays anchored at X = 0 (minus the gap).
@@ -1091,14 +1200,18 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				hbox = node.HpackTo(glue1, 0)
 			}
 			// CSS list-style-position: outside — anchor the marker at
-			// the line's content origin (line.x + IndentLeft), so it
-			// stays in the gutter even when the body uses text-align:
-			// center/right. FormatParagraph stamps the IndentLeft
-			// value onto the second attribute just before Mknodes.
+			// the line's content origin (line.x + IndentLeft for LTR,
+			// line.x + hsize for RTL) so it stays in the gutter even
+			// when the body uses text-align: center/right.
+			// FormatParagraph stamps the resolved anchor onto the
+			// hbox just before Mknodes.
 			if hbox.Attributes == nil {
 				hbox.Attributes = node.H{}
 			}
 			hbox.Attributes["outside-marker"] = true
+			if rtl {
+				hbox.Attributes["outside-marker-rtl"] = true
+			}
 			newte.Settings[frontend.SettingPrepend] = hbox
 		}
 	}

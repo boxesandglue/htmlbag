@@ -137,3 +137,41 @@ func TestEvaluateTargetText_NonContentTypeRendersQuestionMark(t *testing.T) {
 		t.Errorf("got %q, want ?", got)
 	}
 }
+
+// TestEvaluateAttr_ResolvesFromAttrLookup covers top-level attr(name) —
+// the case driving `li::before { content: attr(vnumber) }` and similar
+// CSS-Values-4 generated content. Tokens are concatenated without
+// inter-token whitespace; any spacing has to come from the literal
+// strings themselves.
+func TestEvaluateAttr_ResolvesFromAttrLookup(t *testing.T) {
+	tokens := csshtml.ParseContentValue(`attr(vnumber) ". "`)
+	attrs := map[string]string{"vnumber": "42"}
+	attrLookup := func(name string) string { return attrs[name] }
+	got := evaluateContentWithStack(tokens, StylesStack{}, nil, nil, attrLookup)
+	if want := "42. "; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestEvaluateAttr_MissingAttributeIsEmpty: an unknown attribute name
+// resolves to the empty string rather than rendering "?" or panicking,
+// matching how browsers handle attr() against absent attributes.
+func TestEvaluateAttr_MissingAttributeIsEmpty(t *testing.T) {
+	tokens := csshtml.ParseContentValue(`"[" attr(missing) "]"`)
+	attrLookup := func(string) string { return "" }
+	got := evaluateContentWithStack(tokens, StylesStack{}, nil, nil, attrLookup)
+	if want := "[]"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestEvaluateAttr_NoLookupIsEmpty: if the caller has no element scope
+// (passes a nil attrLookup), attr() must collapse to empty without
+// crashing. Page-margin boxes hit this path.
+func TestEvaluateAttr_NoLookupIsEmpty(t *testing.T) {
+	tokens := csshtml.ParseContentValue(`"x=" attr(foo)`)
+	got := evaluateContentWithStack(tokens, StylesStack{}, nil, nil, nil)
+	if want := "x="; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

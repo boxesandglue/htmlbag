@@ -27,6 +27,9 @@ func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) str
 			}
 		case csshtml.ContentTargetCounter, csshtml.ContentTargetCounters, csshtml.ContentTargetText:
 			sb.WriteString("?")
+		case csshtml.ContentAttr:
+			// Flat path has no element scope (used for page-margin boxes);
+			// attr() resolves to the empty string here.
 		}
 	}
 	return sb.String()
@@ -100,6 +103,10 @@ func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anc
 				}
 			}
 			sb.WriteString("?")
+		case csshtml.ContentAttr:
+			if attrLookup != nil {
+				sb.WriteString(attrLookup(tok.Value))
+			}
 		}
 	}
 	return sb.String()
