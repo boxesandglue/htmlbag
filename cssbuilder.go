@@ -773,14 +773,15 @@ func findBody(te *frontend.Text) *frontend.Text {
 }
 
 // splitTextAtPageBreaks splits the Items of a body-level Text into groups.
-// A new group starts whenever a child Text has SettingPageBreakBefore = "always".
+// A new group starts whenever a child Text carries a CSS forced break-before
+// keyword (`always`, `page`, `left`, `right`, `recto`, `verso`, `all`).
 func splitTextAtPageBreaks(body *frontend.Text) [][]any {
 	var groups [][]any
 	var current []any
 
 	for _, itm := range body.Items {
 		if t, ok := itm.(*frontend.Text); ok {
-			if pbb, ok := t.Settings[frontend.SettingPageBreakBefore]; ok && pbb == "always" {
+			if pbb, ok := t.Settings[frontend.SettingPageBreakBefore]; ok && isForcedBreakValue(pbb) {
 				if len(current) > 0 {
 					groups = append(groups, current)
 				}
@@ -1057,6 +1058,26 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		return nil
 	}
 
+	// Nackter Absatz (kein Border/Background): HTMLBorder-Wrapper überspringen.
+	// vlistbuilder.go markiert solche Blöcke mit hv == HTMLValues{}.
+	noWrapper := !hv.hasBorder() && hv.BackgroundColor == nil
+
+	// Bookmarks/Anchors auf dem Original-VList müssen aufs erste Fragment
+	// wandern, sonst landet die Seitenreferenz auf der falschen Seite.
+	var firstHeadingIdx int = -1
+	var firstAnchorIndices []int
+	if blockVL.Attributes != nil {
+		if idx, ok := blockVL.Attributes["_heading_idx"].(int); ok {
+			firstHeadingIdx = idx
+		}
+		if idx, ok := blockVL.Attributes["_anchor_idx"].(int); ok {
+			firstAnchorIndices = append(firstAnchorIndices, idx)
+		}
+		if list, ok := blockVL.Attributes["_anchor_indices"].([]int); ok {
+			firstAnchorIndices = append(firstAnchorIndices, list...)
+		}
+	}
+
 	// Detach so children can be re-linked into per-fragment vlists.
 	for _, c := range children {
 		c.SetPrev(nil)
@@ -1072,6 +1093,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 
 	// buildFragment wraps a slice of inner children with HTMLBorder using a
 	// per-fragment HTMLValues that drops paddings/borders on the cut sides.
+	// Bei noWrapper bleibt der innere VList unverpackt — kein extra Box-Frame.
 	buildFragment := func(items []node.Node, kind int) (*node.VList, bag.ScaledPoint) {
 		innerVL := node.NewVList()
 		innerVL.Width = innerWidth
@@ -1085,6 +1107,25 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			totalH += vlistNodeHeight(n)
 		}
 		innerVL.Height = totalH
+		// Carry the PDF/UA StructureElement linkage onto the first
+		// fragment. tagVList stamps it on blockVL before splitting;
+		// without this copy the wrapped fragment would have no /K MCR
+		// entry and the StructElem would be structurally empty.
+		// Only the first fragment (Only / Top) gets the tag — later
+		// fragments would create duplicate MCID references.
+		if kind == fragOnly || kind == fragTop {
+			if blockVL.Attributes != nil {
+				if tag, ok := blockVL.Attributes["tag"]; ok {
+					if innerVL.Attributes == nil {
+						innerVL.Attributes = node.H{}
+					}
+					innerVL.Attributes["tag"] = tag
+				}
+			}
+		}
+		if noWrapper {
+			return innerVL, vlistNodeHeight(innerVL)
+		}
 		fragHv := hv
 		if kind != fragTop && kind != fragOnly {
 			fragHv.PaddingTop = 0
@@ -1095,6 +1136,18 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			fragHv.BorderBottomWidth = 0
 		}
 		wrapped := cb.HTMLBorder(innerVL, fragHv)
+		// Same rationale for the bordered path: HTMLBorder produced a
+		// fresh outer VList, so the tag would otherwise be dropped.
+		if kind == fragOnly || kind == fragTop {
+			if blockVL.Attributes != nil {
+				if tag, ok := blockVL.Attributes["tag"]; ok {
+					if wrapped.Attributes == nil {
+						wrapped.Attributes = node.H{}
+					}
+					wrapped.Attributes["tag"] = tag
+				}
+			}
+		}
 		return wrapped, vlistNodeHeight(wrapped)
 	}
 
@@ -1134,7 +1187,11 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 				kind = fragOnly
 			}
 			wrapped, h := buildFragment(children[i:], kind)
-			cb.bufferBody(wrapped, h, -1, nil)
+			hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
+			if !isFirst {
+				hIdx, aIdx = -1, nil
+			}
+			cb.bufferBody(wrapped, h, hIdx, aIdx)
 			return nil
 		}
 
@@ -1156,12 +1213,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			i++
 		}
 
-		// Widow protection: count actual lines (HList nodes) — children
-		// alternate HList,Glue,HList,Glue so raw count doubles. The next
-		// page must carry at least minLines HLists; otherwise pull items
-		// back from this batch until it does, while leaving at least
-		// minLines in the current batch (don't trade a widow for an
-		// orphan).
+		// Widow / orphan protection: count actual lines (HList nodes) —
+		// children alternate HList,Glue,HList,Glue so raw count doubles.
+		// CSS Fragmentation 3 §4 spec defaults are widows: 2 and orphans: 2.
 		const minLines = 2
 		countHL := func(items []node.Node) int {
 			n := 0
@@ -1172,6 +1226,27 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			}
 			return n
 		}
+
+		// Orphan protection: if the first fragment of the block would leave
+		// fewer than minLines on the current page, force a NewPage first so
+		// the block restarts on a fresh page with full available space. Only
+		// applies when there's something already on the page — on an empty
+		// page even a single line has to land here.
+		if isFirst && cb.pageBufHeight > 0 && countHL(batch) < minLines && i < len(children) {
+			if err := cb.NewPage(); err != nil {
+				return err
+			}
+			if err := refreshPage(); err != nil {
+				return err
+			}
+			i = 0
+			continue
+		}
+
+		// Widow protection: the next page must carry at least minLines HLists;
+		// otherwise pull items back from this batch until it does, while
+		// leaving at least minLines in the current batch (don't trade a
+		// widow for an orphan).
 		if i < len(children) {
 			remainingLines := countHL(children[i:])
 			for remainingLines < minLines && countHL(batch) > minLines {
@@ -1190,7 +1265,11 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			kind = fragMiddle
 		}
 		wrapped, h := buildFragment(batch, kind)
-		cb.bufferBody(wrapped, h, -1, nil)
+		hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
+		if !isFirst {
+			hIdx, aIdx = -1, nil
+		}
+		cb.bufferBody(wrapped, h, hIdx, aIdx)
 		isFirst = false
 
 		// More fragments to come: ship this page and start fresh.

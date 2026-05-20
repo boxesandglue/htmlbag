@@ -481,6 +481,22 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		}
 		vl.Attributes["pageBreakInside"] = pbi
 	}
+	// Propagate page-break-before / page-break-after on leaf blocks
+	// (e.g. <h1 style="break-before: page">). The box branch above does
+	// this for container blocks; without the mirror here the paginator
+	// never sees the forced-break attribute on simple block leaves.
+	if pbb, ok := te.Settings[frontend.SettingPageBreakBefore]; ok {
+		if vl.Attributes == nil {
+			vl.Attributes = node.H{}
+		}
+		vl.Attributes["pageBreakBefore"] = pbb
+	}
+	if pba, ok := te.Settings[frontend.SettingPageBreakAfter]; ok {
+		if vl.Attributes == nil {
+			vl.Attributes = node.H{}
+		}
+		vl.Attributes["pageBreakAfter"] = pba
+	}
 
 	if len(inlineAnchorIndices) > 0 {
 		if vl.Attributes == nil {
@@ -515,6 +531,23 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			vl.Attributes["_splittableInner"] = splittableInner
 			vl.Attributes["_splittableHv"] = splittableHv
 			vl.Attributes["_splittableInnerWidth"] = splittableInnerWidth
+		}
+	} else {
+		// No border/background: still expose the line list so the paginator
+		// can fragment overlong paragraphs across pages. Zero-value hv acts
+		// as a sentinel for outputBlockSplit to skip HTMLBorder wrapping.
+		var splittableInner []node.Node
+		for n := vl.List; n != nil; n = n.Next() {
+			splittableInner = append(splittableInner, n)
+		}
+		if len(splittableInner) > 1 {
+			if vl.Attributes == nil {
+				vl.Attributes = node.H{}
+			}
+			vl.Attributes["_splittable"] = true
+			vl.Attributes["_splittableInner"] = splittableInner
+			vl.Attributes["_splittableHv"] = HTMLValues{}
+			vl.Attributes["_splittableInnerWidth"] = contentWidth
 		}
 	}
 
