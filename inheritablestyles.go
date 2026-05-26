@@ -380,6 +380,21 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			ih.pageBreakBefore = v
 		case "page-break-inside", "break-inside":
 			ih.pageBreakInside = v
+		case "position":
+			// CSS 2.1 §9.3.1: position keyword. Unknown values
+			// fall through to static via the lowercase-trim. We
+			// only act on it later when IsPositioned() is true.
+			ih.position = strings.ToLower(strings.TrimSpace(v))
+		case "top":
+			ih.topOffset = parseOffsetValue(v, curFontSize, ih.DefaultFontSize)
+		case "right":
+			ih.rightOffset = parseOffsetValue(v, curFontSize, ih.DefaultFontSize)
+		case "bottom":
+			ih.bottomOffset = parseOffsetValue(v, curFontSize, ih.DefaultFontSize)
+		case "left":
+			ih.leftOffset = parseOffsetValue(v, curFontSize, ih.DefaultFontSize)
+		case "z-index":
+			ih.zIndex = parseZIndexValue(v)
 		case "padding-inline-start":
 			ih.paddingInlineStart = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 		case "padding-bottom":
@@ -443,6 +458,8 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			}
 		case "width":
 			ih.width = v
+		case "height":
+			ih.height = v
 		case "white-space":
 			ih.preserveWhitespace = (v == "pre")
 		case "-bag-font-expansion":
@@ -533,10 +550,56 @@ type FormattingStyles struct {
 	tabsizeSpaces      int
 	Valign             frontend.VerticalAlignment
 	width              string
+	height             string
 	pageBreakAfter     string
 	pageBreakBefore    string
 	pageBreakInside    string
 	yoffset            bag.ScaledPoint
+	// CSS positioning (CSS 2.1 §9-§10). None of these inherit; Clone()
+	// deliberately drops them so every element starts at the default
+	// (position: static, all offsets/z-index auto).
+	position     string           // "", "static", "relative", "absolute", "fixed", "sticky"
+	topOffset    *bag.ScaledPoint // nil = auto; *0 = explicit zero — distinction matters for the CSS 2.1 §10.3.7 width-resolution algorithm
+	rightOffset  *bag.ScaledPoint
+	bottomOffset *bag.ScaledPoint
+	leftOffset   *bag.ScaledPoint
+	zIndex       *int // nil = auto; *0 = explicit zero
+}
+
+// IsPositioned reports whether the element participates in CSS positioning
+// (anything other than the default position: static).
+func (is *FormattingStyles) IsPositioned() bool {
+	switch is.position {
+	case "relative", "absolute", "fixed", "sticky":
+		return true
+	}
+	return false
+}
+
+// parseOffsetValue turns a CSS top/right/bottom/left value into a
+// *bag.ScaledPoint. Returns nil for empty input or the keyword "auto"
+// so the caller can distinguish "no constraint" from "explicit zero".
+func parseOffsetValue(v string, cur, root bag.ScaledPoint) *bag.ScaledPoint {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "auto" {
+		return nil
+	}
+	val := ParseRelativeSize(v, cur, root)
+	return &val
+}
+
+// parseZIndexValue turns a CSS z-index value into a *int. Returns nil
+// for empty / "auto" so the caller can distinguish "no stacking
+// intent" from "explicit z-index: 0".
+func parseZIndexValue(v string) *int {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "auto" {
+		return nil
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return &n
+	}
+	return nil
 }
 
 // Clone mimics style inheritance.
@@ -963,6 +1026,24 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	ss.applyCounters()
 	ApplySettings(newte.Settings, styles)
 	newte.Settings[frontend.SettingDebug] = item.Data
+	// CSS 2.1 §9.4.3 position: relative — element stays in flow,
+	// reserving its original slot, but renders at an offset. v1
+	// supports horizontal offsets via SettingShiftX (consumed by
+	// vlistbuilder when wrapping the child VList). Vertical offsets
+	// would need a backend VList.ShiftY, deferred to v2; we warn
+	// when authors set top/bottom on a relative element so the gap
+	// between intent and v1 capability is visible.
+	if styles.position == "relative" {
+		switch {
+		case styles.leftOffset != nil:
+			newte.Settings[frontend.SettingShiftX] = *styles.leftOffset
+		case styles.rightOffset != nil:
+			newte.Settings[frontend.SettingShiftX] = -*styles.rightOffset
+		}
+		if styles.topOffset != nil || styles.bottomOffset != nil {
+			bag.Logger.Warn("position: relative top/bottom offsets are not implemented in v1; only left/right take effect")
+		}
+	}
 	// Any element with an id attribute creates a named PDF destination.
 	if id, ok := item.Attributes["id"]; ok {
 		newte.Settings[frontend.SettingDest] = id
@@ -1225,6 +1306,31 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		return newte, nil
 	}
 
+	// Replaced void element (img) classified as block via CSS `display: block`
+	// lands here instead of in collectHorizontalNodes, but the image is only
+	// loaded there. Route it through the inline pass and wrap the result in a
+	// block container so the surrounding layout still treats it as a block.
+	// SettingWidth must be stripped from both container settings: the inline
+	// img path reads the width directly from item.Attributes and passes it
+	// to newRasterImageFormatter as widthPct. Leaving SettingWidth in
+	// either container would have buildVlistInternal reduce the container
+	// width too, stacking with the formatter's own percent-of-parent math
+	// (50% * 50% * 50% = 12.5%).
+	if item.Data == "img" {
+		delete(newte.Settings, frontend.SettingWidth)
+		inner := frontend.NewText()
+		ApplySettings(inner.Settings, styles)
+		delete(inner.Settings, frontend.SettingWidth)
+		if err := collectHorizontalNodes(cb, inner, item, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
+			ss.PopStyles()
+			return nil, err
+		}
+		newte.Items = append(newte.Items, inner)
+		newte.Settings[frontend.SettingBox] = true
+		ss.PopStyles()
+		return newte, nil
+	}
+
 	for _, itm := range item.Children {
 		if itm.Dir == ModeHorizontal {
 			// Going from vertical to horizontal.
@@ -1286,6 +1392,19 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			// marker to the parent. extractFloats picks up the marker at
 			// paragraph-formatting time and lifts the body into the
 			// page-level insert system.
+			if isPositionedElement(itm) {
+				// Out of flow: handlePositioned formats the body
+				// against the resolved containing-block geometry,
+				// resolves top/right/bottom/left into PDF
+				// coordinates, and appends a PositionedInsert that
+				// flushInserts paints. The element contributes
+				// nothing to newte.Items — it must not influence
+				// in-flow layout.
+				if err := cb.handlePositioned(itm, ss, df, anchorPages); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			if isFloatElement(itm) {
 				floatBody, err := Output(cb, itm, ss, df, anchorPages)
 				if err != nil {

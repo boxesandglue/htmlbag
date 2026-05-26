@@ -529,6 +529,13 @@ func (cb *CSSBuilder) flushInserts() error {
 	cb.pageBuf = nil
 	cb.pageBufHeight = 0
 
+	// CSS 2.1 App. E: positioned descendants paint above in-flow
+	// non-positioned descendants and floats. Order within the page:
+	// top-floats → buffered body → positioned → bottom-floats →
+	// footnotes. Positioned items already carry resolved PDF
+	// coordinates, so paintPositionedItems just sorts and outputs.
+	cb.paintPositionedItems()
+
 	// Bottom-floats first (they need pageInsertHeight[InsertFootnote] to
 	// know their floor), then footnotes.
 	if err := cb.placeFloatBottomInserts(); err != nil {

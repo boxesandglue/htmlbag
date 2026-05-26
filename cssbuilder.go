@@ -137,6 +137,26 @@ type CSSBuilder struct {
 	// pageBufHeight is the running sum of pageBuf entry heights, kept in
 	// sync to avoid recomputing it on every fit check.
 	pageBufHeight bag.ScaledPoint
+	// positioningContext is a stack of CSS containing blocks
+	// (CSS 2.1 §10.1). The top entry is the nearest positioned
+	// ancestor's content box (or, at the bottom of the stack, the
+	// initial containing block = the current page area). A
+	// position: absolute element resolves top/right/bottom/left
+	// against the top entry. Pushed/popped by Output() on entering
+	// and leaving every element whose computed position is anything
+	// but static; primed by NewPage() with the page-area entry so
+	// the initial containing block is always available.
+	positioningContext []positioningContext
+	// positionedItems collects PositionedInsert entries for the
+	// current page. Filled by handlePositioned when an out-of-flow
+	// `position: absolute` element is encountered; drained and
+	// painted by paintPositionedItems from inside flushInserts
+	// (after the buffered body, before bottom-floats — see CSS 2.1
+	// App. E painting order). Kept as a parallel buffer (not in
+	// pageInserts) because positioned items carry resolved pixel
+	// coordinates and must not influence pageInsertHeight or the
+	// flow's trial-fit calculations.
+	positionedItems []*PositionedInsert
 	// FootnoteSeparatorHeight overrides the default footnote rule thickness.
 	// Zero falls back to the package default (0.4pt).
 	FootnoteSeparatorHeight bag.ScaledPoint
@@ -476,6 +496,7 @@ func (cb *CSSBuilder) NewPage() error {
 }
 
 func (cb *CSSBuilder) firePageInit() {
+	cb.resetPositioningContextForPage()
 	if cb.PageInitCallback != nil {
 		cb.PageInitCallback()
 	}

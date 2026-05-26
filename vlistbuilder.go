@@ -265,6 +265,15 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					if shift > 0 {
 						vl.ShiftX += shift
 					}
+					// CSS position: relative offsets — htmlbag's
+					// Output() encodes left/right offsets as
+					// SettingShiftX so the in-flow box keeps its
+					// reservation while the painter draws it at
+					// the shifted position. Stacks with the
+					// padding/margin shift above.
+					if sx, ok := t.Settings[frontend.SettingShiftX]; ok {
+						vl.ShiftX += sx.(bag.ScaledPoint)
+					}
 				}
 				// Propagate page-break-after to node attributes
 				if pba, ok := t.Settings[frontend.SettingPageBreakAfter]; ok {
