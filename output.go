@@ -11,6 +11,14 @@ import (
 	"github.com/boxesandglue/csshtml"
 )
 
+// pageMarginBoxFallbackFontSize seeds the page-context font size when
+// nothing else is available. CSS Paged Media 3 §3.3: page context
+// inherits from the root element; if the document never set
+// font-size on <html>, the CSS initial value (medium ≈ 16px ≈ 12pt)
+// applies. BeforeShipout reads cb.rootFontSize first and only falls
+// back to this constant when the root font-size is unset.
+var pageMarginBoxFallbackFontSize = bag.MustSP("12pt")
+
 // evaluateContent turns parsed CSS content tokens into a displayable string.
 // counters maps counter names (e.g. "page", "pages") to their current values
 // — used for page-margin-box content and similar flat-scope lookups.
@@ -208,8 +216,25 @@ func (cb *CSSBuilder) BeforeShipout() error {
 					continue
 				}
 				styles := cb.stylesStack.PushStyles()
-
-				if err = StylesToStyles(styles, area, cb.frontend, cb.stylesStack.CurrentStyle().Fontsize); err != nil {
+				// CSS Paged Media 3 §3.3: the page context inherits
+				// from the root element. Once HTMLNodeToText returns,
+				// cb.stylesStack is empty (HTMLNodeToText was handed
+				// a slice-header copy, so its pushes never reached
+				// cb.stylesStack), and a fresh push starts at
+				// Fontsize=0 — so em-based margin-box rules would
+				// resolve against 0 and emit /F* 0 Tf (invisible
+				// text). Seed from cb.rootFontSize (the value
+				// resolved on <html>) and fall back to the CSS
+				// initial value (~16px ≈ 12pt) only when the
+				// document never set a root font-size.
+				if styles.Fontsize == 0 {
+					if cb.rootFontSize > 0 {
+						styles.Fontsize = cb.rootFontSize
+					} else {
+						styles.Fontsize = pageMarginBoxFallbackFontSize
+					}
+				}
+				if err = StylesToStyles(styles, area, cb.frontend, styles.Fontsize); err != nil {
 					return err
 				}
 				pmb := pageMarginBoxes[areaName]

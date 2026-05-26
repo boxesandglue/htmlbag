@@ -159,14 +159,28 @@ var cssGenericFontFamilyAliases = map[string]string{
 	"sans-serif": "sans",
 }
 
-// resolveCSSFontFamily parses a CSS font-family value (a comma-separated
-// prioritised list per CSS Fonts 4 §3.1) and returns the first family that
-// resolves against the document's registered families. Each candidate is
-// trimmed of surrounding whitespace and CSS string quotes, then looked up
-// directly first and via the generic-keyword alias table if the direct
-// lookup misses. Returns nil if no candidate resolves — the caller decides
-// the fallback.
-func resolveCSSFontFamily(v string, df *frontend.Document) *frontend.FontFamily {
+// resolveCSSFontFamilyList parses a CSS font-family value (a comma-separated
+// prioritised list per CSS Fonts 4 §3.1) and returns ALL families that
+// resolve against the document's registered families, in declaration order.
+// Each candidate is trimmed of surrounding whitespace and CSS string quotes,
+// then looked up directly first and via the generic-keyword alias table if
+// the direct lookup misses. Unknown candidates are skipped silently — the
+// resulting stack contains only resolvable entries, deduplicated to preserve
+// determinism (a family listed twice contributes once at its first position).
+// Returns nil if no candidate resolves; callers decide the fallback.
+//
+// resolveCSSFontFamily is a thin wrapper that returns the first entry of the
+// stack and exists for callers that only need the primary family.
+func resolveCSSFontFamilyList(v string, df *frontend.Document) []*frontend.FontFamily {
+	var stack []*frontend.FontFamily
+	seen := map[*frontend.FontFamily]bool{}
+	add := func(ff *frontend.FontFamily) {
+		if ff == nil || seen[ff] {
+			return
+		}
+		seen[ff] = true
+		stack = append(stack, ff)
+	}
 	for _, part := range strings.Split(v, ",") {
 		name := strings.TrimSpace(part)
 		name = strings.Trim(name, `"'`)
@@ -174,15 +188,24 @@ func resolveCSSFontFamily(v string, df *frontend.Document) *frontend.FontFamily 
 			continue
 		}
 		if ff := df.FindFontFamily(name); ff != nil {
-			return ff
+			add(ff)
+			continue
 		}
 		if alias, ok := cssGenericFontFamilyAliases[name]; ok {
 			if ff := df.FindFontFamily(alias); ff != nil {
-				return ff
+				add(ff)
 			}
 		}
 	}
-	return nil
+	return stack
+}
+
+func resolveCSSFontFamily(v string, df *frontend.Document) *frontend.FontFamily {
+	stack := resolveCSSFontFamilyList(v, df)
+	if len(stack) == 0 {
+		return nil
+	}
+	return stack[0]
 }
 
 // StylesToStyles updates the inheritable formattingStyles from the attributes
@@ -339,10 +362,13 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "list-style-type":
 			ih.ListStyleType = v
 		case "font-family":
-			ih.fontfamily = resolveCSSFontFamily(v, df)
-			if ih.fontfamily == nil {
+			ih.fontfamilyStack = resolveCSSFontFamilyList(v, df)
+			if len(ih.fontfamilyStack) > 0 {
+				ih.fontfamily = ih.fontfamilyStack[0]
+			} else {
 				bag.Logger.Error("Font family not found, reverting to 'serif'", "requested family", v)
 				ih.fontfamily = df.FindFontFamily("serif")
+				ih.fontfamilyStack = nil
 			}
 		case "hanging-punctuation":
 			switch v {
@@ -503,33 +529,39 @@ type FormattingStyles struct {
 	color                   *color.Color
 	Hide                    bool
 	fontfamily              *frontend.FontFamily
-	fontfeatures            []string
-	variationSettings       map[string]float64 // axis tag -> value (e.g., "wght" -> 700)
-	Fontsize                bag.ScaledPoint
-	fontstyle               frontend.FontStyle
-	Fontweight              frontend.FontWeight
-	fontexpansion           *float64
-	Halign                  frontend.HorizontalAlignment
-	hangingPunctuation      frontend.HangingPunctuation
-	direction               string  // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
-	unicodeBidi             string  // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
-	hyphens                 string  // CSS hyphens: "" (auto), "auto", "manual", "none"
-	hyphenPenalty           int     // -bag-linebreak-hyphen-penalty (0 = inherit/default)
-	linebreakTolerance      float64 // -bag-linebreak-tolerance (0 = inherit/default)
-	indent                  bag.ScaledPoint
-	indentRows              int
-	language                string     // BCP47 tag (e.g. "en", "ar", "de-DE")
-	langPattern             *lang.Lang // resolved hyphenator for {language, hyphens}; nil = use parent / doc default
-	letterSpacing           bag.ScaledPoint
-	lineheight              bag.ScaledPoint
-	lineheightFactor        float64 // unitless line-height factor (e.g. 1.2); recalculated per element
-	ListStyleType           string
-	marginBottom            bag.ScaledPoint
-	marginLeft              bag.ScaledPoint
-	marginRight             bag.ScaledPoint
-	marginTop               bag.ScaledPoint
-	paddingInlineStart      bag.ScaledPoint
-	OlCounter               int
+	// fontfamilyStack mirrors the full CSS-prioritised font-family list. It
+	// is consulted only by per-glyph coverage fallback; the primary entry
+	// stays in fontfamily so single-family inputs follow the original
+	// single-shape path. Empty / nil ⇒ no stack semantics, treat as if
+	// only fontfamily were set.
+	fontfamilyStack    []*frontend.FontFamily
+	fontfeatures       []string
+	variationSettings  map[string]float64 // axis tag -> value (e.g., "wght" -> 700)
+	Fontsize           bag.ScaledPoint
+	fontstyle          frontend.FontStyle
+	Fontweight         frontend.FontWeight
+	fontexpansion      *float64
+	Halign             frontend.HorizontalAlignment
+	hangingPunctuation frontend.HangingPunctuation
+	direction          string  // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
+	unicodeBidi        string  // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
+	hyphens            string  // CSS hyphens: "" (auto), "auto", "manual", "none"
+	hyphenPenalty      int     // -bag-linebreak-hyphen-penalty (0 = inherit/default)
+	linebreakTolerance float64 // -bag-linebreak-tolerance (0 = inherit/default)
+	indent             bag.ScaledPoint
+	indentRows         int
+	language           string     // BCP47 tag (e.g. "en", "ar", "de-DE")
+	langPattern        *lang.Lang // resolved hyphenator for {language, hyphens}; nil = use parent / doc default
+	letterSpacing      bag.ScaledPoint
+	lineheight         bag.ScaledPoint
+	lineheightFactor   float64 // unitless line-height factor (e.g. 1.2); recalculated per element
+	ListStyleType      string
+	marginBottom       bag.ScaledPoint
+	marginLeft         bag.ScaledPoint
+	marginRight        bag.ScaledPoint
+	marginTop          bag.ScaledPoint
+	paddingInlineStart bag.ScaledPoint
+	OlCounter          int
 	// LocalCounters holds CSS counter values defined in this element's
 	// scope. Children look up counter values by walking the StylesStack
 	// from the top down, so siblings share counters declared on the
@@ -621,6 +653,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		DefaultFontFamily:  is.DefaultFontFamily,
 		fontexpansion:      is.fontexpansion,
 		fontfamily:         is.fontfamily,
+		fontfamilyStack:    is.fontfamilyStack,
 		fontfeatures:       newFontFeatures,
 		variationSettings:  newVariationSettings,
 		Fontsize:           is.Fontsize,
@@ -654,9 +687,9 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 // one is reserved enough to avoid colliding with a real language id.
 const noHyphenationKey = "x-htmlbag-nohyphenation"
 
-// applyLangAndHyphens reads HTML lang= / xml:lang= from item.Attributes and
-// resolves the effective hyphenation language for ih. The resolution follows
-// CSS Text 3 §6:
+// applyLangAndHyphens reads HTML lang= / xml:lang= / dir= from item.Attributes
+// and resolves the effective hyphenation language and base direction for ih.
+// The resolution follows CSS Text 3 §6:
 //
 //   - hyphens: "none"   → no-op hyphenator (no breakpoints inserted)
 //   - hyphens: "manual" → no-op hyphenator. Soft-hyphen (U+00AD) breaks are
@@ -666,12 +699,27 @@ const noHyphenationKey = "x-htmlbag-nohyphenation"
 //     hyphenate without matching patterns).
 //
 // HTML5 treats lang as the inheritable language tag; xml:lang is honoured as
-// a fallback only when lang is missing.
+// a fallback only when lang is missing. dir= is mapped to CSS direction with
+// UA-stylesheet priority — author CSS direction:… wins (HTML §3.2.6.2).
 func applyLangAndHyphens(ih *FormattingStyles, attrs map[string]string, df *frontend.Document) {
 	if v, ok := attrs["lang"]; ok {
 		ih.language = strings.TrimSpace(v)
 	} else if v, ok := attrs["xml:lang"]; ok {
 		ih.language = strings.TrimSpace(v)
+	}
+	// HTML dir= attribute (HTML §3.2.6.2). Equivalent to a UA-stylesheet
+	// rule [dir=rtl] { direction: rtl; }, so author-CSS direction wins —
+	// only consult the attribute when no CSS direction has been set yet.
+	// "auto" requires runtime first-strong detection which boxesandglue
+	// already does as the default; we surface it by leaving ih.direction
+	// empty so the auto-detect path stays in effect.
+	if ih.direction == "" {
+		if v, ok := attrs["dir"]; ok {
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "ltr", "rtl":
+				ih.direction = strings.ToLower(strings.TrimSpace(v))
+			}
+		}
 	}
 	switch ih.hyphens {
 	case "none", "manual":
@@ -725,6 +773,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		settings[frontend.SettingFontExpansion] = 0.05
 	}
 	settings[frontend.SettingFontFamily] = ih.fontfamily
+	if len(ih.fontfamilyStack) > 1 {
+		settings[frontend.SettingFontFamilyStack] = ih.fontfamilyStack
+	}
 	settings[frontend.SettingHAlign] = ih.Halign
 	settings[frontend.SettingHangingPunctuation] = ih.hangingPunctuation
 	settings[frontend.SettingIndentLeft] = ih.indent
@@ -1053,6 +1104,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		if fs, ok := item.Styles["font-size"]; ok {
 			rfs := ParseRelativeSize(fs, 0, 0)
 			ss.SetDefaultFontSize(rfs)
+			cb.rootFontSize = rfs
 		}
 		if ffs, ok := item.Styles["font-family"]; ok {
 			ff := resolveCSSFontFamily(ffs, df)

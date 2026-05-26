@@ -85,6 +85,57 @@ func TestHyphensNoneOverridesLang(t *testing.T) {
 	}
 }
 
+// hasSettingDirection walks a Text tree and reports whether any node in the
+// subtree carries SettingDirection == want. Children's settings are stored
+// on nested *frontend.Text items; the outer body and html nodes each carry
+// their own SettingDirection (LTR by default), so we cannot just look at
+// the root.
+func hasSettingDirection(te *frontend.Text, want frontend.Direction) bool {
+	if te == nil {
+		return false
+	}
+	if v, ok := te.Settings[frontend.SettingDirection]; ok {
+		if d, ok := v.(frontend.Direction); ok && d == want {
+			return true
+		}
+	}
+	for _, itm := range te.Items {
+		if sub, ok := itm.(*frontend.Text); ok {
+			if hasSettingDirection(sub, want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestDirAttributeRouting confirms the HTML dir= attribute reaches the
+// SettingDirection in the same way lang= reaches SettingLanguage. Before the
+// dir-honoring patch this was a dead path: dir="rtl" on <p> was silently
+// dropped and the backend's auto-detect picked LTR for paragraphs whose
+// content started with a Latin label, producing left-aligned output even
+// though the author asked for RTL.
+func TestDirAttributeRouting(t *testing.T) {
+	html := `<!DOCTYPE html><html><body><p dir="rtl" lang="ar">عربي</p></body></html>`
+	_, te := runStylePass(t, html)
+	if !hasSettingDirection(te, frontend.DirectionRTL) {
+		t.Fatal(`SettingDirection=DirectionRTL not found in Text tree for dir="rtl"`)
+	}
+}
+
+// TestCSSDirectionWinsOverDirAttribute verifies HTML §3.2.6.2: dir= maps to
+// CSS direction via a UA-stylesheet rule, so an author CSS direction
+// declaration outranks the attribute. Author CSS direction:rtl on a
+// dir="ltr" element must end up RTL (the element-level RTL must be
+// observable in the tree even though body's default LTR is also present).
+func TestCSSDirectionWinsOverDirAttribute(t *testing.T) {
+	html := `<!DOCTYPE html><html><body><p dir="ltr" style="direction:rtl" lang="ar">عربي</p></body></html>`
+	_, te := runStylePass(t, html)
+	if !hasSettingDirection(te, frontend.DirectionRTL) {
+		t.Fatal(`SettingDirection=DirectionRTL not found — CSS direction:rtl should win over dir="ltr"`)
+	}
+}
+
 // TestPerInlineLangSwitch checks that an inline lang= different from its
 // parent block flows into the Text tree as a distinct sub-Text setting,
 // which is the precondition for Mknodes emitting node.Lang switches around

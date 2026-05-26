@@ -160,3 +160,131 @@ func TestOutputHtmlHonorsCommaFontFamily(t *testing.T) {
 		t.Errorf("after Output(html): DefaultFontFamily = %v, want serif family", got)
 	}
 }
+
+// TestResolveCSSFontFamilyListOrder verifies the stack resolver preserves
+// declaration order and skips unresolvable entries silently. Per-glyph
+// fallback walks the stack top-down for each grapheme cluster, so order
+// is load-bearing — the primary at index 0 is what SettingFontFamily
+// reports.
+func TestResolveCSSFontFamilyListOrder(t *testing.T) {
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatalf("LoadIncludedFonts: %v", err)
+	}
+	sans := fe.FindFontFamily("sans")
+	serif := fe.FindFontFamily("serif")
+	mono := fe.FindFontFamily("monospace")
+	stack := resolveCSSFontFamilyList(`"Unknown One", monospace, "Helvetica Neue", sans-serif, serif`, fe)
+	want := []*frontend.FontFamily{mono, sans, serif}
+	if len(stack) != len(want) {
+		t.Fatalf("stack length = %d, want %d (got %v)", len(stack), len(want), stack)
+	}
+	for i, ff := range want {
+		if stack[i] != ff {
+			t.Errorf("stack[%d] = %v, want %v", i, stack[i], ff)
+		}
+	}
+}
+
+// TestResolveCSSFontFamilyListDedup verifies the stack deduplicates: a family
+// listed twice (directly + via its generic alias) contributes once at its
+// first declared position. Deduplication is required for determinism —
+// the per-glyph fallback would otherwise probe coverage on the same face
+// twice.
+func TestResolveCSSFontFamilyListDedup(t *testing.T) {
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatalf("LoadIncludedFonts: %v", err)
+	}
+	sans := fe.FindFontFamily("sans")
+	stack := resolveCSSFontFamilyList(`sans, sans-serif, "sans"`, fe)
+	if len(stack) != 1 {
+		t.Fatalf("stack length = %d, want 1 (got %v)", len(stack), stack)
+	}
+	if stack[0] != sans {
+		t.Errorf("stack[0] = %v, want sans family", stack[0])
+	}
+}
+
+// TestResolveCSSFontFamilyListEmpty verifies the stack returns nil for inputs
+// where no candidate resolves (cursive/fantasy generics, unknown families).
+// The wrapper resolveCSSFontFamily must mirror this with a nil return so
+// the existing StylesToStyles fallback to 'serif' still triggers.
+func TestResolveCSSFontFamilyListEmpty(t *testing.T) {
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatalf("LoadIncludedFonts: %v", err)
+	}
+	if got := resolveCSSFontFamilyList(`"Comic Sans MS", cursive, fantasy`, fe); got != nil {
+		t.Errorf("resolveCSSFontFamilyList(unknown stack) = %v, want nil", got)
+	}
+	if got := resolveCSSFontFamily(`"Comic Sans MS", cursive, fantasy`, fe); got != nil {
+		t.Errorf("resolveCSSFontFamily(unknown stack) = %v, want nil", got)
+	}
+}
+
+// TestStylesToStylesPopulatesFontFamilyStack verifies that the high-level
+// CSS-cascade path populates BOTH ih.fontfamily (primary, for the existing
+// single-family code path) and ih.fontfamilyStack (full prioritised list,
+// for per-glyph fallback). Single-family inputs leave the stack as a
+// one-entry slice so the `len > 1` gate in ApplySettings keeps the
+// settings map free of the new SettingFontFamilyStack key — that gate is
+// what keeps single-family content on the unchanged single-shape path.
+func TestStylesToStylesPopulatesFontFamilyStack(t *testing.T) {
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatalf("LoadIncludedFonts: %v", err)
+	}
+	sans := fe.FindFontFamily("sans")
+	serif := fe.FindFontFamily("serif")
+	mono := fe.FindFontFamily("monospace")
+
+	ih := &FormattingStyles{Fontsize: 10 * 65536}
+	if err := StylesToStyles(ih, map[string]string{"font-family": `monospace, sans-serif, serif`}, fe, ih.Fontsize); err != nil {
+		t.Fatalf("StylesToStyles: %v", err)
+	}
+	if ih.fontfamily != mono {
+		t.Errorf("primary fontfamily = %v, want monospace", ih.fontfamily)
+	}
+	want := []*frontend.FontFamily{mono, sans, serif}
+	if len(ih.fontfamilyStack) != len(want) {
+		t.Fatalf("fontfamilyStack length = %d, want %d", len(ih.fontfamilyStack), len(want))
+	}
+	for i, ff := range want {
+		if ih.fontfamilyStack[i] != ff {
+			t.Errorf("fontfamilyStack[%d] = %v, want %v", i, ih.fontfamilyStack[i], ff)
+		}
+	}
+
+	// Gate: single-family CSS must not emit the new setting so the
+	// downstream shape orchestrator stays on the single-shape path.
+	ih2 := &FormattingStyles{Fontsize: 10 * 65536}
+	if err := StylesToStyles(ih2, map[string]string{"font-family": `sans-serif`}, fe, ih2.Fontsize); err != nil {
+		t.Fatalf("StylesToStyles: %v", err)
+	}
+	settings := frontend.TypesettingSettings{}
+	ApplySettings(settings, ih2)
+	if _, ok := settings[frontend.SettingFontFamilyStack]; ok {
+		t.Errorf("ApplySettings emitted SettingFontFamilyStack for single-family CSS")
+	}
+
+	// Two-or-more families must emit the new setting so per-glyph
+	// fallback can pick it up.
+	settings2 := frontend.TypesettingSettings{}
+	ApplySettings(settings2, ih)
+	if _, ok := settings2[frontend.SettingFontFamilyStack]; !ok {
+		t.Errorf("ApplySettings did NOT emit SettingFontFamilyStack for multi-family CSS")
+	}
+}
