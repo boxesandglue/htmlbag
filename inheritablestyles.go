@@ -1351,6 +1351,12 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 
 	var te *frontend.Text
 	cur := ModeVertical
+	// lastWasHardBreak: see the matching loop inside collectHorizontalNodes.
+	// A forced line break terminates pending inter-word whitespace; the
+	// next inline text must start flush with the line box. Without this,
+	// source like "<div>foo<br>\n  bar</div>" produced a leading-space
+	// indent on every line after a <br>.
+	lastWasHardBreak := false
 
 	// display = "none"
 	if styles.Hide {
@@ -1385,6 +1391,20 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 
 	for _, itm := range item.Children {
 		if itm.Dir == ModeHorizontal {
+			// Strip leading whitespace from text nodes that immediately
+			// follow a <br>: the forced line break already terminated the
+			// inline run, so the source-side newline+indent must not
+			// re-introduce a leading inter-word glue on the next line.
+			// Whitespace-only text nodes drop out entirely; the
+			// lastWasHardBreak flag stays true so a consecutive <br>
+			// sibling still chains correctly.
+			if lastWasHardBreak && itm.Typ == html.TextNode {
+				itm.Data = strings.TrimLeft(itm.Data, " \t\r\n")
+				if itm.Data == "" {
+					continue
+				}
+			}
+
 			// Going from vertical to horizontal.
 			if cur == ModeVertical && itm.Data == " " {
 				// there is only a whitespace element.
@@ -1429,7 +1449,9 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				}
 			}
 			cur = ModeHorizontal
+			lastWasHardBreak = itm.Typ == html.ElementNode && itm.Data == "br"
 		} else {
+			lastWasHardBreak = false
 			// still vertical
 			if itm.Data == "li" {
 				styles.OlCounter++
@@ -1877,7 +1899,36 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			return nil
 		}
 
+		// lastWasHardBreak carries the “previous sibling was a <br>” flag
+		// across iterations so we can swallow the leading whitespace of
+		// the text node that follows. Spec-conformant browsers do the
+		// same: a forced line break terminates any pending inter-word
+		// whitespace in the inline flow, and the next inline content
+		// starts flush with the line box rather than gaining a leading
+		// glue. Without this, source like “<div>foo<br>\n  bar</div>”
+		// renders bar with a one-space indent.
+		lastWasHardBreak := false
 		for _, itm := range item.Children {
+			effective := itm
+			if lastWasHardBreak && itm.Typ == html.TextNode {
+				trimmed := strings.TrimLeft(itm.Data, " \t\r\n")
+				if trimmed == "" {
+					// Whitespace-only text node directly after <br> —
+					// skip it entirely. Keep lastWasHardBreak true so a
+					// further <br> sibling still chains correctly.
+					continue
+				}
+				if trimmed != itm.Data {
+					// Shallow-copy so we do not mutate the shared
+					// HTMLItem tree (Children is []*HTMLItem; another
+					// pass through could otherwise see the trimmed
+					// text).
+					tmp := *itm
+					tmp.Data = trimmed
+					effective = &tmp
+				}
+			}
+
 			cld := frontend.NewText()
 			sty := ss.PushStyles()
 			if err := StylesToStyles(sty, item.Styles, df, currentFontsize); err != nil {
@@ -1888,17 +1939,19 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			for k, v := range childSettings {
 				cld.Settings[k] = v
 			}
-			if err := collectHorizontalNodes(cb, cld, itm, ss, currentFontsize, defaultFontsize, df, anchorPages); err != nil {
+			if err := collectHorizontalNodes(cb, cld, effective, ss, currentFontsize, defaultFontsize, df, anchorPages); err != nil {
 				return err
 			}
-			if isFootnoteElement(itm) {
+			if isFootnoteElement(effective) {
 				te.Items = append(te.Items, insertMarker{Class: InsertFootnote, Body: cld})
-			} else if isFloatElement(itm) {
-				te.Items = append(te.Items, insertMarker{Class: floatClassFor(itm), Body: cld})
+			} else if isFloatElement(effective) {
+				te.Items = append(te.Items, insertMarker{Class: floatClassFor(effective), Body: cld})
 			} else {
 				te.Items = append(te.Items, cld)
 			}
 			ss.PopStyles()
+
+			lastWasHardBreak = itm.Typ == html.ElementNode && itm.Data == "br"
 		}
 
 		// ::after pseudo-element on inline elements. Renders after the
