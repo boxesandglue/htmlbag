@@ -119,6 +119,29 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						containerSE.AddChild(lbody)
 						cb.structureCurrent = lbody
 					}
+					// PDF 1.7 §14.8.5.4: L elements should declare
+					// /ListNumbering. PAC and matterhorn linters warn
+					// otherwise. The HTML tag is sufficient to pick the
+					// browser default; a CSS list-style-type override can
+					// be threaded through a dedicated setting later.
+					if canonical == "L" {
+						switch tag {
+						case "ol":
+							containerSE.ListNumbering = "Decimal"
+						case "ul":
+							containerSE.ListNumbering = "Disc"
+						}
+					}
+					// PDF/UA-1 §7.3: Figure must carry /Alt. The leaf
+					// branch below handles <img> nested inside <p>;
+					// this box branch fires when the image was promoted
+					// to a block via CSS `display: block` and routed
+					// through Output()'s img-special path. te.Items
+					// holds an inner Text whose first item is the
+					// imgNode (with alt stamped on its Attributes).
+					if canonical == "Figure" {
+						containerSE.Alt = findImageAlt(te)
+					}
 				}
 			}
 		}
