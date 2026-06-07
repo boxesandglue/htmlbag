@@ -1,6 +1,12 @@
 # htmlbag
 
+[![Explore in Constellation](https://img.shields.io/badge/Explore%20in-Constellation-blue)](https://constellation.speedata.de)
+
 htmlbag is the HTML/CSS renderer within the Boxes and Glue stack. It turns HTML fragments plus CSS into internal text and node structures (`frontend.Text`, `node.VList`, etc.) that are later shipped to PDF.
+
+This project is part of a broader ecosystem of technologies for document processing, XML transformation, typesetting and PDF generation.
+
+→ [Explore its connections in Constellation](https://constellation.speedata.de)
 
 ## Core pieces
 - `CSSBuilder` (cssbuilder.go): owns a `frontend.Document` and `csshtml.CSS`, parses HTML (`ParseHTMLFromNode`/`HTMLToText`), applies CSS, and builds vlists.
