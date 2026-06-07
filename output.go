@@ -1,6 +1,7 @@
 package htmlbag
 
 import (
+	"os"
 	"strconv"
 	"strings"
 
@@ -9,7 +10,42 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/csshtml"
+	"github.com/boxesandglue/svgreader"
 )
+
+// hasSVGExt reports whether the URL refers to an SVG file by suffix.
+// Margin-box content:url() resolution gets a filesystem path; query
+// strings and other URL machinery are not in play here.
+func hasSVGExt(url string) bool {
+	return strings.HasSuffix(strings.ToLower(url), ".svg")
+}
+
+// loadSVGForMarginBox parses an SVG file and produces an image node sized
+// to fit the margin box height while preserving the SVG's natural aspect
+// ratio. Returns ok=false on any I/O or parse failure (caller falls back
+// to an empty margin box, matching the silent-fail behaviour of the
+// raster/PDF path).
+func loadSVGForMarginBox(filename string, boxHt bag.ScaledPoint, df *frontend.Document) (*node.Rule, bool) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	svgDoc, err := svgreader.Parse(f)
+	if err != nil {
+		return nil, false
+	}
+	naturalW := bag.ScaledPointFromFloat(svgDoc.Width)
+	naturalH := bag.ScaledPointFromFloat(svgDoc.Height)
+	var wd bag.ScaledPoint
+	if naturalH > 0 && naturalW > 0 {
+		wd = bag.ScaledPoint(float64(boxHt) * float64(naturalW) / float64(naturalH))
+	} else {
+		wd = boxHt
+	}
+	tr := frontend.NewSVGTextRenderer(df)
+	return df.Doc.CreateSVGNodeFromDocument(svgDoc, wd, boxHt, tr), true
+}
 
 // pageMarginBoxFallbackFontSize seeds the page-context font size when
 // nothing else is available. CSS Paged Media 3 §3.3: page context
@@ -263,20 +299,37 @@ func (cb *CSSBuilder) BeforeShipout() error {
 							imgURL = resolved
 						}
 					}
-					imgfile, imgErr := df.Doc.LoadImageFile(imgURL)
-					if imgErr == nil {
-						imgNode := df.Doc.CreateImageNodeFromImagefile(imgfile, 1, "/MediaBox")
-						boxHt := pmb.ht - styles.BorderTopWidth - styles.BorderBottomWidth
-						if pmb.areaHeight > 0 {
-							boxHt = pmb.areaHeight
+					boxHt := pmb.ht - styles.BorderTopWidth - styles.BorderBottomWidth
+					if pmb.areaHeight > 0 {
+						boxHt = pmb.areaHeight
+					}
+					boxWd := pmb.wd - styles.BorderLeftWidth - styles.BorderRightWidth
+
+					// SVG-aware branch. df.Doc.LoadImageFile delegates to
+					// baseline-pdf's image.DecodeConfig+tryParsePDFWithBox
+					// pipeline, which knows JPEG/PNG/PDF but not SVG.
+					// inline <img src="x.svg"> works because
+					// inheritablestyles.go uses svgreader directly; the
+					// margin-box content:url() path needs the same
+					// treatment to keep behaviour consistent.
+					if hasSVGExt(imgURL) {
+						if svgNode, ok := loadSVGForMarginBox(imgURL, boxHt, df); ok {
+							vl = node.Vpack(svgNode)
+							switch pmb.halign {
+							case frontend.HAlignCenter:
+								pmb.x += (boxWd - svgNode.Width) / 2
+							case frontend.HAlignRight:
+								pmb.x += boxWd - svgNode.Width
+							}
 						}
+					} else if imgfile, imgErr := df.Doc.LoadImageFile(imgURL); imgErr == nil {
+						imgNode := df.Doc.CreateImageNodeFromImagefile(imgfile, 1, "/MediaBox")
 						// Scale proportionally to fit the margin box height.
 						scale := float64(boxHt) / float64(imgNode.Height)
 						imgNode.Height = boxHt
 						imgNode.Width = bag.ScaledPoint(float64(imgNode.Width) * scale)
 						vl = node.Vpack(imgNode)
 						// Align image within the margin box area.
-						boxWd := pmb.wd - styles.BorderLeftWidth - styles.BorderRightWidth
 						switch pmb.halign {
 						case frontend.HAlignCenter:
 							pmb.x += (boxWd - imgNode.Width) / 2
