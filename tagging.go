@@ -139,7 +139,7 @@ func html5RoleMap() map[string]document.NamespaceRoleEntry {
 //     namespace if known, otherwise falls back to the canonical role with the
 //     PDF 2.0 SSN namespace.
 func roleAndNS(canonical string, format document.Format) (role, ns string) {
-	if format != document.FormatPDFUA2 {
+	if !format.IsPDFUA2() {
 		return canonical, ""
 	}
 	if html5, ok := canonicalToHTML5[canonical]; ok && html5 != "" {

@@ -214,7 +214,7 @@ func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
 	}
 
 	// Enable automatic structure tagging for PDF/UA (both UA-1 and UA-2)
-	if fd.Doc.Format == document.FormatPDFUA || fd.Doc.Format == document.FormatPDFUA2 {
+	if fd.Doc.Format.IsPDFUA() {
 		cb.enableTagging = true
 		cb.structureRoot = fd.Doc.RootStructureElement
 		if cb.structureRoot == nil {
@@ -228,7 +228,7 @@ func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
 		// we install a RoleMapNS that targets the PDF 2.0 SSN equivalent
 		// for each canonical role we emit. Without this, veraPDF flags
 		// every HTML5-tagged element as SENonStandard.
-		if fd.Doc.Format == document.FormatPDFUA2 {
+		if fd.Doc.Format.IsPDFUA2() {
 			fd.Doc.DeclareNamespace(document.NamespacePDF20SSN)
 			fd.Doc.SetNamespaceRoleMap(document.NamespaceHTML5, html5RoleMap())
 		}
