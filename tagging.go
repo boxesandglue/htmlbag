@@ -1,9 +1,29 @@
 package htmlbag
 
 import (
+	"strings"
+
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 )
+
+// mathMLNamespace is the MathML namespace URI required on the root <math>
+// element of a standalone MathML document (PDF/UA-2 associated file,
+// MathML Core).
+const mathMLNamespace = "http://www.w3.org/1998/Math/MathML"
+
+// ensureMathMLNamespace re-attaches the MathML namespace declaration to the
+// root <math> element when it is missing. The HTML5 parser tracks the
+// namespace implicitly, but html.Render drops the xmlns attribute when
+// serialising foreign content; as a standalone associated file the MathML
+// must be self-describing XML. If src already declares any xmlns it is left
+// untouched.
+func ensureMathMLNamespace(src string) string {
+	if strings.Contains(src, "xmlns") {
+		return src
+	}
+	return strings.Replace(src, "<math", `<math xmlns="`+mathMLNamespace+`"`, 1)
+}
 
 // pdfTagInfo records the PDF SSN role name and its HTML5 equivalent (if any)
 // for a structural role. The SSN name is the role identifier in the PDF 1.7

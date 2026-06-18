@@ -608,9 +608,17 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			if canonical != "" {
 				format := cb.frontend.Doc.Format
 				se := newSE(canonical, format)
+				// A block that contains an inline <math> gets a Formula child
+				// (linked below). In that case we must NOT stamp ActualText on
+				// the block: ActualText replaces the element's entire content
+				// for assistive technology (PDF 1.7 §14.9.4), which would mask
+				// the Formula child's /Alt and read the sentence without the
+				// formula. Letting the structure stand — text MCRs plus the
+				// Formula element — keeps the formula reachable.
+				hasFormula := cb.enableTagging && containsFormula(te)
 				if canonical == "Figure" {
 					se.Alt = findImageAlt(te)
-				} else {
+				} else if !hasFormula {
 					se.ActualText = extractTextContent(te)
 				}
 				// Stash heading SE on the VList so the outer caller can
@@ -623,6 +631,11 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					}
 					vl.Attributes["_heading_se"] = se
 				}
+				// contentSE is the structure element that directly owns the
+				// block's inline content (glyphs and any inline Formula). For
+				// most blocks that is se itself; LI nests an LBody and <pre>
+				// nests a Code, so a Formula inside them must attach there.
+				contentSE := se
 				// LI must contain exactly one LBody (PDF/UA 7.2)
 				switch {
 				case canonical == "LI":
@@ -632,6 +645,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					se.ActualText = ""
 					se.AddChild(lbody)
 					tagVList(vl, lbody)
+					contentSE = lbody
 				case tag == "pre":
 					// PDF/UA-1 (ISO 14289-1, based on PDF 1.7 §14.8) treats
 					// Code as an inline structure element — it must live
@@ -649,6 +663,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					se.ActualText = ""
 					se.AddChild(code)
 					tagVList(vl, code)
+					contentSE = code
 				case canonical == "Figure" && hasFormXObjectImage(te):
 					// PDF/UA-1 §7.1 Note 1: a Figure whose entire body is a
 					// Form XObject (imported PDF) attaches via /StructParent
@@ -661,11 +676,58 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					cb.structureCurrent.AddChild(se)
 					tagVList(vl, se)
 				}
+				// Link any inline <math> Formula elements as children of the
+				// block's content SE. The /K serializer (document.go) sorts
+				// them into document reading order relative to the surrounding
+				// text marked-content runs, so a mid-sentence formula reads in
+				// place.
+				if hasFormula {
+					linkFormulaSEs(te, contentSE)
+				}
 			}
 		}
 	}
 
 	return vl, nil
+}
+
+// containsFormula reports whether the Text tree holds an inline <math>
+// formula that collectHorizontalNodes tagged with a Formula structure
+// element.
+func containsFormula(te *frontend.Text) bool {
+	for _, itm := range te.Items {
+		switch t := itm.(type) {
+		case *node.HList:
+			if t.Attributes != nil {
+				if _, ok := t.Attributes["_formula_se"]; ok {
+					return true
+				}
+			}
+		case *frontend.Text:
+			if containsFormula(t) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// linkFormulaSEs walks the Text tree and attaches every inline-formula
+// structure element (stashed under "_formula_se" by collectHorizontalNodes)
+// as a child of parent, in document order.
+func linkFormulaSEs(te *frontend.Text, parent *document.StructureElement) {
+	for _, itm := range te.Items {
+		switch t := itm.(type) {
+		case *node.HList:
+			if t.Attributes != nil {
+				if se, ok := t.Attributes["_formula_se"].(*document.StructureElement); ok {
+					parent.AddChild(se)
+				}
+			}
+		case *frontend.Text:
+			linkFormulaSEs(t, parent)
+		}
+	}
 }
 
 // extractTextContent recursively collects string content from a Text tree.

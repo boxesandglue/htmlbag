@@ -11,9 +11,11 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
 	"github.com/boxesandglue/boxesandglue/backend/document"
+	"github.com/boxesandglue/boxesandglue/backend/font"
 	"github.com/boxesandglue/boxesandglue/backend/lang"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"github.com/boxesandglue/boxesandglue/frontend/math/mathml"
 	"github.com/boxesandglue/csshtml"
 	"github.com/boxesandglue/svgreader"
 	"golang.org/x/net/html"
@@ -1680,6 +1682,83 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				vl.Attributes["alt"] = alt
 			}
 			te.Items = append(te.Items, vl)
+		case "math":
+			// Inline <math>. selection.go has serialised the subtree
+			// onto Attributes["_mathmlSource"]; push the element's
+			// own styles so font-family/font-size from `math { ... }`
+			// CSS rules become visible via CurrentStyle(), then call
+			// the mathml reader, which dispatches to math.InlineMath
+			// or math.DisplayMath depending on the root display
+			// attribute. The engine's HList is appended directly into
+			// te.Items so it sits inside the surrounding paragraph;
+			// the spacing/linebreak passes treat it as one opaque box.
+			src := item.Attributes["_mathmlSource"]
+			if src == "" {
+				break
+			}
+			mathSty := ss.PushStyles()
+			if err := StylesToStyles(mathSty, item.Styles, df, currentFontsize); err != nil {
+				ss.PopStyles()
+				return err
+			}
+			cs := ss.CurrentStyle()
+			if cs.fontfamily == nil {
+				ss.PopStyles()
+				return fmt.Errorf("htmlbag <math>: no font family on current style")
+			}
+			mathFS, err := cs.fontfamily.GetFontSource(cs.Fontweight, cs.fontstyle)
+			if err != nil {
+				ss.PopStyles()
+				return fmt.Errorf("htmlbag <math>: %w", err)
+			}
+			mathFace, err := df.LoadFace(mathFS)
+			if err != nil {
+				ss.PopStyles()
+				return fmt.Errorf("htmlbag <math>: %w", err)
+			}
+			mathFnt := font.NewFont(mathFace, cs.Fontsize)
+			hl, err := mathml.Render([]byte(src), mathFnt)
+			ss.PopStyles()
+			if err != nil {
+				return fmt.Errorf("htmlbag <math>: %w", err)
+			}
+			// PDF/UA: wrap the formula in a Formula structure element
+			// (ISO 14289-2 §8.x). The /Alt fallback comes from the MathML
+			// alttext attribute when present, else a plain-text rendering of
+			// the token content. The structure element is stashed on the
+			// HList: the renderer reads "tag" to split the surrounding
+			// paragraph's marked content around the formula glyphs, and
+			// BuildParagraph reads "_formula_se" to link it into the
+			// structure tree as a child of the containing block. The MathML
+			// source rides along under "_mathml_af" for the associated-file
+			// pass.
+			if cb.enableTagging {
+				if hl.Attributes == nil {
+					hl.Attributes = node.H{}
+				}
+				alt := item.Attributes["alttext"]
+				if alt == "" {
+					alt = mathml.AltText([]byte(src))
+				}
+				formulaSE := newSE("Formula", cb.frontend.Doc.Format)
+				formulaSE.Alt = alt
+				// Attach the MathML source as an associated file (PDF 2.0
+				// §14.13) so assistive technology can consume the formula's
+				// semantics directly. Associated files are a PDF 2.0 feature,
+				// so this is limited to PDF/UA-2; under UA-1 the /Alt fallback
+				// stands alone.
+				if cb.frontend.Doc.Format.IsPDFUA2() {
+					formulaSE.AddAssociatedFile(document.Attachment{
+						Name:        "formula.mml",
+						MimeType:    "application/mathml+xml",
+						Description: "MathML representation of the formula",
+						Data:        []byte(ensureMathMLNamespace(src)),
+					}, "Supplement")
+				}
+				hl.Attributes["tag"] = formulaSE
+				hl.Attributes["_formula_se"] = formulaSE
+			}
+			te.Items = append(te.Items, hl)
 		case "img":
 			// Push the img element's own styles so its CSS (vertical-align,
 			// font-size for relative sizing, …) is visible via CurrentStyle().

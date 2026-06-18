@@ -120,7 +120,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			switch eltname {
 			case "body", "address", "article", "aside", "blockquote", "canvas", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
 				newDir = ModeVertical
-			case "b", "big", "i", "small", "tt", "abbr", "acronym", "cite", "code", "dfn", "em", "kbd", "strong", "samp", "var", "a", "barcode", "bdo", "img", "map", "object", "q", "script", "span", "sub", "sup", "button", "input", "label", "select", "textarea", "svg":
+			case "b", "big", "i", "small", "tt", "abbr", "acronym", "cite", "code", "dfn", "em", "kbd", "strong", "samp", "var", "a", "barcode", "bdo", "img", "map", "object", "q", "script", "span", "sub", "sup", "button", "input", "label", "select", "textarea", "svg", "math":
 				newDir = ModeHorizontal
 			default:
 				// keep dir
@@ -165,17 +165,30 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 					itm.Dir = ModeHorizontal
 				}
 			}
-			// Inline <svg> is an opaque leaf for the HTML pipeline: its
-			// children (rect / path / text / g / …) are not HTML
-			// elements and must not be walked as such. Serialise the
-			// subtree back to XML and stash it on the item; the
-			// collectHorizontalNodes svg-case will parse it via
-			// svgreader. The HTML5 parser already integrated the
-			// <svg> subtree into the html.Node tree with the correct
-			// nesting, so html.Render produces valid SVG XML.
-			if eltname == "svg" && thisNode.FirstChild != nil {
+			// Inline <svg> and <math> are opaque leaves for the HTML
+			// pipeline: their children (rect/path/g for SVG, mi/mn/mo
+			// for MathML, …) are not HTML elements and must not be
+			// walked as such. Serialise the subtree back to XML and
+			// stash it on the item; collectHorizontalNodes' svg / math
+			// cases will parse it via svgreader / mathml. The HTML5
+			// parser already integrated each subtree into the
+			// html.Node tree as foreign content with correct nesting,
+			// so html.Render produces valid SVG / MathML XML.
+			if (eltname == "svg" || eltname == "math") && thisNode.FirstChild != nil {
 				var buf bytes.Buffer
-				if err := html.Render(&buf, thisNode); err == nil {
+				if eltname == "math" {
+					// MathML round-trips through encoding/xml downstream
+					// (see mathml.Parse), which rejects attribute names
+					// starting with `!` — and csshtml.ApplyCSS injects
+					// exactly such names (`!font-family`, `!color`, …)
+					// onto every matched element. Render a cleaned copy
+					// of the subtree with those marker attrs stripped so
+					// the serialised MathML is valid XML.
+					cleaned := stripCSSMarkerAttrs(thisNode)
+					if err := html.Render(&buf, cleaned); err == nil {
+						itm.Attributes["_mathmlSource"] = buf.String()
+					}
+				} else if err := html.Render(&buf, thisNode); err == nil {
 					itm.Attributes["_svgSource"] = buf.String()
 				}
 			} else if thisNode.FirstChild != nil {
@@ -205,6 +218,41 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 		direction = newDir
 	}
 	return nil
+}
+
+// stripCSSMarkerAttrs returns a deep copy of n with all `!`-prefixed
+// attributes removed at every descendant. csshtml.ApplyCSS injects
+// resolved-CSS attributes like `!font-family`, `!color`, `!font-size`
+// onto matched elements; these names are not valid XML attribute names,
+// so any subtree we serialise and feed back into an XML parser (currently:
+// inline MathML on its way into mathml.Parse) must shed them first. The
+// original tree is left untouched because the styling pass still needs
+// the markers downstream.
+func stripCSSMarkerAttrs(n *html.Node) *html.Node {
+	clone := &html.Node{
+		Type:      n.Type,
+		DataAtom:  n.DataAtom,
+		Data:      n.Data,
+		Namespace: n.Namespace,
+	}
+	for _, a := range n.Attr {
+		if len(a.Key) > 0 && a.Key[0] == '!' {
+			continue
+		}
+		clone.Attr = append(clone.Attr, a)
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		cc := stripCSSMarkerAttrs(c)
+		cc.Parent = clone
+		if clone.LastChild == nil {
+			clone.FirstChild = cc
+		} else {
+			clone.LastChild.NextSibling = cc
+			cc.PrevSibling = clone.LastChild
+		}
+		clone.LastChild = cc
+	}
+	return clone
 }
 
 // HTMLNodeToText converts an HTML node to a *frontend.Text element.
