@@ -5,8 +5,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	pdf "github.com/boxesandglue/baseline-pdf"
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
@@ -18,16 +21,27 @@ import (
 
 var onecm = bag.MustSP("1cm")
 
-// HeadingEntry records a heading found during VList construction.
-// The Page field is filled later during OutputPages when the heading
-// is placed on a page. SE is filled at SE-construction time for tagged
-// documents; consumers (PDF outline generator) use it to emit
+// HeadingEntry records a heading (h1–h6) or a bookmarked element found
+// during VList construction. Page and Y are filled later during OutputPages
+// when the element is placed on a page. SE is filled at SE-construction time
+// for tagged documents; consumers (PDF outline generator) use it to emit
 // structure destinations as required by PDF/UA-2 §8.8.
+//
+// The bm* fields drive PDF outline (bookmark) generation. They are set from
+// the element's heading level (h1→1 … h6→6) and/or the CSS -bag-bookmark
+// property. An entry with bmLevel == 0 is recorded for the heading list / TOC
+// but is omitted from the PDF outline (e.g. an h2 with -bag-bookmark: none, or
+// a non-heading element without -bag-bookmark). Non-heading bookmarks carry an
+// empty Level.
 type HeadingEntry struct {
-	Level string // "h1", "h2", etc.
+	Level string // "h1", "h2", etc.; "" for a non-heading bookmark
 	Text  string
 	Page  int                        // 1-based page number, 0 until assigned
 	SE    *document.StructureElement // nil unless tagging is enabled and this heading was tagged
+
+	Y       bag.ScaledPoint // top edge on the page (PDF user space), for an /XYZ outline destination
+	bmLevel int             // resolved outline nesting level (1-based); 0 = not in the outline
+	bmOpen  bool            // outline node shows its children expanded
 }
 
 // AnchorEntry records an element with an id attribute (block or
@@ -91,6 +105,12 @@ type CSSBuilder struct {
 	// Headings collects all h1–h6 headings encountered during VList
 	// construction. Page numbers are assigned during OutputPages.
 	Headings []HeadingEntry
+	// GenerateOutline controls whether OutputPages / OutputPagesFromText
+	// emit a PDF outline (bookmarks) from the collected headings and
+	// -bag-bookmark elements. Defaults to true (set in New). Callers that
+	// build their own outline (e.g. glu's Markdown pipeline) set it to
+	// false to opt out.
+	GenerateOutline bool
 	// Anchors collects every block-level element with an id attribute
 	// encountered during VList construction. Page numbers are assigned
 	// during shipout, just like Headings. Read by the multi-pass aux
@@ -208,6 +228,7 @@ func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
 		FootnoteCallRiseRatio:   defaultFootnoteCallRiseRatio,
 		FloatTopInterSkip:       defaultFloatTopInterSkip,
 		FloatBottomInterSkip:    defaultFloatBottomInterSkip,
+		GenerateOutline:         true,
 	}
 	if err := LoadIncludedFonts(fd); err != nil {
 		return nil, err
@@ -789,7 +810,104 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		return err
 	}
 	cb.frontend.Doc.CurrentPage.Shipout()
+	if cb.GenerateOutline {
+		cb.appendOutline()
+	}
 	return nil
+}
+
+// headingLevel maps an HTML heading tag to its 1-based outline level
+// (h1→1 … h6→6). Any other tag returns 0 (not an implicit bookmark).
+func headingLevel(tag string) int {
+	switch tag {
+	case "h1":
+		return 1
+	case "h2":
+		return 2
+	case "h3":
+		return 3
+	case "h4":
+		return 4
+	case "h5":
+		return 5
+	case "h6":
+		return 6
+	}
+	return 0
+}
+
+// parseBookmark interprets a CSS -bag-bookmark value (already lower-cased).
+// Grammar: `none | [<integer>] [open | closed]` — tokens in any order. It
+// returns the explicit level (level, hasLevel), the open/closed state
+// (default open), and whether `none` was given. The caller combines this with
+// the element's implicit heading level to decide the final outline level.
+func parseBookmark(raw string) (level int, hasLevel bool, open bool, none bool) {
+	open = true // bookmarks default to expanded; `closed` collapses them
+	for _, tok := range strings.Fields(raw) {
+		switch tok {
+		case "none":
+			none = true
+		case "open":
+			open = true
+		case "closed":
+			open = false
+		default:
+			if n, err := strconv.Atoi(tok); err == nil && n > 0 {
+				level, hasLevel = n, true
+			}
+		}
+	}
+	return level, hasLevel, open, none
+}
+
+// appendOutline builds a nested PDF outline (bookmarks) from the collected
+// heading/bookmark entries and assigns it to the PDF writer. Entries nest by
+// their resolved bmLevel: a level-2 entry becomes a child of the most recent
+// entry with a lower level, and so on. Level jumps (e.g. 1 → 3 with no 2 in
+// between) attach to the nearest shallower ancestor, so a missing intermediate
+// level can never orphan a child. Entries with bmLevel == 0 (TOC-only or
+// -bag-bookmark: none) and entries without a page are skipped. Must run after
+// every page has shipped out so page object numbers are assigned.
+func (cb *CSSBuilder) appendOutline() {
+	fe := cb.frontend
+	ua2 := fe.Doc.Format.IsPDFUA2()
+	type stackItem struct {
+		level int
+		ol    *pdf.Outline
+	}
+	var stack []stackItem
+	for i := range cb.Headings {
+		h := &cb.Headings[i]
+		if h.bmLevel <= 0 || h.Page <= 0 || h.Page > len(fe.Doc.Pages) {
+			continue
+		}
+		var dest string
+		if ua2 && h.SE != nil {
+			// PDF/UA-2 §8.8: intra-document destinations must be structure
+			// destinations. Pre-allocate the SE object now so Finish() reuses
+			// it; the outline /Dest then targets the StructElem directly.
+			if h.SE.Obj == nil {
+				h.SE.Obj = fe.Doc.PDFWriter.NewObject()
+			}
+			dest = fmt.Sprintf("[%s /Fit]", h.SE.Obj.ObjectNumber.Ref())
+		} else {
+			// /XYZ jumps to the heading's exact vertical position (its top
+			// edge), keeping the current horizontal scroll and zoom (null).
+			pg := fe.Doc.Pages[h.Page-1]
+			dest = fmt.Sprintf("[%s /XYZ null %0.5g null]", pg.Objectnumber.Ref(), h.Y.ToPT())
+		}
+		o := &pdf.Outline{Title: h.Text, Dest: dest, Open: h.bmOpen}
+		for len(stack) > 0 && stack[len(stack)-1].level >= h.bmLevel {
+			stack = stack[:len(stack)-1]
+		}
+		if len(stack) == 0 {
+			fe.Doc.PDFWriter.Outlines = append(fe.Doc.PDFWriter.Outlines, o)
+		} else {
+			parent := stack[len(stack)-1].ol
+			parent.Children = append(parent.Children, o)
+		}
+		stack = append(stack, stackItem{level: h.bmLevel, ol: o})
+	}
 }
 
 // OutputPagesFromText takes a Text tree (from HTMLToText), splits it at forced
@@ -841,6 +959,9 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 		return err
 	}
 	cb.frontend.Doc.CurrentPage.Shipout()
+	if cb.GenerateOutline {
+		cb.appendOutline()
+	}
 	return nil
 }
 

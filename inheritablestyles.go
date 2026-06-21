@@ -40,6 +40,13 @@ var (
 // strict "unknown setting" default that would otherwise error).
 const settingPageBreakInside frontend.SettingType = -1
 
+// settingBookmark is an htmlbag-private frontend.SettingType sentinel that
+// carries the CSS -bag-bookmark value from style resolution to VList
+// construction, mirroring settingPageBreakInside. vlistbuilder reads it to
+// build the PDF outline and deletes it from the source Text's Settings so it
+// never reaches frontend.FormatParagraph.
+const settingBookmark frontend.SettingType = -2
+
 // ParseVerticalAlign parses the input ("top","middle",...) and returns the
 // VerticalAlignment value.
 func ParseVerticalAlign(align string, styles *FormattingStyles) frontend.VerticalAlignment {
@@ -408,6 +415,10 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			ih.pageBreakBefore = v
 		case "page-break-inside", "break-inside":
 			ih.pageBreakInside = v
+		case "-bag-bookmark":
+			// boxesandglue-specific PDF outline control. Grammar:
+			// `none | [<integer>] [open|closed]`. Read in vlistbuilder.
+			ih.bookmark = strings.ToLower(strings.TrimSpace(v))
 		case "position":
 			// CSS 2.1 §9.3.1: position keyword. Unknown values
 			// fall through to static via the lowercase-trim. We
@@ -588,6 +599,7 @@ type FormattingStyles struct {
 	pageBreakAfter     string
 	pageBreakBefore    string
 	pageBreakInside    string
+	bookmark           string // -bag-bookmark raw value (non-inherited; "" = unset)
 	yoffset            bag.ScaledPoint
 	// CSS positioning (CSS 2.1 §9-§10). None of these inherit; Clone()
 	// deliberately drops them so every element starts at the default
@@ -820,6 +832,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	if ih.pageBreakInside != "" {
 		settings[settingPageBreakInside] = ih.pageBreakInside
+	}
+	if ih.bookmark != "" {
+		settings[settingBookmark] = ih.bookmark
 	}
 	if ih.width != "" {
 		settings[frontend.SettingWidth] = ih.width

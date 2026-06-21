@@ -207,6 +207,15 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					vls.Height += marginGlue
 				}
 
+				// Capture and strip the -bag-bookmark sentinel before the
+				// element's Text is formatted: a leaf paragraph (<p>, <h2>…)
+				// would otherwise carry the htmlbag-private SettingType into
+				// frontend.FormatParagraph, whose strict switch rejects it.
+				// The captured value is consumed by the outline-annotation
+				// block below (after the VList is built).
+				bmRaw, _ := t.Settings[settingBookmark].(string)
+				delete(t.Settings, settingBookmark)
+
 				var vl *node.VList
 				if dbg, ok := t.Settings[frontend.SettingDebug].(string); ok && dbg == "table" {
 					// CSS border/padding/background declared on the <table>
@@ -340,15 +349,44 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					}
 				}
 
-				// Annotate heading VLists so OutputPages can assign page numbers.
+				// Annotate heading / bookmarked VLists so OutputPages can
+				// assign page numbers and the outline builder can find them.
+				// h1–h6 are recorded for the heading list / TOC unconditionally;
+				// the CSS -bag-bookmark property additionally lets any element
+				// enter the PDF outline (or removes an h-element from it).
 				if tag, ok := t.Settings[frontend.SettingDebug].(string); ok {
-					switch tag {
-					case "h1", "h2", "h3", "h4", "h5", "h6":
+					tagLevel := headingLevel(tag)
+					isHeading := tagLevel > 0
+
+					// Resolve the outline level: explicit -bag-bookmark level
+					// wins, else the implicit heading level; `none` removes it.
+					level, hasLevel, open, none := parseBookmark(bmRaw)
+					bmLevel := tagLevel
+					if hasLevel {
+						bmLevel = level
+					}
+					if none {
+						bmLevel = 0
+					}
+
+					// Record an entry when the element is a heading (for the
+					// TOC, even if excluded from the outline) or when an
+					// explicit -bag-bookmark gives a non-heading a level.
+					if isHeading || (bmRaw != "" && bmLevel > 0) {
 						if vl.Attributes == nil {
 							vl.Attributes = node.H{}
 						}
 						vl.Attributes["_heading_idx"] = cb.headingCount
-						entry := HeadingEntry{Level: tag, Text: extractTextContent(t)}
+						level := ""
+						if isHeading {
+							level = tag
+						}
+						entry := HeadingEntry{
+							Level:   level,
+							Text:    extractTextContent(t),
+							bmLevel: bmLevel,
+							bmOpen:  open,
+						}
 						if se, ok := vl.Attributes["_heading_se"].(*document.StructureElement); ok {
 							entry.SE = se
 						}

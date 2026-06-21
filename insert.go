@@ -518,6 +518,10 @@ func (cb *CSSBuilder) flushInserts() error {
 		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, yCursor, entry.box)
 		if entry.headingIdx >= 0 && entry.headingIdx < len(cb.Headings) {
 			cb.Headings[entry.headingIdx].Page = pageNum
+			// yCursor is the top edge of the box in PDF user space; the
+			// outline builder uses it for an /XYZ destination so a bookmark
+			// jumps to the heading's exact vertical position.
+			cb.Headings[entry.headingIdx].Y = yCursor
 		}
 		for _, idx := range entry.anchorIndices {
 			if idx >= 0 && idx < len(cb.Anchors) {
