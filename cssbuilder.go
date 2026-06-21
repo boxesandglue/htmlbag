@@ -1309,14 +1309,23 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			i++
 		}
 
-		// Widow / orphan protection: count actual lines (HList nodes) —
-		// children alternate HList,Glue,HList,Glue so raw count doubles.
+		// Widow / orphan protection: count content children. A splittable
+		// block has two shapes: line-level children (a <pre> is HList lines
+		// interleaved with Glue) and block-level children (a bordered card
+		// is VList paragraphs/divs interleaved with margin Kerns). Both an
+		// HList and a VList count as one unit of content here; only the
+		// Glue/Kern fillers between them are skipped. Counting VLists is
+		// load-bearing: without it a card whose children are all VLists
+		// reports zero "lines", so the orphan branch below fires on every
+		// page and shunts the whole card forward — orphaning a preceding
+		// page-break-after:avoid heading (it stays put while its card jumps).
 		// CSS Fragmentation 3 §4 spec defaults are widows: 2 and orphans: 2.
 		const minLines = 2
 		countHL := func(items []node.Node) int {
 			n := 0
 			for _, c := range items {
-				if _, ok := c.(*node.HList); ok {
+				switch c.(type) {
+				case *node.HList, *node.VList:
 					n++
 				}
 			}
