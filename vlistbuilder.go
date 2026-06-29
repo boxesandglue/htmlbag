@@ -723,6 +723,17 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					linkFormulaSEs(te, contentSE)
 				}
 			}
+		} else if containsFormula(te) {
+			// Block-level <math> with no HTML tag of its own: a display
+			// formula that is a direct child of a block container is
+			// classified inline and wrapped in an anonymous box, so no block
+			// structure element is created here and the leaf-tagging branch
+			// above is skipped. Without this, the Formula structure element
+			// that collectHorizontalNodes built would be orphaned and the
+			// formula would never appear in the structure tree. Link it to
+			// the nearest structural parent (Document or the enclosing
+			// block); its glyph marked-content resolves via the ParentTree.
+			linkFormulaSEs(te, cb.structureCurrent)
 		}
 	}
 

@@ -1525,6 +1525,17 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		ulte.Settings[frontend.SettingBox] = true
 	}
 	if te != nil {
+		// A trailing inline run that follows block-level sibling(s) needs an
+		// anonymous block box around it, otherwise the container is left
+		// un-boxed and lays all its items out inline, merging the trailing
+		// run onto the previous block's line (CSS 2.1 §9.2.1.1). The mid-run
+		// case is already handled where a following block flushes te above;
+		// only the final run reaches here un-boxed. len(newte.Items) > 0 keeps
+		// a pure inline paragraph (e.g. a <p> with only inline content) from
+		// being promoted to a box.
+		if len(newte.Items) > 0 {
+			newte.Settings[frontend.SettingBox] = true
+		}
 		newte.Items = append(newte.Items, te)
 		ss.PopStyles()
 		te = nil

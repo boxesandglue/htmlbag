@@ -185,6 +185,25 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 					// of the subtree with those marker attrs stripped so
 					// the serialised MathML is valid XML.
 					cleaned := stripCSSMarkerAttrs(thisNode)
+					// Normalise the root namespace to MathML. When the <math>
+					// originates from a host document in a foreign default
+					// namespace (e.g. xts feeds layout content whose default
+					// namespace is the xts one), the element carries a literal
+					// xmlns="…host…" that would otherwise win over the MathML
+					// namespace in the serialised source — making the associated
+					// file fail "rooted at <math> in the MathML namespace"
+					// (PDF/UA-2 §17). Drop any xmlns/xmlns:* on the root and
+					// force the MathML namespace so html.Render emits the
+					// canonical xmlns.
+					cleaned.Namespace = "math"
+					kept := cleaned.Attr[:0]
+					for _, a := range cleaned.Attr {
+						if a.Key == "xmlns" || a.Namespace == "xmlns" || strings.HasPrefix(a.Key, "xmlns:") {
+							continue
+						}
+						kept = append(kept, a)
+					}
+					cleaned.Attr = kept
 					if err := html.Render(&buf, cleaned); err == nil {
 						itm.Attributes["_mathmlSource"] = buf.String()
 					}
