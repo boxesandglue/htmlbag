@@ -11,6 +11,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	pdf "github.com/boxesandglue/baseline-pdf"
 	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/backend/color"
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
@@ -385,6 +386,71 @@ func mergePageWithBase(pseudo, base csshtml.Page) csshtml.Page {
 	return merged
 }
 
+// pageBoxMetrics carries the resolved @page border and padding widths so
+// InitPage and NewPage can size the content area (PageArea* / Content*) and
+// place the body identically. Without a shared source both paths drift: today
+// InitPage folds border/padding into the content area but NewPage does not,
+// which is one reason the @page border only shows on page 1.
+type pageBoxMetrics struct {
+	borderLeft, borderRight, borderTop, borderBottom     bag.ScaledPoint
+	paddingLeft, paddingRight, paddingTop, paddingBottom bag.ScaledPoint
+	// backgroundColor is the resolved @page background-color (nil if unset).
+	// Intentionally painted on page 1 only (InitPage), so NewPage ignores it.
+	backgroundColor *color.Color
+}
+
+// renderPageBorderBox builds an empty vlist the size of the @page content box
+// and decorates it with the @page border/background/padding via HTMLBorder.
+// The caller is expected to OutputAt(ml, ht-mt, vl) so the border-box outer
+// edge coincides with the margin edge (for margin:0 that is the sheet edge,
+// giving a full-height left bar). The returned metrics let the caller derive
+// the padded content area. res is the already-resolved @page attribute map.
+func (cb *CSSBuilder) renderPageBorderBox(res map[string]string, wd, ht, ml, mr, mt, mb bag.ScaledPoint) (*node.VList, pageBoxMetrics, error) {
+	styles := cb.stylesStack.PushStyles()
+	defer cb.stylesStack.PopStyles()
+	if err := StylesToStyles(styles, res, cb.frontend, cb.stylesStack.CurrentStyle().Fontsize); err != nil {
+		return nil, pageBoxMetrics{}, err
+	}
+	vl := node.NewVList()
+	vl.Width = wd - ml - mr - styles.BorderLeftWidth - styles.BorderRightWidth - styles.PaddingLeft - styles.PaddingRight
+	vl.Height = ht - mt - mb - styles.PaddingTop - styles.PaddingBottom - styles.BorderTopWidth - styles.BorderBottomWidth
+	hv := HTMLValues{
+		BorderLeftWidth:         styles.BorderLeftWidth,
+		BorderRightWidth:        styles.BorderRightWidth,
+		BorderTopWidth:          styles.BorderTopWidth,
+		BorderBottomWidth:       styles.BorderBottomWidth,
+		BorderTopStyle:          styles.BorderTopStyle,
+		BorderLeftStyle:         styles.BorderLeftStyle,
+		BorderRightStyle:        styles.BorderRightStyle,
+		BorderBottomStyle:       styles.BorderBottomStyle,
+		BorderTopColor:          styles.BorderTopColor,
+		BorderLeftColor:         styles.BorderLeftColor,
+		BorderRightColor:        styles.BorderRightColor,
+		BorderBottomColor:       styles.BorderBottomColor,
+		PaddingLeft:             styles.PaddingLeft,
+		PaddingRight:            styles.PaddingRight,
+		PaddingBottom:           styles.PaddingBottom,
+		PaddingTop:              styles.PaddingTop,
+		BorderTopLeftRadius:     styles.BorderTopLeftRadius,
+		BorderTopRightRadius:    styles.BorderTopRightRadius,
+		BorderBottomLeftRadius:  styles.BorderBottomLeftRadius,
+		BorderBottomRightRadius: styles.BorderBottomRightRadius,
+	}
+	vl = cb.HTMLBorder(vl, hv)
+	m := pageBoxMetrics{
+		borderLeft:    styles.BorderLeftWidth,
+		borderRight:   styles.BorderRightWidth,
+		borderTop:     styles.BorderTopWidth,
+		borderBottom:  styles.BorderBottomWidth,
+		paddingLeft:   styles.PaddingLeft,
+		paddingRight:  styles.PaddingRight,
+		paddingTop:      styles.PaddingTop,
+		paddingBottom:   styles.PaddingBottom,
+		backgroundColor: styles.BackgroundColor,
+	}
+	return vl, m, nil
+}
+
 // InitPage makes sure that there is a valid page in the frontend.
 func (cb *CSSBuilder) InitPage() error {
 	if cb.frontend.Doc.CurrentPage != nil {
@@ -434,37 +500,10 @@ func (cb *CSSBuilder) InitPage() error {
 		var res map[string]string
 		res, defaultPage.Attributes = csshtml.ResolveAttributes(defaultPage.Attributes)
 
-		styles := cb.stylesStack.PushStyles()
-		if err = StylesToStyles(styles, res, cb.frontend, cb.stylesStack.CurrentStyle().Fontsize); err != nil {
+		vl, m, err := cb.renderPageBorderBox(res, wd, ht, ml, mr, mt, mb)
+		if err != nil {
 			return err
 		}
-		vl := node.NewVList()
-		vl.Width = wd - ml - mr - styles.BorderLeftWidth - styles.BorderRightWidth - styles.PaddingLeft - styles.PaddingRight
-		vl.Height = ht - mt - mb - styles.PaddingTop - styles.PaddingBottom - styles.BorderTopWidth - styles.BorderBottomWidth
-		hv := HTMLValues{
-			BorderLeftWidth:         styles.BorderLeftWidth,
-			BorderRightWidth:        styles.BorderRightWidth,
-			BorderTopWidth:          styles.BorderTopWidth,
-			BorderBottomWidth:       styles.BorderBottomWidth,
-			BorderTopStyle:          styles.BorderTopStyle,
-			BorderLeftStyle:         styles.BorderLeftStyle,
-			BorderRightStyle:        styles.BorderRightStyle,
-			BorderBottomStyle:       styles.BorderBottomStyle,
-			BorderTopColor:          styles.BorderTopColor,
-			BorderLeftColor:         styles.BorderLeftColor,
-			BorderRightColor:        styles.BorderRightColor,
-			BorderBottomColor:       styles.BorderBottomColor,
-			PaddingLeft:             styles.PaddingLeft,
-			PaddingRight:            styles.PaddingRight,
-			PaddingBottom:           styles.PaddingBottom,
-			PaddingTop:              styles.PaddingTop,
-			BorderTopLeftRadius:     styles.BorderTopLeftRadius,
-			BorderTopRightRadius:    styles.BorderTopRightRadius,
-			BorderBottomLeftRadius:  styles.BorderBottomLeftRadius,
-			BorderBottomRightRadius: styles.BorderBottomRightRadius,
-		}
-		vl = cb.HTMLBorder(vl, hv)
-		cb.stylesStack.PopStyles()
 
 		// set page width / height
 		cb.frontend.Doc.DefaultPageWidth = wd
@@ -472,10 +511,10 @@ func (cb *CSSBuilder) InitPage() error {
 		cb.currentPageDimensions = PageDimensions{
 			Width:         wd,
 			Height:        ht,
-			PageAreaLeft:  ml + styles.BorderLeftWidth + styles.PaddingLeft,
-			PageAreaTop:   mt - styles.BorderTopWidth - styles.PaddingTop,
-			ContentWidth:  wd - styles.BorderRightWidth - styles.PaddingRight - ml - mr - styles.BorderLeftWidth - styles.PaddingLeft,
-			ContentHeight: ht - styles.BorderBottomWidth - styles.PaddingBottom - mt - mb - styles.BorderTopWidth - styles.PaddingTop,
+			PageAreaLeft:  ml + m.borderLeft + m.paddingLeft,
+			PageAreaTop:   mt + m.borderTop + m.paddingTop,
+			ContentWidth:  wd - ml - mr - m.borderLeft - m.borderRight - m.paddingLeft - m.paddingRight,
+			ContentHeight: ht - mt - mb - m.borderTop - m.borderBottom - m.paddingTop - m.paddingBottom,
 			MarginTop:     mt,
 			MarginBottom:  mb,
 			MarginLeft:    ml,
@@ -483,13 +522,16 @@ func (cb *CSSBuilder) InitPage() error {
 			masterpage:    defaultPage,
 		}
 		cb.frontend.Doc.NewPage()
-		if styles.BackgroundColor != nil {
+		if m.backgroundColor != nil {
 			r := node.NewRule()
-			x := pdfdraw.NewStandalone().ColorNonstroking(*styles.BackgroundColor).Rect(0, 0, wd, -ht).Fill()
+			x := pdfdraw.NewStandalone().ColorNonstroking(*m.backgroundColor).Rect(0, 0, wd, -ht).Fill()
 			r.Pre = x.String()
 			rvl := node.Vpack(r)
 			rvl.Attributes = node.H{"origin": "page background color"}
 			cb.frontend.Doc.CurrentPage.OutputAt(0, ht, rvl)
+		}
+		if err = cb.drawPageBackgroundImage(res, wd, ht); err != nil {
+			return err
 		}
 		cb.frontend.Doc.CurrentPage.OutputAt(ml, ht-mt, vl)
 		cb.firePageInit()
@@ -578,16 +620,84 @@ func (cb *CSSBuilder) NewPage() error {
 		mr := cb.currentPageDimensions.MarginRight
 		wd := cb.currentPageDimensions.Width
 		ht := cb.currentPageDimensions.Height
-		cb.currentPageDimensions.PageAreaLeft = ml
-		cb.currentPageDimensions.PageAreaTop = mt
-		cb.currentPageDimensions.ContentWidth = wd - ml - mr
-		cb.currentPageDimensions.ContentHeight = ht - mt - mb
+		// Re-resolve this page master's @page attributes so border/padding
+		// (and background-image) apply per page, not only on page 1.
+		bgRes, _ := csshtml.ResolveAttributes(pt.Attributes)
+		vl, m, err := cb.renderPageBorderBox(bgRes, wd, ht, ml, mr, mt, mb)
+		if err != nil {
+			return err
+		}
+		cb.currentPageDimensions.PageAreaLeft = ml + m.borderLeft + m.paddingLeft
+		cb.currentPageDimensions.PageAreaTop = mt + m.borderTop + m.paddingTop
+		cb.currentPageDimensions.ContentWidth = wd - ml - mr - m.borderLeft - m.borderRight - m.paddingLeft - m.paddingRight
+		cb.currentPageDimensions.ContentHeight = ht - mt - mb - m.borderTop - m.borderBottom - m.paddingTop - m.paddingBottom
+		// Paint the @page background-image, then the border box, before the
+		// body content lands on this page (both sit underneath the text).
+		if err := cb.drawPageBackgroundImage(bgRes, wd, ht); err != nil {
+			return err
+		}
+		cb.frontend.Doc.CurrentPage.OutputAt(ml, ht-mt, vl)
 	}
 	// Store page dimensions on the new page for callback access.
 	if pd, err := cb.PageSize(); err == nil {
 		storePageDimensions(cb, pd)
 	}
 	cb.firePageInit()
+	return nil
+}
+
+// stripCSSURL unwraps a CSS url() token to its bare path, dropping the
+// url(...) wrapper and any surrounding single or double quotes.
+func stripCSSURL(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "url(") && strings.HasSuffix(s, ")") {
+		s = s[len("url(") : len(s)-1]
+	}
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, `"'`)
+	return strings.TrimSpace(s)
+}
+
+// drawPageBackgroundImage paints a CSS `@page { background-image: url(...) }`
+// onto the current page, scaled to fill the whole sheet. The optional custom
+// property `-bag-background-page: N` selects the source page of a multi-page
+// PDF (default 1), so a two-page letterhead can drive page 1 vs. page 2+ via
+// `@page :first` / `@page`. It is called for every page, so per-page @page
+// selectors (:first/:left/:right) yield per-page backgrounds without the
+// caller keeping its own page counter. A missing or unloadable file is logged
+// and skipped rather than aborting the whole render.
+func (cb *CSSBuilder) drawPageBackgroundImage(res map[string]string, wd, ht bag.ScaledPoint) error {
+	raw, ok := res["background-image"]
+	if !ok {
+		return nil
+	}
+	filename := stripCSSURL(raw)
+	if filename == "" || filename == "none" {
+		return nil
+	}
+	// FindFile honours both CSS.FileFinder (xts route) and the dirstack
+	// (glu/markdown route via PushDir(baseDir)); resolving relative to the
+	// document is what the letterhead use case needs.
+	if resolved, ferr := cb.css.FindFile(filename); ferr == nil && resolved != "" {
+		filename = resolved
+	}
+	pageno := 1
+	if p, ok := res["-bag-background-page"]; ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(p)); err == nil && n > 0 {
+			pageno = n
+		}
+	}
+	imgf, err := cb.frontend.Doc.LoadImageFileWithBox(filename, "/MediaBox", pageno)
+	if err != nil {
+		slog.Warn("page background-image could not be loaded", "filename", filename, "page", pageno, "error", err)
+		return nil
+	}
+	imgNode := cb.frontend.Doc.CreateImageNodeFromImagefile(imgf, pageno, "/MediaBox")
+	imgNode.Width = wd
+	imgNode.Height = ht
+	rvl := node.Vpack(imgNode)
+	rvl.Attributes = node.H{"origin": "page background image"}
+	cb.frontend.Doc.CurrentPage.OutputAt(0, ht, rvl)
 	return nil
 }
 
@@ -1014,6 +1124,31 @@ func splitTextAtPageBreaks(body *frontend.Text) [][]any {
 	return groups
 }
 
+// hasTableChild reports whether the node list nl contains a table VList
+// (origin "table"), descending through transparent single-child wrapper VLists
+// (a plain <div> around the table). It gates the wrapper flatten in
+// outputGroupNodes: a transparent wrapper taller than the page is only
+// unwrapped when it holds a table (the breakable part), so other tall
+// transparent blocks keep their current handling.
+func hasTableChild(nl node.Node) bool {
+	for n := nl; n != nil; n = n.Next() {
+		vl, ok := n.(*node.VList)
+		if !ok || vl.Attributes == nil {
+			continue
+		}
+		if o, _ := vl.Attributes["origin"].(string); o == "table" {
+			return true
+		}
+		// Descend a transparent single-child wrapper (e.g. <div><table>).
+		if spl, _ := vl.Attributes["_splittable"].(bool); !spl && vl.List != nil && vl.List.Next() == nil {
+			if hasTableChild(vl.List) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // outputGroupNodes places the nodes from a single vlist onto the current page,
 // breaking to new pages if the content overflows (no forced breaks expected).
 func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error {
@@ -1067,22 +1202,54 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 		h := vlistNodeHeight(cur)
 		contentArea := pd.Height - pd.MarginTop - pd.MarginBottom
 
+		// A table taller than the page must break across pages, but such a
+		// table is often nested inside a transparent wrapper (a plain
+		// <div>, no bg/border) reached mid-flow after a
+		// margin-top kern. The top-level unwrap only exposes a wrapper's
+		// children when it is the wrapper's sole child, so a multi-child
+		// wrapper (opening text + table + totals) stays monolithic and is
+		// shipped whole, leaving page 1 empty under the margin-top. When such
+		// a too-tall wrapper contains a too-tall table, splice its children
+		// into the sibling chain so each child is processed at top level,
+		// where the table reaches the repeating-header / row-splice paths
+		// below. A styled wrapper (bg/border) is _splittable and handled by
+		// outputBlockSplit instead, so it is left intact. Nested wrappers are
+		// unwrapped progressively: each spliced child is re-examined here.
+		if wrap, ok := cur.(*node.VList); ok && wrap.Attributes != nil && cb.pageBufHeight+h > contentArea {
+			o, _ := wrap.Attributes["origin"].(string)
+			spl, _ := wrap.Attributes["_splittable"].(bool)
+			if o != "table" && !spl && wrap.List != nil && hasTableChild(wrap.List) {
+				propagateInsertsAttr(wrap, wrap.List)
+				first := wrap.List
+				last := node.Tail(first)
+				last.SetNext(next)
+				if next != nil {
+					next.SetPrev(last)
+				}
+				first.SetPrev(nil)
+				cur = first
+				continue
+			}
+		}
+
 		// Special path: tables with repeating headers. outputTableRows
-		// uses direct OutputAt and is boundary-isolated — it forces a
-		// page break before AND after, so any surrounding body content
-		// lands on its own page. Take it only when the table actually
-		// spans more than one page. Short tables (the typical Markdown
-		// case — GFM tables always carry a thead, so _buildHeaders is
-		// set unconditionally) go through the normal pageBuf path
-		// below, which composes them with adjacent paragraphs without
-		// spurious page breaks.
+		// places rows directly via OutputAt, flowing them across page
+		// breaks with the header repeated on every page. Take it whenever
+		// the table does not fit in the space still free on this page
+		// (already-buffered content included): a table taller than a full
+		// page always splits, and a table that would fit on an empty page
+		// but not in the remaining space starts here and breaks rather
+		// than shipping whole to the next page and leaving a gap (e.g.
+		// when a large top reservation eats most of page 1). Short tables
+		// that do fit in the remaining space fall through to the normal
+		// pageBuf path, which composes them with adjacent paragraphs.
 		if tableVL, ok := cur.(*node.VList); ok && tableVL.Attributes != nil {
 			if buildHeadersFn, tok := tableVL.Attributes["_buildHeaders"]; tok {
 				tableIncoming := insertsOnNode(cur)
 				tableInsertsH := cb.totalFloatTopHeight(filterInserts(tableIncoming, InsertFloatTop)) +
 					cb.totalFloatBottomHeight(filterInserts(tableIncoming, InsertFloatBottom)) +
 					cb.totalFootnoteHeight(filterInserts(tableIncoming, InsertFootnote))
-				if h+tableInsertsH > contentArea {
+				if cb.pageBufHeight+h+tableInsertsH > contentArea {
 					// Anything already buffered on this page (e.g. a heading
 					// that introduces the table) should be painted FIRST so
 					// the table can start directly below it, rather than
@@ -1111,21 +1278,55 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 						cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
 						cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
 					}
-					// Force a fresh page for whatever follows so the body
-					// buffer doesn't paint over the directly-placed rows.
-					// Skip if no more content — the caller's final flush
-					// will ship the table's last page cleanly.
+					// Siblings after the table continue on the table's
+					// last page. The body buffer paints from the top of the
+					// content area at flushInserts, so buffer a spacer
+					// covering the height the directly-placed rows consumed;
+					// following blocks then land right below the last row,
+					// and the normal fit checks break to a new page only
+					// when a block really doesn't fit anymore.
 					if next != nil {
-						if err := cb.NewPage(); err != nil {
-							return err
-						}
-						if err := refreshPage(); err != nil {
-							return err
+						usedH := pd.Height - pd.PageAreaTop - yLocal
+						if usedH > 0 {
+							k := node.NewKern()
+							k.Kern = usedH
+							spacer := node.Vpack(k)
+							spacer.Attributes = node.H{"origin": "table continuation spacer"}
+							cb.bufferBody(spacer, usedH, -1, nil)
 						}
 					}
 					cur = next
 					continue
 				}
+			}
+		}
+
+		// A table without repeating headers (no thead/tfoot) that is
+		// taller than a full page must break across pages. When such a table
+		// is the group's sole child, the unwrap loop above already exposes its
+		// rows as top-level siblings, so they buffer and break one by one. But
+		// a preceding sibling (e.g. a margin-top kern emitted by a wrapper
+		// above the table) blocks that unwrap, leaving the table as
+		// one monolithic VList taller than the page. `cur` was resolved to the
+		// table above; splice its row HLists into the sibling chain so it
+		// breaks like any other block sequence. (thead/tfoot tables took the
+		// _buildHeaders path above and never reach here.)
+		if tableVL, ok := cur.(*node.VList); ok && tableVL.Attributes != nil {
+			o, _ := tableVL.Attributes["origin"].(string)
+			_, hasHeaders := tableVL.Attributes["_buildHeaders"]
+			if o == "table" && !hasHeaders && cb.pageBufHeight+h > contentArea && tableVL.List != nil {
+				// Move any cell inserts onto the first row so they are still
+				// reserved once the wrapper VList is dropped.
+				propagateInsertsAttr(tableVL, tableVL.List)
+				first := tableVL.List
+				last := node.Tail(first)
+				last.SetNext(next)
+				if next != nil {
+					next.SetPrev(last)
+				}
+				first.SetPrev(nil)
+				cur = first
+				continue
 			}
 		}
 

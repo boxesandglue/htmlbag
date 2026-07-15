@@ -511,11 +511,15 @@ func (cb *CSSBuilder) flushInserts() error {
 		return err
 	}
 
-	// Paint the buffered body just below the top-float zone.
-	yCursor := pd.Height - pd.MarginTop - topFloatHeight
+	// Paint the buffered body just below the top-float zone. The horizontal
+	// origin and the top edge are the padded content area (PageAreaLeft /
+	// PageAreaTop = margin + @page border + @page padding), so @page padding
+	// acts as a content indent. Without @page border/padding these equal
+	// MarginLeft / MarginTop, so unpadded pages are unaffected.
+	yCursor := pd.Height - pd.PageAreaTop - topFloatHeight
 	pageNum := len(cb.frontend.Doc.Pages)
 	for _, entry := range cb.pageBuf {
-		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, yCursor, entry.box)
+		cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, yCursor, entry.box)
 		if entry.headingIdx >= 0 && entry.headingIdx < len(cb.Headings) {
 			cb.Headings[entry.headingIdx].Page = pageNum
 			// yCursor is the top edge of the box in PDF user space; the
