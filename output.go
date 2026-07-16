@@ -74,6 +74,9 @@ func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) str
 		case csshtml.ContentAttr:
 			// Flat path has no element scope (used for page-margin boxes);
 			// attr() resolves to the empty string here.
+		case csshtml.ContentElement:
+			// Running element placement is handled as a formatted VList
+			// in BeforeShipout; it contributes no text here.
 		}
 	}
 	return sb.String()
@@ -160,6 +163,17 @@ func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anc
 func firstContentURL(tokens []csshtml.ContentToken) string {
 	for _, tok := range tokens {
 		if tok.Type == csshtml.ContentURL {
+			return tok.Value
+		}
+	}
+	return ""
+}
+
+// firstContentElement returns the running element name from the first
+// ContentElement token (CSS GCPM `content: element(name)`), or "".
+func firstContentElement(tokens []csshtml.ContentToken) string {
+	for _, tok := range tokens {
+		if tok.Type == csshtml.ContentElement {
 			return tok.Value
 		}
 	}
@@ -339,9 +353,27 @@ func (cb *CSSBuilder) BeforeShipout() error {
 					}
 				}
 
+				// Running element content (CSS GCPM element(name)): the
+				// element captured via `position: running(name)` is
+				// re-formatted at the margin box width. Its own computed
+				// styles (from its original place in the document) apply;
+				// the margin box's text-related styles do not leak in.
+				isRunningElement := false
+				if vl.List == nil {
+					if elName := firstContentElement(contentTokens); elName != "" {
+						if runTe, ok := cb.runningElements[elName]; ok {
+							vl, err = cb.CreateVlist(runTe, pmb.wd-styles.BorderLeftWidth-styles.BorderRightWidth)
+							if err != nil {
+								return err
+							}
+							isRunningElement = true
+						}
+					}
+				}
+
 				c := evaluateContent(contentTokens, cb.Counters)
 				if vl.List != nil {
-					// Image content — skip text rendering.
+					// Image or running-element content: skip text rendering.
 				} else if c != "" {
 					txt := frontend.NewText()
 					ApplySettings(txt.Settings, styles)
@@ -405,6 +437,22 @@ func (cb *CSSBuilder) BeforeShipout() error {
 				outputY := pmb.y
 				if pmb.areaHeight > 0 && pmb.areaHeight < pmb.ht {
 					outputY -= pmb.ht - pmb.areaHeight
+				}
+				// The text path handles vertical-align inside
+				// FormatParagraph (SettingHeight + SettingVAlign); a
+				// running element arrives as a finished VList at its
+				// natural height, so align it here within the margin
+				// box area. Default (VAlignDefault/Top) keeps the top
+				// edge at the area's top.
+				if isRunningElement {
+					if free := pmb.ht - (vl.Height + vl.Depth); free > 0 {
+						switch styles.Valign {
+						case frontend.VAlignMiddle:
+							outputY -= free / 2
+						case frontend.VAlignBottom:
+							outputY -= free
+						}
+					}
 				}
 				df.Doc.CurrentPage.OutputAt(pmb.x, outputY, vl)
 				cb.stylesStack.PopStyles()

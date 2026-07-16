@@ -47,6 +47,30 @@ const settingPageBreakInside frontend.SettingType = -1
 // never reaches frontend.FormatParagraph.
 const settingBookmark frontend.SettingType = -2
 
+// settingCSSHeight is an htmlbag-private frontend.SettingType sentinel that
+// carries the resolved CSS height of a block element. Output() stamps it on
+// block Texts (plus SettingBox for empty blocks so they reach the box
+// branch); buildVlistInternal materializes the height as a kern and deletes
+// the sentinel so it never reaches frontend.FormatParagraph. Two cases:
+// an empty block must not collapse (colored swatch, bare spacer), and a
+// block whose content is shorter than the declared height must reserve the
+// full height in the flow. Content taller than the declared height keeps
+// its natural size: min-height semantics, nothing is ever clipped or
+// overlapped (CSS overflow: visible painting over following flow is not
+// something a typesetting engine should do by default).
+const settingCSSHeight frontend.SettingType = -3
+
+// isCSSHeightExempt reports whether an element's CSS height is the business
+// of a dedicated layout path (table layout, replaced elements) rather than
+// the settingCSSHeight flow-space mechanism.
+func isCSSHeightExempt(tag string) bool {
+	switch tag {
+	case "table", "thead", "tbody", "tfoot", "tr", "td", "th", "col", "colgroup", "caption", "img":
+		return true
+	}
+	return false
+}
+
 // ParseVerticalAlign parses the input ("top","middle",...) and returns the
 // VerticalAlignment value.
 func ParseVerticalAlign(align string, styles *FormattingStyles) frontend.VerticalAlignment {
@@ -1094,6 +1118,13 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	ss.applyCounters()
 	ApplySettings(newte.Settings, styles)
 	newte.Settings[frontend.SettingDebug] = item.Data
+	// Remember the element's own resolved CSS height: `styles` is
+	// reassigned when an inline run starts below, but the empty-block
+	// check at the end of this function needs the element's value.
+	elementCSSHeight := bag.ScaledPoint(0)
+	if styles.height != "" {
+		elementCSSHeight = ParseRelativeSize(styles.height, styles.Fontsize, styles.DefaultFontSize)
+	}
 	// CSS 2.1 §9.4.3 position: relative — element stays in flow,
 	// reserving its original slot, but renders at an offset. v1
 	// supports horizontal offsets via SettingShiftX (consumed by
@@ -1460,6 +1491,13 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 					return nil, err
 				}
 				te.Items = append(te.Items, insertMarker{Class: floatClassFor(itm), Body: flText})
+			} else if name := runningElementName(itm); name != "" {
+				// Inline element with position: running(name) is out of
+				// flow, captured for page margin box placement. It
+				// contributes nothing to the inline run.
+				if err := cb.captureRunningElement(name, itm, ss, df, anchorPages); err != nil {
+					return nil, err
+				}
 			} else {
 				if err := collectHorizontalNodes(cb, te, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 					return nil, err
@@ -1496,6 +1534,16 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				}
 				continue
 			}
+			if name := runningElementName(itm); name != "" {
+				// CSS GCPM running element: removed from the normal
+				// flow, stored under its name for placement into a
+				// page margin box (content: element(name)) at
+				// shipout time.
+				if err := cb.captureRunningElement(name, itm, ss, df, anchorPages); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			if isFloatElement(itm) {
 				floatBody, err := Output(cb, itm, ss, df, anchorPages)
 				if err != nil {
@@ -1508,8 +1556,10 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			if err != nil {
 				return nil, err
 			}
-			// Always include td/th/col elements even if empty (for table structure)
-			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" {
+			// Always include td/th/col elements even if empty (for table
+			// structure), and empty blocks that carry an explicit CSS
+			// height (visible swatches / spacers, settingCSSHeight).
+			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" || te.Settings[settingCSSHeight] != nil {
 				newte.Items = append(newte.Items, te)
 			}
 		}
@@ -1539,6 +1589,19 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		newte.Items = append(newte.Items, te)
 		ss.PopStyles()
 		te = nil
+	}
+	// A block with an explicit CSS height reserves that much flow space:
+	// an empty block (colored swatch, bare spacer) must not collapse, and
+	// a block whose content is shorter than the declared height pushes the
+	// following flow down accordingly (min-height semantics, see
+	// settingCSSHeight). Stamp the private sentinel; buildVlistInternal
+	// materializes it. Table-internal and replaced elements keep their own
+	// height handling and are exempt.
+	if item.Typ == html.ElementNode && elementCSSHeight > 0 && !isCSSHeightExempt(item.Data) {
+		if len(newte.Items) == 0 {
+			newte.Settings[frontend.SettingBox] = true
+		}
+		newte.Settings[settingCSSHeight] = elementCSSHeight
 	}
 	ss.PopStyles()
 	return newte, nil

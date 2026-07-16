@@ -321,15 +321,16 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					vl.Attributes["pageBreakBefore"] = pbb
 				}
 				// page-break-inside / break-inside rides on an htmlbag-
-				// private SettingType sentinel; move it to the VList's
-				// Attributes and delete it from Settings so the sentinel
-				// cannot leak into frontend.FormatParagraph.
+				// private SettingType sentinel; copy it to the VList's
+				// Attributes. The sentinel stays in Settings for reflow
+				// rebuilds — the child is already built at this point, and
+				// when the child is a leaf paragraph the leaf branch has
+				// stripped its own copy before FormatParagraph ran.
 				if pbi, ok := t.Settings[settingPageBreakInside]; ok {
 					if vl.Attributes == nil {
 						vl.Attributes = node.H{}
 					}
 					vl.Attributes["pageBreakInside"] = pbi
-					delete(t.Settings, settingPageBreakInside)
 				}
 
 				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), vl)
@@ -339,7 +340,13 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				vls.Height += vl.Height
 				vls.Depth = vl.Depth
 
-				if cb.ElementCallback != nil {
+				// A reflow rebuild (page width change during pagination)
+				// re-runs this builder on already-registered content: skip
+				// the callback and the heading/anchor registration below so
+				// the collections keep their first-build entries. The page
+				// builder transfers the recorded indices onto the rebuilt
+				// nodes instead.
+				if cb.ElementCallback != nil && !cb.reflowRebuild {
 					if tag, ok := t.Settings[frontend.SettingDebug].(string); ok {
 						cb.ElementCallback(ElementEvent{
 							TagName:     tag,
@@ -354,7 +361,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				// h1–h6 are recorded for the heading list / TOC unconditionally;
 				// the CSS -bag-bookmark property additionally lets any element
 				// enter the PDF outline (or removes an h-element from it).
-				if tag, ok := t.Settings[frontend.SettingDebug].(string); ok {
+				if tag, ok := t.Settings[frontend.SettingDebug].(string); ok && !cb.reflowRebuild {
 					tagLevel := headingLevel(tag)
 					isHeading := tagLevel > 0
 
@@ -395,12 +402,20 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					}
 				}
 
+				// Restore the bookmark sentinel (captured and stripped above
+				// so it cannot leak into FormatParagraph) now that the child
+				// is built: a reflow rebuild at another page width must see
+				// the same input again.
+				if bmRaw != "" {
+					t.Settings[settingBookmark] = bmRaw
+				}
+
 				// Block-level id="..." → record as an anchor target for
 				// CSS target-counter() and target-text(). A heading with
 				// an id ends up in both Headings and Anchors (same page
 				// assignment): intentional, the CSS reference uses the
 				// id while the outline uses the heading text.
-				if dest, ok := t.Settings[frontend.SettingDest].(string); ok && dest != "" {
+				if dest, ok := t.Settings[frontend.SettingDest].(string); ok && dest != "" && !cb.reflowRebuild {
 					if vl.Attributes == nil {
 						vl.Attributes = node.H{}
 					}
@@ -423,7 +438,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 
 		// Handle final margin-bottom after last element.
 		if prevMarginBottom > 0 {
-			if hasBorderOrBg {
+			if hasBorderOrBg || hv.PaddingBottom > 0 {
 				// Border/padding blocks margin collapsing: add kern.
 				k := node.NewKern()
 				k.Kern = prevMarginBottom
@@ -442,6 +457,50 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				} else {
 					te.Settings[frontend.SettingMarginBottom] = prevMarginBottom
 				}
+			}
+		}
+
+		// CSS height on a block (settingCSSHeight, stamped by Output()):
+		// extend the box to the declared height so an empty block paints
+		// its background / reserves flow space and a partially filled
+		// block pushes the following flow down. Content taller than the
+		// declared height keeps its natural size (min-height semantics,
+		// no clipping). Runs before the vertical padding below so padding
+		// stays outside the declared height (content box), matching what
+		// HTMLBorder does for bordered blocks.
+		if hRaw, ok := settings[settingCSSHeight]; ok {
+			// The sentinel stays in Settings (no delete): the container's
+			// settings never reach FormatParagraph, and a reflow rebuild at
+			// another page width must see the declared height again.
+			if h, ok := hRaw.(bag.ScaledPoint); ok {
+				applyCSSHeight(vls, h)
+			}
+			if !hasBorderOrBg {
+				// Without border/background HTMLBorder does not run, so
+				// set the box width here (explicit width: via the
+				// SettingWidth resolution at the top of this function).
+				vls.Width = wd
+			}
+		}
+
+		// CSS padding-top/bottom on a box without border/background:
+		// HTMLBorder does not run, so reserve the vertical padding as
+		// kerns around the children (with border/background HTMLBorder
+		// adds the padding itself).
+		if !hasBorderOrBg {
+			if hv.PaddingTop > 0 {
+				k := node.NewKern()
+				k.Kern = hv.PaddingTop
+				k.Attributes = node.H{"origin": "padding-top"}
+				vls.List = node.InsertBefore(vls.List, vls.List, k)
+				vls.Height += hv.PaddingTop
+			}
+			if hv.PaddingBottom > 0 {
+				k := node.NewKern()
+				k.Kern = hv.PaddingBottom
+				k.Attributes = node.H{"origin": "padding-bottom"}
+				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
+				vls.Height += hv.PaddingBottom
 			}
 		}
 
@@ -528,6 +587,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// inside the inner vl, once as paddingLeftGlue around it). Strip
 	// the padding settings here so FormatParagraph does not consume
 	// them; HTMLBorder still sees them via the hv struct captured above.
+	// Snapshot the padding settings: the border case strips them below and
+	// FormatParagraph itself consumes SettingPaddingLeft (it becomes the
+	// paragraph indent). Both are restored after FormatParagraph so a reflow
+	// rebuild at another page width sees the same input again.
+	paddingLeftSaved, hasPaddingLeftSaved := te.Settings[frontend.SettingPaddingLeft]
+	paddingRightSaved, hasPaddingRightSaved := te.Settings[frontend.SettingPaddingRight]
 	hasBorderOrBg := hv.hasBorder() || hv.BackgroundColor != nil
 	if hasBorderOrBg {
 		delete(te.Settings, frontend.SettingPaddingLeft)
@@ -546,10 +611,36 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		delete(te.Settings, settingPageBreakInside)
 	}
 
+	// Capture-and-strip settingCSSHeight for the same reason: a block with
+	// only inline content (e.g. <div style="height: 85mm">text</div>) has
+	// SettingBox off and reaches this leaf branch. The declared height is
+	// applied to the finished VList below.
+	var cssHeight bag.ScaledPoint
+	cssHeightRaw, hasCSSHeight := te.Settings[settingCSSHeight]
+	if hasCSSHeight {
+		delete(te.Settings, settingCSSHeight)
+		cssHeight, _ = cssHeightRaw.(bag.ScaledPoint)
+	}
+
 	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points).
 	vl, _, err := cb.frontend.FormatParagraph(te, contentWidth)
 	if err != nil {
 		return nil, err
+	}
+	// Restore the settings stripped before FormatParagraph (and the
+	// SettingPaddingLeft it consumed itself), so a reflow rebuild or a
+	// FormatParagraphTail pass at another page width sees the same input.
+	if hasPBI {
+		te.Settings[settingPageBreakInside] = pbi
+	}
+	if hasCSSHeight {
+		te.Settings[settingCSSHeight] = cssHeightRaw
+	}
+	if hasPaddingLeftSaved {
+		te.Settings[frontend.SettingPaddingLeft] = paddingLeftSaved
+	}
+	if hasPaddingRightSaved {
+		te.Settings[frontend.SettingPaddingRight] = paddingRightSaved
 	}
 	// Attach the captured page-break-inside value onto the returned VList.
 	// Done after FormatParagraph (and before HTMLBorder below) so the
@@ -588,6 +679,14 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 
 	attachInserts(vl)
 
+	// CSS height on a leaf block: extend to the declared height before the
+	// border wrap so padding/border stay outside the height (content box).
+	// Content taller than the declared height keeps its natural size
+	// (min-height semantics, no clipping).
+	if cssHeight > 0 {
+		applyCSSHeight(vl, cssHeight)
+	}
+
 	// Apply borders if any are defined
 	if hv.hasBorder() || hv.BackgroundColor != nil {
 		// Snapshot the inner children (typically HList lines for <pre>)
@@ -611,8 +710,32 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			vl.Attributes["_splittableInner"] = splittableInner
 			vl.Attributes["_splittableHv"] = splittableHv
 			vl.Attributes["_splittableInnerWidth"] = splittableInnerWidth
+			// Source Text and its formatting width: lets outputBlockSplit
+			// re-break the not-yet-placed lines when an automatic page
+			// break switches to a page with a different content width.
+			vl.Attributes["_splittableTe"] = te
+			vl.Attributes["_splittableTeWidth"] = contentWidth
 		}
 	} else {
+		// CSS padding-top/bottom without border/background: HTMLBorder
+		// does not run, so reserve the vertical padding as kerns around
+		// the lines. Inserted before the splittable snapshot so a
+		// fragmented paragraph keeps padding-top with its first and
+		// padding-bottom with its last fragment.
+		if hv.PaddingTop > 0 {
+			k := node.NewKern()
+			k.Kern = hv.PaddingTop
+			k.Attributes = node.H{"origin": "padding-top"}
+			vl.List = node.InsertBefore(vl.List, vl.List, k)
+			vl.Height += hv.PaddingTop
+		}
+		if hv.PaddingBottom > 0 {
+			k := node.NewKern()
+			k.Kern = hv.PaddingBottom
+			k.Attributes = node.H{"origin": "padding-bottom"}
+			vl.List = node.InsertAfter(vl.List, node.Tail(vl.List), k)
+			vl.Height += hv.PaddingBottom
+		}
 		// No border/background: still expose the line list so the paginator
 		// can fragment overlong paragraphs across pages. Zero-value hv acts
 		// as a sentinel for outputBlockSplit to skip HTMLBorder wrapping.
@@ -628,6 +751,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			vl.Attributes["_splittableInner"] = splittableInner
 			vl.Attributes["_splittableHv"] = HTMLValues{}
 			vl.Attributes["_splittableInnerWidth"] = contentWidth
+			// Source Text and its formatting width for width-change reflow
+			// in outputBlockSplit (see the bordered branch above).
+			vl.Attributes["_splittableTe"] = te
+			vl.Attributes["_splittableTeWidth"] = contentWidth
 		}
 	}
 
@@ -963,4 +1090,18 @@ func settingsToHTMLValues(settings frontend.TypesettingSettings) HTMLValues {
 	}
 
 	return hv
+}
+
+// applyCSSHeight extends vl to the declared CSS height by appending a kern
+// when the natural content is shorter. Content taller than the declared
+// height keeps its natural size (min-height semantics, no clipping).
+func applyCSSHeight(vl *node.VList, h bag.ScaledPoint) {
+	if h <= vl.Height+vl.Depth {
+		return
+	}
+	k := node.NewKern()
+	k.Kern = h - vl.Height - vl.Depth
+	k.Attributes = node.H{"origin": "css height"}
+	vl.List = node.InsertAfter(vl.List, node.Tail(vl.List), k)
+	vl.Height += k.Kern
 }

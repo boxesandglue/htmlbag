@@ -189,6 +189,40 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 			}
 			i++
 		}
+
+		// Restore the captured sentinels onto the source tr Texts so a
+		// rebuild of this table at another width (page width reflow in
+		// outputTableRows) propagates them again.
+		i = 0
+		restoreTRs := func(section *frontend.Text) {
+			for _, itm := range section.Items {
+				tr, ok := itm.(*frontend.Text)
+				if !ok {
+					continue
+				}
+				if elt, _ := tr.Settings[frontend.SettingDebug].(string); elt != "tr" {
+					continue
+				}
+				if i < len(trPageBreakInside) && trPageBreakInside[i] != nil {
+					tr.Settings[settingPageBreakInside] = trPageBreakInside[i]
+				}
+				i++
+			}
+		}
+		for _, itm := range te.Items {
+			if t, ok := itm.(*frontend.Text); ok {
+				if elt, _ := t.Settings[frontend.SettingDebug].(string); elt == "thead" {
+					restoreTRs(t)
+				}
+			}
+		}
+		for _, itm := range te.Items {
+			if t, ok := itm.(*frontend.Text); ok {
+				if elt, _ := t.Settings[frontend.SettingDebug].(string); elt == "tbody" {
+					restoreTRs(t)
+				}
+			}
+		}
 	}
 
 	// Attach all inserts collected from this table's cells. The page
@@ -208,6 +242,15 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	if cb.enableTagging {
 		cb.tagTable(vl, tbl)
 	}
+
+	// Source Text and its formatting width: lets outputTableRows rebuild
+	// the remaining rows when an automatic page break switches to a page
+	// with a different content width.
+	if vl.Attributes == nil {
+		vl.Attributes = node.H{}
+	}
+	vl.Attributes["_tableTe"] = te
+	vl.Attributes["_tableTeWidth"] = wd
 
 	return vl, nil
 }

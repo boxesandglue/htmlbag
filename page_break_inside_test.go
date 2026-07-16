@@ -78,10 +78,13 @@ func TestPageBreakInsideRoundTripsToVListAttribute(t *testing.T) {
 	if got := vl.Attributes["pageBreakInside"]; got != "avoid" {
 		t.Errorf("vl.Attributes[\"pageBreakInside\"] = %v; want \"avoid\"", got)
 	}
-	// And the sentinel must have been stripped from the source Text's
-	// Settings so it cannot leak into a subsequent FormatParagraph call.
-	if _, leaked := divText.Settings[settingPageBreakInside]; leaked {
-		t.Error("settingPageBreakInside still present on divText.Settings; should have been stripped")
+	// And the sentinel must survive the build on the source Text's
+	// Settings: buildVlistInternal strips it before FormatParagraph runs
+	// (it would hit the strict unknown-setting default there) and restores
+	// it afterwards, so a reflow rebuild at another page width still sees
+	// the directive.
+	if v, ok := divText.Settings[settingPageBreakInside]; !ok || v != "avoid" {
+		t.Errorf("settingPageBreakInside not restored on divText.Settings after CreateVlist; got %v (ok=%v)", v, ok)
 	}
 }
 

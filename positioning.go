@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
@@ -41,6 +42,44 @@ func isPositionedElement(item *HTMLItem) bool {
 		return true
 	}
 	return false
+}
+
+// runningElementName extracts the name from a `position: running(name)`
+// declaration (CSS GCPM running elements). Returns "" when the element
+// has no such declaration. The raw style value is inspected (not
+// FormattingStyles.position) so the identifier keeps its original case;
+// it must match the ident used in `content: element(name)` exactly.
+// After csshtml's stringValue round trip the value arrives as
+// "running( name )", so spaces around the name are tolerated.
+func runningElementName(item *HTMLItem) string {
+	if item == nil {
+		return ""
+	}
+	v := strings.TrimSpace(item.Styles["position"])
+	if !strings.HasPrefix(strings.ToLower(v), "running(") {
+		return ""
+	}
+	inner := v[len("running("):]
+	if idx := strings.IndexByte(inner, ')'); idx >= 0 {
+		inner = inner[:idx]
+	}
+	return strings.TrimSpace(inner)
+}
+
+// captureRunningElement formats nothing and paints nothing: it stores the
+// element's body Text under its running-element name so BeforeShipout can
+// place it into a page margin box on every page. Like handlePositioned,
+// the element is out of flow, so the caller must not add anything to the
+// parent's Items for this child. The first occurrence of a name wins.
+func (cb *CSSBuilder) captureRunningElement(name string, item *HTMLItem, ss StylesStack, df *frontend.Document, anchorPages map[string]int) error {
+	body, err := Output(cb, item, ss, df, anchorPages)
+	if err != nil {
+		return err
+	}
+	if _, ok := cb.runningElements[name]; !ok {
+		cb.runningElements[name] = body
+	}
+	return nil
 }
 
 // resolvePositionedRect runs the simplified CSS 2.1 §10.3.7 /
@@ -230,33 +269,41 @@ type positioningContext struct {
 }
 
 // resetPositioningContextForPage replaces the positioning stack with a
-// single entry for the current page area. Called from InitPage and
+// single entry for the current page box. Called from InitPage and
 // NewPage so the initial containing block is always present and any
 // stale per-element entries from the previous page are discarded.
+//
+// The initial containing block is the page box (the physical sheet,
+// x=0 to page width, y=0 to page height), NOT the @page-margin-shrunk
+// content area: template authors position header/footer/address blocks
+// at millimetre offsets from the sheet edge (DIN 5008), and Prince /
+// AntennaHouse resolve page-anchored absolute boxes the same way. An
+// element with a positioned ancestor is unaffected; it resolves
+// against that ancestor's box as before.
 func (cb *CSSBuilder) resetPositioningContextForPage() {
 	pd := cb.currentPageDimensions
 	cb.positioningContext = cb.positioningContext[:0]
 	cb.positioningContext = append(cb.positioningContext, positioningContext{
-		x:          pd.PageAreaLeft,
-		y:          cb.frontend.Doc.DefaultPageHeight - pd.PageAreaTop,
-		width:      pd.ContentWidth,
-		height:     pd.ContentHeight,
+		x:          0,
+		y:          cb.frontend.Doc.DefaultPageHeight,
+		width:      pd.Width,
+		height:     pd.Height,
 		isPageRoot: true,
 	})
 }
 
 // currentContainingBlock returns the topmost positioning context — the
 // containing block a position: absolute element would resolve against.
-// Falls back to a synthesized page-area entry if the stack is empty
+// Falls back to a synthesized page-box entry if the stack is empty
 // (defensive: callers should only invoke this after InitPage has run).
 func (cb *CSSBuilder) currentContainingBlock() positioningContext {
 	if len(cb.positioningContext) == 0 {
 		pd := cb.currentPageDimensions
 		return positioningContext{
-			x:      pd.PageAreaLeft,
-			y:      cb.frontend.Doc.DefaultPageHeight - pd.PageAreaTop,
-			width:  pd.ContentWidth,
-			height: pd.ContentHeight,
+			x:      0,
+			y:      cb.frontend.Doc.DefaultPageHeight,
+			width:  pd.Width,
+			height: pd.Height,
 		}
 	}
 	return cb.positioningContext[len(cb.positioningContext)-1]

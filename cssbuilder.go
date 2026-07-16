@@ -169,11 +169,12 @@ type CSSBuilder struct {
 	// positioningContext is a stack of CSS containing blocks
 	// (CSS 2.1 §10.1). The top entry is the nearest positioned
 	// ancestor's content box (or, at the bottom of the stack, the
-	// initial containing block = the current page area). A
-	// position: absolute element resolves top/right/bottom/left
+	// initial containing block = the page box, i.e. the physical
+	// sheet from the page edges, independent of the @page margins).
+	// A position: absolute element resolves top/right/bottom/left
 	// against the top entry. Pushed/popped by Output() on entering
 	// and leaving every element whose computed position is anything
-	// but static; primed by NewPage() with the page-area entry so
+	// but static; primed by NewPage() with the page-box entry so
 	// the initial containing block is always available.
 	positioningContext []positioningContext
 	// positionedItems collects PositionedInsert entries for the
@@ -186,6 +187,15 @@ type CSSBuilder struct {
 	// coordinates and must not influence pageInsertHeight or the
 	// flow's trial-fit calculations.
 	positionedItems []*PositionedInsert
+	// runningElements holds the body Text of every element removed from
+	// the normal flow via `position: running(name)` (CSS GCPM running
+	// elements), keyed by name. Filled during HTMLNodeToText; consumed by
+	// BeforeShipout when a page margin box declares
+	// `content: element(name)`. The Text is re-formatted per page at the
+	// margin box width (Mknodes/FormatParagraph are idempotent), so the
+	// same footer can repeat on every page. When the same name is
+	// captured more than once, the first occurrence wins (GCPM `first`).
+	runningElements map[string]*frontend.Text
 	// FootnoteSeparatorHeight overrides the default footnote rule thickness.
 	// Zero falls back to the package default (0.4pt).
 	FootnoteSeparatorHeight bag.ScaledPoint
@@ -209,6 +219,13 @@ type CSSBuilder struct {
 	// bottom-floats and above the stack (separating it from body content).
 	// Zero falls back to the package default (6pt).
 	FloatBottomInterSkip bag.ScaledPoint
+	// reflowRebuild is true while OutputPagesFromText rebuilds the not yet
+	// placed rest of a page-break group because an automatic page break
+	// switched to a page with a different content width. The VList builder
+	// then skips heading/anchor registration and the ElementCallback — the
+	// entries from the first build stay valid and their indices are
+	// transferred onto the rebuilt nodes.
+	reflowRebuild bool
 }
 
 // New creates an instance of the CSSBuilder.
@@ -221,6 +238,7 @@ func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
 		Counters:                map[string]int{},
 		PendingVLists:           map[string]*node.VList{},
 		pageInserts:             map[InsertClass][]*Insert{},
+		runningElements:         map[string]*frontend.Text{},
 		pageInsertHeight:        map[InsertClass]bag.ScaledPoint{},
 		FootnoteSeparatorHeight: defaultFootnoteSeparatorHeight,
 		FootnoteSeparatorSkip:   defaultFootnoteSeparatorSkip,
@@ -272,6 +290,13 @@ type PageDimensions struct {
 	ContentWidth  bag.ScaledPoint
 	ContentHeight bag.ScaledPoint
 	masterpage    *csshtml.Page
+}
+
+// pageAreaBottom returns the offset of the content area's bottom edge from
+// the sheet's bottom edge: margin + @page border + @page padding. Without
+// @page border/padding this equals MarginBottom.
+func (pd PageDimensions) pageAreaBottom() bag.ScaledPoint {
+	return pd.Height - pd.PageAreaTop - pd.ContentHeight
 }
 
 // PageAreas returns the CSS page margin box areas (e.g. "@top-center")
@@ -790,7 +815,7 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		next := cur.Next()
 		h := vlistNodeHeight(cur)
 		incoming := insertsOnNode(cur)
-		contentArea := pd.Height - pd.MarginTop - pd.MarginBottom
+		contentArea := pd.ContentHeight
 
 		// page-break-before: always — only fires if the page has any
 		// buffered body (else it would create a leading blank page).
@@ -1023,6 +1048,17 @@ func (cb *CSSBuilder) appendOutline() {
 // OutputPagesFromText takes a Text tree (from HTMLToText), splits it at forced
 // page breaks, and formats each group with the content width of its target page.
 // This ensures that different @page margins produce different text widths.
+//
+// When an automatic page break switches to a page whose @page rule yields a
+// different content width (e.g. @page :first vs. @page with other horizontal
+// margins), the not-yet-placed rest of the group is rebuilt at the new width
+// so its lines flow to the new measure (incremental relayout). The rebuild
+// happens on the item/Text level: outputGroupNodes reports the first whole
+// body item that has not been placed, and the loop below re-runs CreateVlist
+// on the remaining items. Recorded heading/anchor indices and extracted
+// inserts are transferred from the discarded nodes onto the rebuilt ones
+// (see reflowRebuild). Groups whose pages share one content width — the
+// common case — never restart and take the unchanged fast path.
 func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	// Find the body-level Text element (unwrap html > body wrappers).
 	body := findBody(te)
@@ -1037,27 +1073,55 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 			}
 		}
 
-		pd, err := cb.PageSize()
-		if err != nil {
-			return err
-		}
+		items := group
+		rebuild := false
+		var carry map[int]node.H
+		for {
+			pd, err := cb.PageSize()
+			if err != nil {
+				return err
+			}
 
-		// Create a wrapper Text with the body's settings for this group.
-		wrapper := &frontend.Text{
-			Settings: body.Settings,
-			Items:    group,
-		}
+			// Create a wrapper Text with the body's settings for this group.
+			wrapper := &frontend.Text{
+				Settings: body.Settings,
+				Items:    items,
+			}
 
-		vl, err := cb.CreateVlist(wrapper, pd.ContentWidth)
-		if err != nil {
-			return err
-		}
+			cb.reflowRebuild = rebuild
+			vl, err := cb.CreateVlist(wrapper, pd.ContentWidth)
+			cb.reflowRebuild = false
+			if err != nil {
+				return err
+			}
+			stampGroupItemIndices(wrapper, vl)
+			if rebuild {
+				// The collapsed margin kern preceding the restart item was
+				// already buffered by the previous pass; the rebuilt chain
+				// must not add it a second time.
+				dropLeadingMarginKern(vl)
+				applyReflowCarry(vl, carry)
+			}
 
-		// Place nodes from this group's vlist onto pages.
-		// Within a group there are no forced page breaks, but content may
-		// overflow and require automatic page breaks.
-		if err := cb.outputGroupNodes(vl, pd); err != nil {
-			return err
+			// Place nodes from this group's vlist onto pages.
+			// Within a group there are no forced page breaks, but content may
+			// overflow and require automatic page breaks.
+			restart, c, err := cb.outputGroupNodes(vl, pd)
+			if err != nil {
+				return err
+			}
+			if restart < 0 {
+				break
+			}
+			// Rebuild the remaining items at the changed content width. The
+			// carried attributes are keyed by the item index relative to the
+			// slice the next CreateVlist call will see.
+			carry = make(map[int]node.H, len(c))
+			for k, v := range c {
+				carry[k-restart] = v
+			}
+			items = items[restart:]
+			rebuild = true
 		}
 	}
 
@@ -1124,6 +1188,112 @@ func splitTextAtPageBreaks(body *frontend.Text) [][]any {
 	return groups
 }
 
+// reflowCarryKeys are the node attributes that must survive a width-change
+// rebuild: they were recorded (headings/anchors) or extracted (inserts) on
+// the first build and cannot be re-created by the rebuild, whose Text tree
+// has already been consumed once.
+var reflowCarryKeys = []string{"_heading_idx", "_anchor_idx", "_anchor_indices", "inserts"}
+
+// stampGroupItemIndices marks each direct VList child of a group vlist with
+// the index of the wrapper item that produced it. buildVlistInternal's box
+// branch emits exactly one VList per non-whitespace *frontend.Text item (all
+// other direct children are margin/padding kerns), so items and VList
+// children correspond 1:1 in order. The index lets the paginator restart the
+// group at a whole-item boundary when an automatic page break changes the
+// content width. Wrappers that did not take the box branch (or were wrapped
+// by HTMLBorder) are left unstamped — pagination then keeps the old
+// single-width behavior.
+func stampGroupItemIndices(wrapper *frontend.Text, vl *node.VList) {
+	if isBox, ok := wrapper.Settings[frontend.SettingBox].(bool); !ok || !isBox {
+		return
+	}
+	if vl.Attributes == nil {
+		return
+	}
+	if o, _ := vl.Attributes["origin"].(string); o != "buildVListInternal" {
+		return
+	}
+	items := wrapper.Items
+	itemIdx := 0
+	nextItemIdx := func() int {
+		for itemIdx < len(items) {
+			t, ok := items[itemIdx].(*frontend.Text)
+			if !ok {
+				itemIdx++
+				continue
+			}
+			// Mirror the box branch's skip condition for whitespace-only
+			// text between elements.
+			if _, hasTag := t.Settings[frontend.SettingDebug]; !hasTag && isWhitespaceOnly(t) {
+				itemIdx++
+				continue
+			}
+			idx := itemIdx
+			itemIdx++
+			return idx
+		}
+		return -1
+	}
+	for n := vl.List; n != nil; n = n.Next() {
+		child, ok := n.(*node.VList)
+		if !ok {
+			continue
+		}
+		idx := nextItemIdx()
+		if idx < 0 {
+			return
+		}
+		if child.Attributes == nil {
+			child.Attributes = node.H{}
+		}
+		child.Attributes["_groupItemIdx"] = idx
+	}
+}
+
+// dropLeadingMarginKern removes a leading collapsed-margin kern from a
+// rebuilt group vlist. The kern belongs between the last placed item and the
+// restart item and was already buffered by the pass that detected the width
+// change; keeping it would double the vertical gap.
+func dropLeadingMarginKern(vl *node.VList) {
+	k, ok := vl.List.(*node.Kern)
+	if !ok || k.Attributes == nil {
+		return
+	}
+	if o, _ := k.Attributes["origin"].(string); o != "margin" {
+		return
+	}
+	next := k.Next()
+	if next == nil {
+		return
+	}
+	next.SetPrev(nil)
+	vl.List = next
+	vl.Height -= k.Kern
+}
+
+// applyReflowCarry merges the carried attributes (see reflowCarryKeys) onto
+// the rebuilt items, matched by their stamped group item index.
+func applyReflowCarry(vl *node.VList, carry map[int]node.H) {
+	if len(carry) == 0 {
+		return
+	}
+	for n := vl.List; n != nil; n = n.Next() {
+		child, ok := n.(*node.VList)
+		if !ok || child.Attributes == nil {
+			continue
+		}
+		idx, ok := child.Attributes["_groupItemIdx"].(int)
+		if !ok {
+			continue
+		}
+		if c, ok := carry[idx]; ok {
+			for k, v := range c {
+				child.Attributes[k] = v
+			}
+		}
+	}
+}
+
 // hasTableChild reports whether the node list nl contains a table VList
 // (origin "table"), descending through transparent single-child wrapper VLists
 // (a plain <div> around the table). It gates the wrapper flatten in
@@ -1151,7 +1321,20 @@ func hasTableChild(nl node.Node) bool {
 
 // outputGroupNodes places the nodes from a single vlist onto the current page,
 // breaking to new pages if the content overflows (no forced breaks expected).
-func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error {
+//
+// Return value: (-1, nil, err) when the whole vlist has been placed. When an
+// automatic page break switches to a page with a different content width, it
+// stops at the next whole body item (identified by the _groupItemIdx stamp)
+// and returns that item's index plus the attributes to carry onto the rebuilt
+// nodes — OutputPagesFromText then re-breaks the remaining items at the new
+// width. Nodes that do not correspond to a whole item (fragment lines from an
+// unwrapped paragraph, spliced table rows) are placed at the old width.
+func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, map[int]node.H, error) {
+	// builtWidth is the content width the vlist was formatted at. Pages
+	// whose @page rule yields the same width slice this vlist by height
+	// only (fast path); a differing width triggers the item-level restart.
+	builtWidth := pd.ContentWidth
+
 	// Unwrap nested single-child VLists. Each unwrap step strips one VList;
 	// if it carried an inserts attribute, propagate it onto the next inner
 	// node so the page builder can still see it.
@@ -1164,6 +1347,17 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 		inner, ok := contentList.(*node.VList)
 		if !ok || inner.Next() != nil {
 			break
+		}
+		// Do not descend into a table that cannot fit on one page: the
+		// table paths below (repeating thead headers via outputTableRows,
+		// the row splice, the width reflow) need the table VList intact —
+		// unwrapping would strip the _buildHeaders machinery and place the
+		// bare rows one by one. Tables that fit on a page keep the old
+		// unwrap behavior.
+		if inner.Attributes != nil {
+			if o, _ := inner.Attributes["origin"].(string); o == "table" && vlistNodeHeight(inner) > pd.ContentHeight {
+				break
+			}
 		}
 		propagateInsertsAttr(inner, inner.List)
 		contentList = inner.List
@@ -1184,6 +1378,49 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 		return nil
 	}
 
+	// widthRestartIdx reports whether pagination must hand control back to
+	// OutputPagesFromText: the current page's content width differs from the
+	// width the vlist was built at, and n is the (not yet placed) node of a
+	// whole body item. Margin kerns in between are placed normally — they
+	// are width-independent and the rebuilt chain drops its leading kern.
+	widthRestartIdx := func(n node.Node) (int, bool) {
+		if pd.ContentWidth == builtWidth {
+			return 0, false
+		}
+		nvl, ok := n.(*node.VList)
+		if !ok || nvl.Attributes == nil {
+			return 0, false
+		}
+		idx, ok := nvl.Attributes["_groupItemIdx"].(int)
+		return idx, ok
+	}
+
+	// collectReflowCarry gathers the attributes listed in reflowCarryKeys
+	// from every stamped item node in the not-yet-placed rest of the chain.
+	collectReflowCarry := func(from node.Node) map[int]node.H {
+		carry := map[int]node.H{}
+		for n := from; n != nil; n = n.Next() {
+			nvl, ok := n.(*node.VList)
+			if !ok || nvl.Attributes == nil {
+				continue
+			}
+			idx, ok := nvl.Attributes["_groupItemIdx"].(int)
+			if !ok {
+				continue
+			}
+			c := node.H{}
+			for _, key := range reflowCarryKeys {
+				if v, ok := nvl.Attributes[key]; ok {
+					c[key] = v
+				}
+			}
+			if len(c) > 0 {
+				carry[idx] = c
+			}
+		}
+		return carry
+	}
+
 	trialPageHeight := func(incoming []*Insert, addBodyH bag.ScaledPoint) bag.ScaledPoint {
 		topFloatTrial := append([]*Insert{}, cb.pageInserts[InsertFloatTop]...)
 		topFloatTrial = append(topFloatTrial, filterInserts(incoming, InsertFloatTop)...)
@@ -1198,9 +1435,16 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 	}
 
 	for cur != nil {
+		// A page break in a previous iteration (or inside a split path)
+		// switched to a different content width: restart at the next whole
+		// item so OutputPagesFromText re-breaks it at the new width.
+		if idx, ok := widthRestartIdx(cur); ok {
+			return idx, collectReflowCarry(cur), nil
+		}
+
 		next := cur.Next()
 		h := vlistNodeHeight(cur)
-		contentArea := pd.Height - pd.MarginTop - pd.MarginBottom
+		contentArea := pd.ContentHeight
 
 		// A table taller than the page must break across pages, but such a
 		// table is often nested inside a transparent wrapper (a plain
@@ -1260,13 +1504,13 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 					flushedBodyH := cb.pageBufHeight
 					topFloatH := cb.pageInsertHeight[InsertFloatTop]
 					if err := cb.flushInserts(); err != nil {
-						return err
+						return -1, nil, err
 					}
-					yLocal := pd.Height - pd.MarginTop - topFloatH - flushedBodyH
-					yLimitLocal := pd.MarginBottom
+					yLocal := pd.Height - pd.PageAreaTop - topFloatH - flushedBodyH
+					yLimitLocal := pd.pageAreaBottom()
 					phc := flushedBodyH > 0 || topFloatH > 0
 					if err := cb.outputTableRows(tableVL, buildHeadersFn, &yLocal, &yLimitLocal, &phc, &pd); err != nil {
-						return err
+						return -1, nil, err
 					}
 					// Commit the table's own inserts (typically footnotes
 					// from cells) to the page that holds the table's last
@@ -1355,14 +1599,14 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 						cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
 					}
 					if err := cb.outputBlockSplit(vlS, &pd, refreshPage); err != nil {
-						return err
+						return -1, nil, err
 					}
 					if forceBreakAfter(cur) && next != nil {
 						if err := cb.NewPage(); err != nil {
-							return err
+							return -1, nil, err
 						}
 						if err := refreshPage(); err != nil {
-							return err
+							return -1, nil, err
 						}
 					}
 					cur = next
@@ -1388,20 +1632,31 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 			}
 			if !fits && cb.pageBufHeight > 0 {
 				if err := cb.NewPage(); err != nil {
-					return err
+					return -1, nil, err
 				}
 				if err := refreshPage(); err != nil {
-					return err
+					return -1, nil, err
+				}
+				// The fresh page may use a different content width; if cur
+				// is a whole item, re-break it (and everything after) there
+				// instead of placing old-width lines.
+				if idx, ok := widthRestartIdx(cur); ok {
+					return idx, collectReflowCarry(cur), nil
 				}
 			}
 		}
 
 		if trialPageHeight(incoming, h) > contentArea && cb.pageBufHeight > 0 {
 			if err := cb.NewPage(); err != nil {
-				return err
+				return -1, nil, err
 			}
 			if err := refreshPage(); err != nil {
-				return err
+				return -1, nil, err
+			}
+			// Same width check as above: cur has not been buffered yet, so
+			// a whole item can still be re-broken at the new width.
+			if idx, ok := widthRestartIdx(cur); ok {
+				return idx, collectReflowCarry(cur), nil
 			}
 		}
 
@@ -1439,17 +1694,17 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) error 
 
 		if forceBreakAfter(cur) && next != nil {
 			if err := cb.NewPage(); err != nil {
-				return err
+				return -1, nil, err
 			}
 			if err := refreshPage(); err != nil {
-				return err
+				return -1, nil, err
 			}
 		}
 
 		cur = next
 	}
 
-	return nil
+	return -1, nil, nil
 }
 
 // outputBlockSplit fragments a splittable block (e.g. <pre>) across pages
@@ -1474,6 +1729,110 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 
 	if len(children) == 0 {
 		return nil
+	}
+
+	// Width-change reflow state. Leaf splittables (a paragraph or <pre>
+	// whose children are line HLists) carry their source Text and its
+	// formatting width; when a NewPage between fragments switches to a page
+	// with a different content width, the not-yet-placed lines are
+	// re-broken at the new width via FormatParagraphTail. Box-container
+	// splittables (a bordered card holding block children) are not stamped
+	// and keep their built width.
+	splitTe, _ := blockVL.Attributes["_splittableTe"].(*frontend.Text)
+	teWidth, _ := blockVL.Attributes["_splittableTeWidth"].(bag.ScaledPoint)
+	curContentWidth := pd.ContentWidth
+	// history records one step per successful rebuild so a later rebuild
+	// (e.g. alternating :left/:right widths) can reproduce every previous
+	// break to locate the remaining text.
+	var history []frontend.ParagraphTailStep
+	// placedLines counts the line HLists buffered from the current children
+	// set; it becomes the Lines value of the next history step.
+	placedLines := 0
+
+	countLines := func(items []node.Node) int {
+		n := 0
+		for _, c := range items {
+			if _, ok := c.(*node.HList); ok {
+				n++
+			}
+		}
+		return n
+	}
+
+	// reflowRemainder re-breaks the not-yet-placed rest (children[i:]) at
+	// the current page's content width. Returns the new children slice, or
+	// nil when reflow is not possible (no source Text, degenerate paragraph,
+	// reproduction failed) — the caller then keeps the old-width lines.
+	reflowRemainder := func(i int) []node.Node {
+		if splitTe == nil || pd.ContentWidth == curContentWidth {
+			return nil
+		}
+		newTeWidth := teWidth + (pd.ContentWidth - curContentWidth)
+		if newTeWidth <= 0 {
+			return nil
+		}
+		steps := append(append([]frontend.ParagraphTailStep{}, history...),
+			frontend.ParagraphTailStep{Width: teWidth, Lines: placedLines})
+		// Strip the htmlbag-private sentinels around the frontend call:
+		// they would hit the strict unknown-setting default in Mknodes.
+		pbi, hasPBI := splitTe.Settings[settingPageBreakInside]
+		delete(splitTe.Settings, settingPageBreakInside)
+		ch, hasCH := splitTe.Settings[settingCSSHeight]
+		delete(splitTe.Settings, settingCSSHeight)
+		bm, hasBM := splitTe.Settings[settingBookmark]
+		delete(splitTe.Settings, settingBookmark)
+		tailVL, err := cb.frontend.FormatParagraphTail(splitTe, steps, newTeWidth)
+		if hasPBI {
+			splitTe.Settings[settingPageBreakInside] = pbi
+		}
+		if hasCH {
+			splitTe.Settings[settingCSSHeight] = ch
+		}
+		if hasBM {
+			splitTe.Settings[settingBookmark] = bm
+		}
+		if err != nil || tailVL == nil {
+			slog.Debug("width reflow of splittable block failed, keeping built width", "error", err)
+			return nil
+		}
+
+		var newChildren []node.Node
+		if i == 0 && placedLines == 0 {
+			// Nothing placed yet: keep unconsumed leading kerns (padding-top).
+			for _, c := range children {
+				if k, ok := c.(*node.Kern); ok {
+					newChildren = append(newChildren, k)
+					continue
+				}
+				break
+			}
+		}
+		lead := len(newChildren)
+		for n := tailVL.List; n != nil; n = n.Next() {
+			newChildren = append(newChildren, n)
+		}
+		// Keep unplaced trailing kerns (padding-bottom); the lineskip glues
+		// belong to the old break and are replaced by the tail vlist's own.
+		var trailing []node.Node
+		for j := len(children) - 1; j >= i && j >= lead; j-- {
+			k, ok := children[j].(*node.Kern)
+			if !ok {
+				break
+			}
+			trailing = append([]node.Node{k}, trailing...)
+		}
+		newChildren = append(newChildren, trailing...)
+		for _, c := range newChildren {
+			c.SetPrev(nil)
+			c.SetNext(nil)
+		}
+
+		history = steps
+		teWidth = newTeWidth
+		innerWidth = newTeWidth
+		curContentWidth = pd.ContentWidth
+		placedLines = 0
+		return newChildren
 	}
 
 	// Nackter Absatz (kein Border/Background): HTMLBorder-Wrapper überspringen.
@@ -1570,7 +1929,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 	}
 
 	availOnPage := func() bag.ScaledPoint {
-		contentArea := pd.Height - pd.MarginTop - pd.MarginBottom
+		contentArea := pd.ContentHeight
 		used := cb.pageBufHeight +
 			cb.pageInsertHeight[InsertFloatTop] +
 			cb.pageInsertHeight[InsertFloatBottom] +
@@ -1667,6 +2026,11 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 				return err
 			}
 			i = 0
+			// The block restarts on the fresh page; if that page has a
+			// different content width, re-break it there from the start.
+			if nc := reflowRemainder(0); nc != nil {
+				children = nc
+			}
 			continue
 		}
 
@@ -1698,6 +2062,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		}
 		cb.bufferBody(wrapped, h, hIdx, aIdx)
 		isFirst = false
+		placedLines += countLines(batch)
 
 		// More fragments to come: ship this page and start fresh.
 		if i < len(children) {
@@ -1706,6 +2071,13 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			}
 			if err := refreshPage(); err != nil {
 				return err
+			}
+			// The fresh page may use a different content width (@page
+			// :first vs. @page): re-break the remaining lines at the new
+			// width instead of slicing old-width lines.
+			if nc := reflowRemainder(i); nc != nil {
+				children = nc
+				i = 0
 			}
 		}
 	}
@@ -1718,6 +2090,10 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 	buildHeaders := buildHeadersFn.(func() ([]*node.HList, error))
 	headerCount := tableVL.Attributes["_headerCount"].(int)
 	tableWidth := tableVL.Width
+	// curContentWidth tracks the content width the table rows were built
+	// for. A page break onto a page with a different width triggers a
+	// rebuild of the table (see below).
+	curContentWidth := pd.ContentWidth
 
 	// Footer support: tables with <tfoot> repeat the footer at the
 	// bottom of every page they span (HTML semantics, CSS Tables 3 §11.1).
@@ -1759,7 +2135,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 			box.List = ft
 			box.Width = tableWidth
 			box.Height = h
-			cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, *y, box)
+			cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, *y, box)
 			*y -= h
 		}
 		*pageHasContent = true
@@ -1772,8 +2148,8 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		if err != nil {
 			return err
 		}
-		*y = pd.Height - pd.MarginTop
-		*yLimit = pd.MarginBottom
+		*y = pd.Height - pd.PageAreaTop
+		*yLimit = pd.pageAreaBottom()
 		*pageHasContent = false
 		return nil
 	}
@@ -1791,7 +2167,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		// avoid rows, but only when a fresh page would actually fit the
 		// row — otherwise the loop is pointless and risks infinite breaks
 		// for rows taller than a full page.
-		pageContent := pd.Height - pd.MarginTop - pd.MarginBottom
+		pageContent := pd.ContentHeight
 		effectiveLimit := *yLimit + footerHeight
 		avoidForcesBreak := avoidBreakInside(row) && *y-h < effectiveLimit && !*pageHasContent && h+footerHeight <= pageContent
 		if (*y-h < effectiveLimit && *pageHasContent) || avoidForcesBreak {
@@ -1805,6 +2181,53 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 			}
 			if err := refreshPage(); err != nil {
 				return err
+			}
+
+			// The fresh page has a different content width (@page :first
+			// vs. @page): rebuild the table from its source Text at the new
+			// width, so the remaining rows and the repeated headers span
+			// the new measure. Rows are matched by position — buildTable is
+			// deterministic and the row count is width-independent. The
+			// already-placed rows keep their old width; when the rebuild is
+			// not possible the old rows are sliced as before.
+			if pd.ContentWidth != curContentWidth {
+				if te, ok := tableVL.Attributes["_tableTe"].(*frontend.Text); ok {
+					if teWd, ok := tableVL.Attributes["_tableTeWidth"].(bag.ScaledPoint); ok {
+						newWd := teWd + (pd.ContentWidth - curContentWidth)
+						if newWd > 0 {
+							cb.reflowRebuild = true
+							newVL, err := cb.buildTable(te, newWd)
+							cb.reflowRebuild = false
+							if err == nil && newVL != nil {
+								var newRows []node.Node
+								for n := newVL.List; n != nil; n = n.Next() {
+									newRows = append(newRows, n)
+								}
+								if len(newRows) == len(rows) {
+									rows = newRows
+									tableVL = newVL
+									tableWidth = newVL.Width
+									if bh, ok := newVL.Attributes["_buildHeaders"].(func() ([]*node.HList, error)); ok {
+										buildHeaders = bh
+									}
+									if fh, ok := newVL.Attributes["_footerHeight"].(bag.ScaledPoint); ok {
+										footerHeight = fh
+									}
+									if bf, ok := newVL.Attributes["_buildFooters"].(func() ([]*node.HList, error)); ok {
+										buildFooters = bf
+									}
+									row = rows[i]
+									h = vlistNodeHeight(row)
+								} else {
+									slog.Debug("width reflow of split table failed: row count mismatch", "old", len(rows), "new", len(newRows))
+								}
+							} else if err != nil {
+								slog.Debug("width reflow of split table failed", "error", err)
+							}
+						}
+					}
+				}
+				curContentWidth = pd.ContentWidth
 			}
 
 			// Repeat header rows on the new page (skip if this IS a header row).
@@ -1821,7 +2244,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 					box.List = hdr
 					box.Width = tableWidth
 					box.Height = hdrH
-					cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, *y, box)
+					cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, *y, box)
 					*y -= hdrH
 				}
 				*pageHasContent = true
@@ -1837,7 +2260,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		box.Width = tableWidth
 		box.Height = h
 
-		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, *y, box)
+		cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, *y, box)
 		*y -= h
 		*pageHasContent = true
 	}
