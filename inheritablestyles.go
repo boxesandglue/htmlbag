@@ -492,6 +492,12 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "text-indent":
 			ih.indent = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 			ih.indentRows = 1
+		case "-bag-italic-correction":
+			// Custom property: heuristic kerns between adjacent slanted
+			// and upright glyph runs (there is no OpenType metric for
+			// text italic correction). Inherited; "auto" enables, "none"
+			// disables.
+			ih.italicCorrection = strings.TrimSpace(v) == "auto"
 		case "initial-letter":
 			// CSS Inline Layout 3 dropcaps. v1 reads the size (number of
 			// lines the initial spans); the optional sink argument and
@@ -605,6 +611,7 @@ type FormattingStyles struct {
 	linebreakTolerance float64 // -bag-linebreak-tolerance (0 = inherit/default)
 	indent             bag.ScaledPoint
 	initialLetterLines int
+	italicCorrection   bool
 	indentRows         int
 	language           string     // BCP47 tag (e.g. "en", "ar", "de-DE")
 	langPattern        *lang.Lang // resolved hyphenator for {language, hyphens}; nil = use parent / doc default
@@ -713,6 +720,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		fontfamilyStack:    is.fontfamilyStack,
 		fontfeatures:       newFontFeatures,
 		variationSettings:  newVariationSettings,
+		italicCorrection:   is.italicCorrection,
 		Fontsize:           is.Fontsize,
 		fontstyle:          is.fontstyle,
 		Fontweight:         is.Fontweight,
@@ -835,6 +843,7 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	settings[frontend.SettingHAlign] = ih.Halign
 	settings[frontend.SettingHangingPunctuation] = ih.hangingPunctuation
+	settings[frontend.SettingItalicCorrection] = ih.italicCorrection
 	settings[frontend.SettingIndentLeft] = ih.indent
 	settings[frontend.SettingIndentLeftRows] = ih.indentRows
 	if ih.lineheightFactor != 0 {
