@@ -2429,6 +2429,7 @@ func (cb *CSSBuilder) AddCSS(css string) error {
 		return err
 	}
 	cb.css.PushDir(curwd)
+	defer cb.css.PopDir()
 	return cb.css.AddCSSText(css)
 }
 
@@ -2482,5 +2483,6 @@ func (cb *CSSBuilder) ReadCSSFile(filename string) error {
 		return err
 	}
 	cb.css.PushDir(abs)
+	defer cb.css.PopDir()
 	return cb.css.AddCSSText(string(data))
 }
