@@ -375,7 +375,11 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "font-weight":
 			ih.Fontweight = frontend.ResolveFontWeight(v, ih.Fontweight)
 		case "font-feature-settings":
-			ih.fontfeatures = append(ih.fontfeatures, v)
+			if strings.TrimSpace(v) == "normal" {
+				ih.fontfeatures = nil
+			} else {
+				ih.fontfeatures = append(ih.fontfeatures, cssFontFeatureSettings(v)...)
+			}
 		case "font-variation-settings":
 			// Parse CSS syntax: "wght" 700, "wdth" 100
 			if ih.variationSettings == nil {
@@ -2135,4 +2139,34 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 		}
 	}
 	return nil
+}
+
+// cssFontFeatureSettings converts a CSS font-feature-settings value such as
+// `"sups" 1, "liga" off` into HarfBuzz-style feature strings (sups=1,
+// liga=0) as understood by ot.FeatureFromString. A missing value means "on".
+func cssFontFeatureSettings(v string) []string {
+	var out []string
+	for part := range strings.SplitSeq(v, ",") {
+		fields := strings.Fields(strings.TrimSpace(part))
+		if len(fields) == 0 {
+			continue
+		}
+		tag := strings.Trim(fields[0], "\"'")
+		if tag == "" {
+			continue
+		}
+		val := "1"
+		if len(fields) > 1 {
+			switch fields[1] {
+			case "on":
+				val = "1"
+			case "off":
+				val = "0"
+			default:
+				val = fields[1]
+			}
+		}
+		out = append(out, tag+"="+val)
+	}
+	return out
 }
