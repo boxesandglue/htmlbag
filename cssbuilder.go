@@ -463,12 +463,12 @@ func (cb *CSSBuilder) renderPageBorderBox(res map[string]string, wd, ht, ml, mr,
 	}
 	vl = cb.HTMLBorder(vl, hv)
 	m := pageBoxMetrics{
-		borderLeft:    styles.BorderLeftWidth,
-		borderRight:   styles.BorderRightWidth,
-		borderTop:     styles.BorderTopWidth,
-		borderBottom:  styles.BorderBottomWidth,
-		paddingLeft:   styles.PaddingLeft,
-		paddingRight:  styles.PaddingRight,
+		borderLeft:      styles.BorderLeftWidth,
+		borderRight:     styles.BorderRightWidth,
+		borderTop:       styles.BorderTopWidth,
+		borderBottom:    styles.BorderBottomWidth,
+		paddingLeft:     styles.PaddingLeft,
+		paddingRight:    styles.PaddingRight,
 		paddingTop:      styles.PaddingTop,
 		paddingBottom:   styles.PaddingBottom,
 		backgroundColor: styles.BackgroundColor,
