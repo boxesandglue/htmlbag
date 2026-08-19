@@ -145,12 +145,20 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				}
 			}
 		}
-		// If this box container has a prepend (e.g., list bullet), pass it
-		// to the first child Text element so FormatParagraph can render it.
+		// If this box container has a prepend (e.g., list bullet or an
+		// initial-letter box), pass it to the first child Text element so
+		// FormatParagraph can render it. An initial letter also carries
+		// the first-rows indent that carves out its corner.
 		if prep, ok := settings[frontend.SettingPrepend]; ok {
 			for _, itm := range te.Items {
 				if t, ok := itm.(*frontend.Text); ok {
 					t.Settings[frontend.SettingPrepend] = prep
+					if il, ok := settings[frontend.SettingIndentLeft]; ok {
+						if rows, ok := settings[frontend.SettingIndentLeftRows].(int); ok && rows > 0 {
+							t.Settings[frontend.SettingIndentLeft] = il
+							t.Settings[frontend.SettingIndentLeftRows] = rows
+						}
+					}
 					break
 				}
 			}

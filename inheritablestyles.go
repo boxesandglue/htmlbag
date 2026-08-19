@@ -492,6 +492,20 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "text-indent":
 			ih.indent = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 			ih.indentRows = 1
+		case "initial-letter":
+			// CSS Inline Layout 3 dropcaps. v1 reads the size (number of
+			// lines the initial spans); the optional sink argument and
+			// raised caps are not supported. csshtml has no
+			// ::first-letter pseudo-element matching yet, so the
+			// property is accepted on the block element itself.
+			fields := strings.Fields(v)
+			if len(fields) > 0 {
+				if fields[0] == "normal" {
+					ih.initialLetterLines = 0
+				} else if n, err := strconv.ParseFloat(fields[0], 64); err == nil && n >= 1 {
+					ih.initialLetterLines = int(n + 0.5)
+				}
+			}
 		case "user-select":
 			// ignore
 		case "counter-reset":
@@ -590,6 +604,7 @@ type FormattingStyles struct {
 	hyphenPenalty      int     // -bag-linebreak-hyphen-penalty (0 = inherit/default)
 	linebreakTolerance float64 // -bag-linebreak-tolerance (0 = inherit/default)
 	indent             bag.ScaledPoint
+	initialLetterLines int
 	indentRows         int
 	language           string     // BCP47 tag (e.g. "en", "ar", "de-DE")
 	langPattern        *lang.Lang // resolved hyphenator for {language, hyphens}; nil = use parent / doc default
@@ -1085,6 +1100,10 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err
 	}
+	// styles is re-assigned inside the children loop (each inline run
+	// pushes its own frame); keep the block element's own styles for the
+	// block-level post-processing at the end of this function.
+	blockStyles := styles
 	// Resolve `padding-inline-start` (CSS Logical Properties) into the
 	// matching physical padding for the resolved direction. Explicit
 	// physical padding wins on the matching side.
@@ -1606,6 +1625,14 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			newte.Settings[frontend.SettingBox] = true
 		}
 		newte.Settings[settingCSSHeight] = elementCSSHeight
+	}
+	// CSS initial-letter: carve the paragraph's first letter out as a
+	// dropcap spanning several lines.
+	if blockStyles.initialLetterLines > 1 {
+		if err := applyInitialLetter(newte, blockStyles, df); err != nil {
+			ss.PopStyles()
+			return nil, err
+		}
 	}
 	ss.PopStyles()
 	return newte, nil
