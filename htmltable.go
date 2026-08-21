@@ -302,19 +302,33 @@ func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
 				continue
 			}
 			if elt == "td" || elt == "th" {
-				cb.buildTD(t, tr, elt == "th")
+				cb.buildTD(t, tr, elt == "th", tbl.MaxWidth)
 			}
 		}
 	}
 	tbl.Rows = append(tbl.Rows, tr)
 }
 
-func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeader bool) {
+// buildTD converts a <td>/<th> Text into a TableCell. tableWidth is the
+// table's maximum width and resolves a percentage `width` on the cell.
+func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeader bool, tableWidth bag.ScaledPoint) {
 	td := &frontend.TableCell{}
 	td.IsHeader = isHeader
 
 	// Extract colspan and rowspan
 	settings := te.Settings
+
+	// CSS `width` on the cell. The table layout treats it as a lower
+	// bound for the column (CSS 2.1 §17.5.2.2), so `width: 50%` on both
+	// cells of a two-column row splits the table evenly instead of
+	// letting the columns shrink to their content.
+	if v, ok := settings[frontend.SettingWidth]; ok {
+		if wdStr, ok := v.(string); ok && wdStr != "" && wdStr != "auto" {
+			if w := ParseRelativeSize(wdStr, tableWidth, tableWidth); w > 0 {
+				td.SpecifiedWidth = w
+			}
+		}
+	}
 	if v, ok := settings[frontend.SettingColspan]; ok && v != nil {
 		if colspan, ok := v.(int); ok && colspan > 1 {
 			td.ExtraColspan = colspan - 1
