@@ -510,6 +510,32 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
 				vls.Height += hv.PaddingBottom
 			}
+			// A transparent block container (<ul>, <ol>, a plain <div>)
+			// taller than the remaining page space must fragment across
+			// pages like a bare paragraph does — expose the child list to
+			// the paginator, mirroring the leaf branch. The zero HTMLValues
+			// is the no-wrapper sentinel for outputBlockSplit. Containers
+			// holding a table keep their dedicated splice paths in
+			// outputGroupNodes (which the _splittable attribute would
+			// disable), and an explicit break-inside: avoid keeps the
+			// container monolithic.
+			pbiRaw, _ := settings[settingPageBreakInside].(string)
+			if pbiRaw != "avoid" && !hasTableChild(vls.List) {
+				var splittableInner []node.Node
+				for n := vls.List; n != nil; n = n.Next() {
+					splittableInner = append(splittableInner, n)
+				}
+				if len(splittableInner) > 1 {
+					vls.Attributes["_splittable"] = true
+					vls.Attributes["_splittableInner"] = splittableInner
+					vls.Attributes["_splittableHv"] = HTMLValues{}
+					// The container's own packed width, not the offered
+					// width: fragments must report the same box width as
+					// the unsplit container, or centred content inside
+					// (display math, centred paragraphs) shifts.
+					vls.Attributes["_splittableInnerWidth"] = vls.Width
+				}
+			}
 		}
 
 		// Apply borders/background to this block container
