@@ -563,6 +563,26 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			slog.Debug("unresolved attribute", k, v)
 		}
 	}
+
+	// CSS 2.1 §8.5.3: `border-style: none` (and `hidden`) forces the used
+	// border width to zero. This has to run after the whole declaration
+	// block is in, not inside the loop: the shorthand `border: none`
+	// arrives from csshtml as the longhand pair (style none, width 1pt),
+	// and the map the loop walks has no defined order, so the width may
+	// well be seen last. Without this, `border: none` — the usual way to
+	// take borders off table cells — draws a 1pt line.
+	if ih.BorderTopStyle == frontend.BorderStyleNone {
+		ih.BorderTopWidth = 0
+	}
+	if ih.BorderRightStyle == frontend.BorderStyleNone {
+		ih.BorderRightWidth = 0
+	}
+	if ih.BorderBottomStyle == frontend.BorderStyleNone {
+		ih.BorderBottomWidth = 0
+	}
+	if ih.BorderLeftStyle == frontend.BorderStyleNone {
+		ih.BorderLeftWidth = 0
+	}
 	return nil
 }
 
