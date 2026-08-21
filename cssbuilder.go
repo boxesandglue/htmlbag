@@ -22,6 +22,13 @@ import (
 
 var onecm = bag.MustSP("1cm")
 
+// splitMinLines is the number of content children (HList lines or VList
+// blocks) a fragmented block must leave on a page. CSS Fragmentation 3 §4
+// puts both the widows and the orphans default at 2. outputBlockSplit
+// enforces it, and splittablePeekHeight must predict it — the two would
+// otherwise disagree about whether a block can start on the current page.
+const splitMinLines = 2
+
 // HeadingEntry records a heading (h1–h6) or a bookmarked element found
 // during VList construction. Page and Y are filled later during OutputPages
 // when the element is placed on a page. SE is filled at SE-construction time
@@ -2023,7 +2030,6 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		// page and shunts the whole card forward — orphaning a preceding
 		// page-break-after:avoid heading (it stays put while its card jumps).
 		// CSS Fragmentation 3 §4 spec defaults are widows: 2 and orphans: 2.
-		const minLines = 2
 		countHL := func(items []node.Node) int {
 			n := 0
 			for _, c := range items {
@@ -2036,11 +2042,11 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		}
 
 		// Orphan protection: if the first fragment of the block would leave
-		// fewer than minLines on the current page, force a NewPage first so
+		// fewer than splitMinLines on the current page, force a NewPage first so
 		// the block restarts on a fresh page with full available space. Only
 		// applies when there's something already on the page — on an empty
 		// page even a single line has to land here.
-		if isFirst && cb.pageBufHeight > 0 && countHL(batch) < minLines && i < len(children) {
+		if isFirst && cb.pageBufHeight > 0 && countHL(batch) < splitMinLines && i < len(children) {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
@@ -2056,13 +2062,13 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			continue
 		}
 
-		// Widow protection: the next page must carry at least minLines HLists;
+		// Widow protection: the next page must carry at least splitMinLines HLists;
 		// otherwise pull items back from this batch until it does, while
-		// leaving at least minLines in the current batch (don't trade a
+		// leaving at least splitMinLines in the current batch (don't trade a
 		// widow for an orphan).
 		if i < len(children) {
 			remainingLines := countHL(children[i:])
-			for remainingLines < minLines && countHL(batch) > minLines {
+			for remainingLines < splitMinLines && countHL(batch) > splitMinLines {
 				last := batch[len(batch)-1]
 				batchH -= vlistNodeHeight(last)
 				batch = batch[:len(batch)-1]
@@ -2293,12 +2299,47 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 
 // avoidBreakAfter checks if a node has the page-break-after: avoid attribute.
 func avoidBreakAfter(n node.Node) bool {
-	if vl, ok := n.(*node.VList); ok && vl.Attributes != nil {
+	vl, ok := n.(*node.VList)
+	if !ok {
+		return false
+	}
+	if vl.Attributes != nil {
 		if v, ok := vl.Attributes["pageBreakAfter"]; ok {
 			return v == "avoid"
 		}
 	}
+	// CSS Fragmentation 3 §3.3: a break-after on the last in-flow child
+	// also applies between the parent and the parent's next sibling. The
+	// paginator only inspects top-level nodes, so a heading wrapped in a
+	// <div>/<section> would otherwise never be seen. Walk down the chain
+	// of last content children; the depth guard keeps a pathological tree
+	// from recursing without bound.
+	for depth := 0; depth < 32; depth++ {
+		vl = lastContentChild(vl)
+		if vl == nil {
+			return false
+		}
+		if vl.Attributes != nil {
+			if v, ok := vl.Attributes["pageBreakAfter"]; ok {
+				return v == "avoid"
+			}
+		}
+	}
 	return false
+}
+
+// lastContentChild returns the last VList child of vl, skipping trailing
+// kerns, glue and rules (margins, padding fillers, background rules). It
+// returns nil when the list has no VList child, which ends the walk in
+// avoidBreakAfter.
+func lastContentChild(vl *node.VList) *node.VList {
+	var last *node.VList
+	for n := vl.List; n != nil; n = n.Next() {
+		if child, ok := n.(*node.VList); ok {
+			last = child
+		}
+	}
+	return last
 }
 
 // avoidBreakInside reports whether a node carries the CSS
@@ -2381,7 +2422,28 @@ func splittablePeekHeight(n node.Node) (bag.ScaledPoint, bool) {
 		return 0, false
 	}
 	hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
-	return hv.PaddingTop + hv.BorderTopWidth + vlistNodeHeight(children[0]), true
+	// Reserve room for splitMinLines content children (HList lines or
+	// VList blocks), not just the first one: outputBlockSplit refuses to
+	// start a block that would leave fewer than that on the current page
+	// and bumps the whole block to the next page instead. Promising the
+	// caller a one-line foothold would therefore orphan the very heading
+	// this relaxation exists to keep in place. Leading margin/padding
+	// kerns are counted towards the height but are not content.
+	// A block with fewer content children cannot be split at all — report
+	// it as unsplittable so the caller weighs its full height.
+	peek := hv.PaddingTop + hv.BorderTopWidth
+	seen := 0
+	for _, c := range children {
+		peek += vlistNodeHeight(c)
+		switch c.(type) {
+		case *node.HList, *node.VList:
+			seen++
+			if seen >= splitMinLines {
+				return peek, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // vlistNodeHeight returns the vertical extent of a node in a vertical list.
