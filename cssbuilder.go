@@ -1748,6 +1748,51 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 	splitTe, _ := blockVL.Attributes["_splittableTe"].(*frontend.Text)
 	teWidth, _ := blockVL.Attributes["_splittableTeWidth"].(bag.ScaledPoint)
 	curContentWidth := pd.ContentWidth
+
+	// Text color of the source paragraph. The node builder emits a single
+	// color instruction inside the first line and the reset inside the
+	// last one; a page's content stream starts with default black, so a
+	// fragment on a later page would silently lose the color. Every
+	// fragment after the first re-emits the color, and every fragment
+	// that continues on the next page resets it so floats/footnotes
+	// painted below the body keep their own colors. Black is skipped —
+	// it equals the content-stream default. Box-container splittables
+	// carry no source Text; their children hold self-contained color
+	// instructions already.
+	var fragColor *color.Color
+	if splitTe != nil {
+		switch t := splitTe.Settings[frontend.SettingColor].(type) {
+		case string:
+			fragColor = cb.frontend.GetColor(t)
+		case *color.Color:
+			fragColor = t
+		}
+		if fragColor != nil {
+			if black := cb.frontend.GetColor("black"); black != nil &&
+				fragColor.PDFStringNonStroking() == black.PDFStringNonStroking() {
+				fragColor = nil
+			}
+		}
+	}
+	// colorStartNode / colorResetNode build zero-height StartStop nodes
+	// whose shipout callbacks mirror the instructions the node builder
+	// emits for SettingColor.
+	colorStartNode := func() node.Node {
+		s := node.NewStartStop()
+		s.Position = node.PDFOutputPage
+		s.ShipoutCallback = func(n node.Node) string {
+			return fragColor.PDFStringNonStroking() + " "
+		}
+		return s
+	}
+	colorResetNode := func() node.Node {
+		s := node.NewStartStop()
+		s.Position = node.PDFOutputPage
+		s.ShipoutCallback = func(n node.Node) string {
+			return "0 0 0 RG 0 0 0 rg "
+		}
+		return s
+	}
 	// history records one step per successful rebuild so a later rebuild
 	// (e.g. alternating :left/:right widths) can reproduce every previous
 	// break to locate the remaining text.
@@ -1992,7 +2037,13 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			if isFirst {
 				kind = fragOnly
 			}
-			wrapped, h := buildFragment(children[i:], kind)
+			items := children[i:]
+			// A follow-up fragment re-establishes the paragraph color; the
+			// original reset still sits inside the last line.
+			if !isFirst && fragColor != nil {
+				items = append([]node.Node{colorStartNode()}, items...)
+			}
+			wrapped, h := buildFragment(items, kind)
 			hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
 			if !isFirst {
 				hIdx, aIdx = -1, nil
@@ -2082,6 +2133,16 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		kind := fragTop
 		if !isFirst {
 			kind = fragMiddle
+		}
+		// The paragraph continues on the next page: re-emit the color at
+		// the top of follow-up fragments and reset it at the bottom of
+		// every continued fragment (the page ends mid-paragraph, and
+		// floats/footnotes paint after the body in the same stream).
+		if fragColor != nil {
+			if !isFirst {
+				batch = append([]node.Node{colorStartNode()}, batch...)
+			}
+			batch = append(batch, colorResetNode())
 		}
 		wrapped, h := buildFragment(batch, kind)
 		hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
