@@ -527,10 +527,22 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			ih.counterIncrement = parseCounterList(v, 1)
 		case "vertical-align":
 			switch v {
+			case "baseline":
+				// Align with the parent's baseline. The inherited shift is
+				// kept on purpose: the parent's baseline may itself be
+				// shifted, and children align relative to it.
+			// sub/super shift to the proper script position of the
+			// *parent's* box (CSS 2.1 §10.8.1), so the offset is computed
+			// from the parent font size (curFontSize). ih.Fontsize is
+			// already the element's own size at this point, and script
+			// markup almost always shrinks font-size — the shift must not
+			// shrink with it. -1/5 and +1/3 of the parent em follow common
+			// UA practice. The shift adds to an inherited one so nested
+			// scripts stack.
 			case "sub":
-				ih.yoffset = -1 * ih.Fontsize * 1000 / 5000
+				ih.yoffset -= curFontSize / 5
 			case "super":
-				ih.yoffset = ih.Fontsize * 1000 / 5000
+				ih.yoffset += curFontSize / 3
 			case "top", "text-top":
 				// CSS distinguishes between top (line-box top) and text-top
 				// (parent font ascent). htmlbag has no first-class line-box
@@ -540,8 +552,30 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 				ih.Valign = frontend.VAlignTop
 			case "middle":
 				ih.Valign = frontend.VAlignMiddle
-			case "bottom":
+			case "bottom", "text-bottom":
 				ih.Valign = frontend.VAlignBottom
+			default:
+				// <length> | <percentage>: explicit baseline shift, positive
+				// raises. Percentages refer to the element's own line-height,
+				// em lengths to its own font size (CSS 2.1 §10.8.1); the
+				// shift adds to an inherited one. The leading-character guard
+				// keeps non-numeric keywords (inherit, …) away from the
+				// numeric parser, leaving them as no-ops as before.
+				if v != "" && strings.ContainsRune("+-.0123456789", rune(v[0])) {
+					base := ih.Fontsize
+					if strings.HasSuffix(v, "%") {
+						if ih.lineheightFactor != 0 {
+							base = bag.MultiplyFloat(ih.Fontsize, ih.lineheightFactor)
+						} else if ih.lineheight != 0 {
+							base = ih.lineheight
+						} else {
+							// line-height: normal — same 1.2 the UA default
+							// stylesheet (csshtml.CSSdefaults) declares.
+							base = bag.MultiplyFloat(ih.Fontsize, 1.2)
+						}
+					}
+					ih.yoffset += ParseRelativeSize(v, base, ih.DefaultFontSize)
+				}
 			}
 		case "width":
 			ih.width = v
@@ -763,6 +797,12 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		tabsizeSpaces:      is.tabsizeSpaces,
 		Valign:             is.Valign,
 		Halign:             is.Halign,
+		// vertical-align itself does not inherit, but the baseline shift it
+		// produces carries over: descendant inline boxes align to the
+		// parent's (shifted) baseline. Nested sub/super/length values add
+		// their own shift on top (see the vertical-align case in
+		// StylesToStyles).
+		yoffset: is.yoffset,
 	}
 	return newis
 }
