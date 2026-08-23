@@ -2,12 +2,24 @@ package htmlbag
 
 import (
 	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 
+	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/csshtml"
 	"golang.org/x/net/html"
 )
+
+// captureLog redirects bag.Logger into a buffer at Info level and returns
+// the buffer plus a restore function.
+func captureLog() (*bytes.Buffer, func()) {
+	var buf bytes.Buffer
+	old := bag.Logger
+	bag.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	return &buf, func() { bag.Logger = old }
+}
 
 // TestResolveCSSFontFamilyAliasSansSerif guards CSS Fonts 4 §3.1.1 generic
 // keyword resolution: the spec keyword is "sans-serif" but htmlbag registers
@@ -81,7 +93,7 @@ func TestResolveCSSFontFamilyDirect(t *testing.T) {
 
 // TestResolveCSSFontFamilyUnknownReturnsNil verifies the contract that
 // resolveCSSFontFamily returns nil when no candidate resolves — the caller
-// (StylesToStyles) decides the fallback (currently 'serif' with an error
+// (StylesToStyles) decides the fallback (currently 'serif' with a warn
 // log). The resolver itself must not silently invent a result.
 func TestResolveCSSFontFamilyUnknownReturnsNil(t *testing.T) {
 	fe, err := frontend.NewForWriter(&bytes.Buffer{})
@@ -286,5 +298,77 @@ func TestStylesToStylesPopulatesFontFamilyStack(t *testing.T) {
 	ApplySettings(settings2, ih)
 	if _, ok := settings2[frontend.SettingFontFamilyStack]; !ok {
 		t.Errorf("ApplySettings did NOT emit SettingFontFamilyStack for multi-family CSS")
+	}
+}
+
+// TestFontFamilyPartialMissLogsOnce guards the diagnostics for the partial
+// miss (htmlbag#3): an unresolvable entry in a font-family list is skipped
+// per CSS Fonts 4 §3.1, but must leave one Info line per unique name per
+// document — not one per element, and not zero. A full miss must stay
+// silent at the choke point; the caller reports the serif fallback.
+func TestFontFamilyPartialMissLogsOnce(t *testing.T) {
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatalf("LoadIncludedFonts: %v", err)
+	}
+	buf, restore := captureLog()
+	defer restore()
+
+	// Same declaration on two elements: the diagnostic must fire once.
+	resolveCSSFontFamilyList(`"DejaVu Sans", sans-serif`, fe)
+	resolveCSSFontFamilyList(`"DejaVu Sans", sans-serif`, fe)
+	out := buf.String()
+	if got := strings.Count(out, "DejaVu Sans"); got != 1 {
+		t.Errorf("partial-miss diagnostic count = %d, want 1; log:\n%s", got, out)
+	}
+	if !strings.Contains(out, "level=INFO") {
+		t.Errorf("partial-miss diagnostic not at Info level; log:\n%s", out)
+	}
+	if !strings.Contains(out, "used=sans") {
+		t.Errorf("partial-miss diagnostic misses used= family; log:\n%s", out)
+	}
+
+	// Full miss: no per-entry lines from the resolver itself.
+	buf.Reset()
+	if got := resolveCSSFontFamilyList(`"Comic Sans MS", cursive`, fe); got != nil {
+		t.Fatalf("resolveCSSFontFamilyList(unknown stack) = %v, want nil", got)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("full miss logged at choke point, want caller-side report only; log:\n%s", buf.String())
+	}
+}
+
+// TestFontFamilyFullMissWarnsOnce guards the caller-side full-miss report:
+// Warn (not Error — the run recovers and produces a PDF) and deduplicated
+// per unique declaration per document instead of once per element and pass.
+func TestFontFamilyFullMissWarnsOnce(t *testing.T) {
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatalf("LoadIncludedFonts: %v", err)
+	}
+	buf, restore := captureLog()
+	defer restore()
+
+	for range 2 {
+		ih := &FormattingStyles{Fontsize: tenpt}
+		if err := StylesToStyles(ih, map[string]string{"font-family": `"Nonexistent Font"`}, fe, ih.Fontsize); err != nil {
+			t.Fatalf("StylesToStyles: %v", err)
+		}
+		if ih.fontfamily != fe.FindFontFamily("serif") {
+			t.Errorf("full miss did not revert to serif, got %v", ih.fontfamily)
+		}
+	}
+	out := buf.String()
+	if got := strings.Count(out, "Nonexistent Font"); got != 1 {
+		t.Errorf("full-miss report count = %d, want 1; log:\n%s", got, out)
+	}
+	if !strings.Contains(out, "level=WARN") || strings.Contains(out, "level=ERROR") {
+		t.Errorf("full-miss report not at Warn level; log:\n%s", out)
 	}
 }

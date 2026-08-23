@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
@@ -192,20 +193,66 @@ var cssGenericFontFamilyAliases = map[string]string{
 	"sans-serif": "sans",
 }
 
+// fontFamilyHint is attached to every unresolved-font-family diagnostic. The
+// most likely user question behind such a message is "why is my font not
+// used" and the answer is that htmlbag, unlike a browser, never consults the
+// system font database.
+const fontFamilyHint = "no system font lookup; register the family via @font-face"
+
+// fontFamilyDiag deduplicates the unresolved-font-family diagnostics. The
+// fallback semantics recover silently (CSS Fonts 4 §3.1), so without dedup a
+// single typo would repeat once per element and per aux pass. The state is
+// keyed to the current document: per-element calls within a run share it, a
+// new run (fresh frontend.Document, e.g. each aux pass or watch rebuild)
+// resets it. Interleaved use of two documents can repeat a message, never
+// suppress a first-time one.
+var fontFamilyDiag = struct {
+	sync.Mutex
+	doc      *frontend.Document
+	reported map[string]bool
+}{}
+
+// fontFamilyDiagFirst reports whether key has not been diagnosed yet for the
+// given document and marks it as diagnosed.
+func fontFamilyDiagFirst(df *frontend.Document, key string) bool {
+	fontFamilyDiag.Lock()
+	defer fontFamilyDiag.Unlock()
+	if fontFamilyDiag.doc != df {
+		fontFamilyDiag.doc = df
+		fontFamilyDiag.reported = map[string]bool{}
+	}
+	if fontFamilyDiag.reported[key] {
+		return false
+	}
+	fontFamilyDiag.reported[key] = true
+	return true
+}
+
+// logFontFamilyFullMiss logs (once per unique value per document) that no
+// entry of the font-family value resolved and the caller reverts to 'serif'.
+func logFontFamilyFullMiss(df *frontend.Document, v string) {
+	if fontFamilyDiagFirst(df, "fullmiss:"+v) {
+		bag.Logger.Warn("Font family not found, reverting to 'serif'", "requested family", v, "hint", fontFamilyHint)
+	}
+}
+
 // resolveCSSFontFamilyList parses a CSS font-family value (a comma-separated
 // prioritised list per CSS Fonts 4 §3.1) and returns ALL families that
 // resolve against the document's registered families, in declaration order.
 // Each candidate is trimmed of surrounding whitespace and CSS string quotes,
 // then looked up directly first and via the generic-keyword alias table if
-// the direct lookup misses. Unknown candidates are skipped silently — the
-// resulting stack contains only resolvable entries, deduplicated to preserve
+// the direct lookup misses. Unknown candidates are skipped — the resulting
+// stack contains only resolvable entries, deduplicated to preserve
 // determinism (a family listed twice contributes once at its first position).
-// Returns nil if no candidate resolves; callers decide the fallback.
+// Each skipped candidate is reported once per document (Info level); a full
+// miss stays silent here because the callers decide (and report) the
+// fallback. Returns nil if no candidate resolves.
 //
 // resolveCSSFontFamily is a thin wrapper that returns the first entry of the
 // stack and exists for callers that only need the primary family.
 func resolveCSSFontFamilyList(v string, df *frontend.Document) []*frontend.FontFamily {
 	var stack []*frontend.FontFamily
+	var unresolved []string
 	seen := map[*frontend.FontFamily]bool{}
 	add := func(ff *frontend.FontFamily) {
 		if ff == nil || seen[ff] {
@@ -227,6 +274,15 @@ func resolveCSSFontFamilyList(v string, df *frontend.Document) []*frontend.FontF
 		if alias, ok := cssGenericFontFamilyAliases[name]; ok {
 			if ff := df.FindFontFamily(alias); ff != nil {
 				add(ff)
+				continue
+			}
+		}
+		unresolved = append(unresolved, name)
+	}
+	if len(stack) > 0 {
+		for _, name := range unresolved {
+			if fontFamilyDiagFirst(df, "entry:"+name) {
+				bag.Logger.Info("font-family entry not registered, using fallback", "family", name, "used", stack[0].Name, "hint", fontFamilyHint)
 			}
 		}
 	}
@@ -403,7 +459,9 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			if len(ih.fontfamilyStack) > 0 {
 				ih.fontfamily = ih.fontfamilyStack[0]
 			} else {
-				bag.Logger.Error("Font family not found, reverting to 'serif'", "requested family", v)
+				// Warn, not Error: the condition is fully recovered from
+				// (the PDF is still produced).
+				logFontFamilyFullMiss(df, v)
 				ih.fontfamily = df.FindFontFamily("serif")
 				ih.fontfamilyStack = nil
 			}
@@ -1249,6 +1307,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		if ffs, ok := item.Styles["font-family"]; ok {
 			ff := resolveCSSFontFamily(ffs, df)
 			if ff == nil {
+				logFontFamilyFullMiss(df, ffs)
 				ff = df.FindFontFamily("serif")
 			}
 			ss.SetDefaultFontFamily(ff)
@@ -1257,6 +1316,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		if ffs, ok := item.Styles["font-family"]; ok {
 			ff := resolveCSSFontFamily(ffs, df)
 			if ff == nil {
+				logFontFamilyFullMiss(df, ffs)
 				ff = df.FindFontFamily("serif")
 			}
 			ss.SetDefaultFontFamily(ff)
