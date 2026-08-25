@@ -2273,7 +2273,12 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			for k, v := range childSettings {
 				cld.Settings[k] = v
 			}
-			if err := collectHorizontalNodes(cb, cld, effective, ss, currentFontsize, defaultFontsize, df, anchorPages); err != nil {
+			// Descend with this element's resolved size (sty.Fontsize), not
+			// the size this frame was entered with: relative values on the
+			// child (font-size %, em, and the vertical-align sub/super shift)
+			// resolve against the immediate parent, not the paragraph base
+			// size (glu#6).
+			if err := collectHorizontalNodes(cb, cld, effective, ss, sty.Fontsize, defaultFontsize, df, anchorPages); err != nil {
 				return err
 			}
 			if isFootnoteElement(effective) {

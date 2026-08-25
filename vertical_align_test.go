@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
@@ -105,6 +106,59 @@ func TestVerticalAlignUnknownKeywordIsNoop(t *testing.T) {
 		if ih.yoffset != 0 {
 			t.Errorf("%s: yoffset = %s, want 0", kw, ih.yoffset)
 		}
+	}
+}
+
+// findTextContaining walks the Text tree depth-first and returns the Text
+// whose direct Items contain a string with needle. That Text carries the
+// settings resolved for the innermost element wrapping the string.
+func findTextContaining(te *frontend.Text, needle string) *frontend.Text {
+	for _, itm := range te.Items {
+		switch v := itm.(type) {
+		case string:
+			if strings.Contains(v, needle) {
+				return te
+			}
+		case *frontend.Text:
+			if found := findTextContaining(v, needle); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
+}
+
+// glu#6: relative values on a nested inline element (the sub/super shift and
+// font-size percentages) must resolve against the immediate parent's resolved
+// size. collectHorizontalNodes used to freeze the paragraph base size as
+// curFontSize for the whole recursion, so a sized span between paragraph and
+// script element was ignored.
+func TestVerticalAlignSuperInsideSizedSpan(t *testing.T) {
+	te := renderToText(t, `<!DOCTYPE html><html><head><style>
+.big { font-size: 20pt; }
+.fake { vertical-align: super; font-size: 50%; }
+</style></head><body><p><span class="big">X<span class="fake">ther</span></span></p></body></html>`)
+
+	inner := findTextContaining(te, "ther")
+	if inner == nil {
+		t.Fatal(`no text segment containing "ther" found`)
+	}
+	big := bag.MustSP("20pt")
+
+	yoff, ok := inner.Settings[frontend.SettingYOffset].(bag.ScaledPoint)
+	if !ok {
+		t.Fatalf("SettingYOffset missing or wrong type: %v", inner.Settings[frontend.SettingYOffset])
+	}
+	if want := big / 3; yoff != want {
+		t.Errorf("yoffset = %s, want %s (immediate parent em / 3)", yoff, want)
+	}
+
+	size, ok := inner.Settings[frontend.SettingSize].(bag.ScaledPoint)
+	if !ok {
+		t.Fatalf("SettingSize missing or wrong type: %v", inner.Settings[frontend.SettingSize])
+	}
+	if want := big / 2; !near(size, want) {
+		t.Errorf("font size = %s, want %s (50%% of immediate parent)", size, want)
 	}
 }
 
