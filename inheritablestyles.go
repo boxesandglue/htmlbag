@@ -1336,10 +1336,16 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			newte.Settings[frontend.SettingPrerenderedVListID] = vlid
 		}
 	case "col":
-		// First check data-width (from XTS), then CSS width
+		// First check data-width (from XTS), then CSS width, then the
+		// plain HTML width attribute (where a bare number means pixels)
 		if wd, ok := item.Attributes["data-width"]; ok {
 			newte.Settings[frontend.SettingColumnWidth] = wd
 		} else if wd, ok := item.Styles["width"]; ok {
+			newte.Settings[frontend.SettingColumnWidth] = wd
+		} else if wd, ok := item.Attributes["width"]; ok {
+			if _, err := strconv.ParseFloat(wd, 64); err == nil {
+				wd += "px"
+			}
 			newte.Settings[frontend.SettingColumnWidth] = wd
 		}
 	// case "table":

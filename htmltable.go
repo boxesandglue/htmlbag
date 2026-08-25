@@ -15,7 +15,7 @@ import (
 // Supports:
 //   - fixed widths: "3cm", "50mm", "2in", "100pt"
 //   - flexible widths: "*" (1 share), "2*" (2 shares), "3*" (3 shares)
-func parseColumnWidth(width string) *node.Glue {
+func parseColumnWidth(width string, tableWidth bag.ScaledPoint) *node.Glue {
 	g := node.NewGlue()
 	width = strings.TrimSpace(width)
 
@@ -40,10 +40,22 @@ func parseColumnWidth(width string) *node.Glue {
 		return g
 	}
 
-	// Fixed width
-	if sp, err := bag.SP(width); err == nil {
+	// Percentage of the table width
+	if p, ok := strings.CutSuffix(width, "%"); ok {
+		if f, err := strconv.ParseFloat(p, 64); err == nil {
+			g.Width = bag.MultiplyFloat(tableWidth, f/100)
+			return g
+		}
+	} else if sp, err := bag.SP(width); err == nil {
+		// Fixed width
 		g.Width = sp
+		return g
 	}
+
+	// Unparsable width: fall back to auto. A rigid zero-width glue would
+	// collapse the column entirely.
+	g.Stretch = bag.Factor
+	g.StretchOrder = 1
 	return g
 }
 
@@ -51,9 +63,15 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	tbl := &frontend.Table{}
 	tbl.MaxWidth = wd
 	if sWd, ok := te.Settings[frontend.SettingWidth]; ok {
-		if wdStr, ok := sWd.(string); ok && strings.HasSuffix(wdStr, "%") {
-			tbl.MaxWidth = ParseRelativeSize(wdStr, wd, wd)
-			tbl.Stretch = true
+		if wdStr, ok := sWd.(string); ok {
+			if strings.HasSuffix(wdStr, "%") {
+				tbl.MaxWidth = ParseRelativeSize(wdStr, wd, wd)
+				tbl.Stretch = true
+			} else if w, err := bag.SP(wdStr); err == nil {
+				// Fixed length: the table gets exactly this width
+				tbl.MaxWidth = w
+				tbl.Stretch = true
+			}
 		}
 	}
 
@@ -269,10 +287,23 @@ func (cb *CSSBuilder) buildColgroup(te *frontend.Text, tbl *frontend.Table) {
 					width = w
 				}
 				colSpec := frontend.ColSpec{
-					ColumnWidth: parseColumnWidth(width),
+					ColumnWidth: parseColumnWidth(width, tbl.MaxWidth),
 				}
 				tbl.ColSpec = append(tbl.ColSpec, colSpec)
 			}
+		}
+	}
+	// Over-constrained columns (fixed widths adding up to more than the
+	// table width, e.g. 60% + 80%) scale down proportionally, like
+	// specified cell widths do.
+	sum := bag.ScaledPoint(0)
+	for _, cs := range tbl.ColSpec {
+		sum += cs.ColumnWidth.Width
+	}
+	if sum > tbl.MaxWidth && sum > 0 {
+		r := tbl.MaxWidth.ToPT() / sum.ToPT()
+		for _, cs := range tbl.ColSpec {
+			cs.ColumnWidth.Width = bag.ScaledPointFromFloat(cs.ColumnWidth.Width.ToPT() * r)
 		}
 	}
 }
