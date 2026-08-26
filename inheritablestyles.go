@@ -1677,6 +1677,27 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		return newte, nil
 	}
 
+	// Generated content on the block element itself (issue #4): CSS
+	// Pseudo 4 renders ::before as the element's first inline content
+	// and ::after as its last. ::before is evaluated here, after the
+	// ss.applyCounters() call above, so `h1::before { content:
+	// counter(chapter) ". " }` sees the heading's own increment;
+	// ::after is evaluated below the children loop so it sees counter
+	// changes made by descendants. The pending run attaches to the
+	// first inline run of the element (sharing its line box) or becomes
+	// an anonymous run when the first flow child is block-level.
+	var beforeRun *frontend.Text
+	if !generatedContentExempt(item.Data) {
+		if beforeContent, ok := item.Styles["before::content"]; ok && beforeContent != "" {
+			beforeRun = frontend.NewText()
+			ApplySettings(beforeRun.Settings, blockStyles)
+			appendGeneratedContent(cb, beforeRun, beforeContent, blockStyles, item, ss, anchorPages)
+			if len(beforeRun.Items) == 0 {
+				beforeRun = nil
+			}
+		}
+	}
+
 	for _, itm := range item.Children {
 		if itm.Dir == ModeHorizontal {
 			// Strip leading whitespace from text nodes that immediately
@@ -1706,6 +1727,12 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			if te == nil {
 				te = frontend.NewText()
 				styles = ss.PushStyles()
+				// A pending block-level ::before joins the first inline
+				// run so the generated text shares its line box.
+				if beforeRun != nil {
+					te.Items = append(te.Items, beforeRun.Items...)
+					beforeRun = nil
+				}
 			}
 			ApplySettings(te.Settings, styles)
 			if isFootnoteElement(itm) {
@@ -1755,6 +1782,14 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				newte.Items = append(newte.Items, te)
 				newte.Settings[frontend.SettingBox] = true
 				te = nil
+			}
+			// The first flow child is block-level: the pending ::before
+			// cannot join an inline run, it becomes an anonymous run
+			// preceding this child (CSS 2.1 §9.2.1.1 anonymous block).
+			if beforeRun != nil {
+				newte.Items = append(newte.Items, beforeRun)
+				newte.Settings[frontend.SettingBox] = true
+				beforeRun = nil
 			}
 			// Block-level float: build the body via a recursive Output()
 			// call (treats float children as block-level), and append a
@@ -1817,6 +1852,39 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		ulte.Settings[frontend.SettingDebug] = item.Data
 		ulte.Settings[frontend.SettingBox] = true
 	}
+	// ::after joins the still-open trailing inline run; when none is
+	// open (the last child was block-level or the element is empty) it
+	// forms an anonymous final run. A ::before still pending here means
+	// the element had no children at all — both pseudos then share one
+	// run so they render on a single line.
+	if !generatedContentExempt(item.Data) {
+		if afterContent, ok := item.Styles["after::content"]; ok && afterContent != "" {
+			run := te
+			if run == nil {
+				if beforeRun != nil {
+					run = beforeRun
+				} else {
+					run = frontend.NewText()
+					ApplySettings(run.Settings, blockStyles)
+				}
+			}
+			appendGeneratedContent(cb, run, afterContent, blockStyles, item, ss, anchorPages)
+			if run != te && run != beforeRun && len(run.Items) > 0 {
+				if len(newte.Items) > 0 {
+					newte.Settings[frontend.SettingBox] = true
+				}
+				newte.Items = append(newte.Items, run)
+			}
+		}
+	}
+	// A ::before that never found flow content to attach to (element
+	// without children) still renders on its own.
+	if beforeRun != nil {
+		if len(newte.Items) > 0 {
+			newte.Settings[frontend.SettingBox] = true
+		}
+		newte.Items = append(newte.Items, beforeRun)
+	}
 	if te != nil {
 		// A trailing inline run that follows block-level sibling(s) needs an
 		// anonymous block box around it, otherwise the container is left
@@ -1858,6 +1926,60 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	return newte, nil
 }
 
+// generatedContentExempt reports whether ::before/::after generated
+// content must not be injected as inline runs on this element: <li>
+// feeds ::before into the marker path, and table-structural elements'
+// Items are walked by buildTable, which expects only element sub-Texts
+// (a generated run would be silently skipped there).
+func generatedContentExempt(name string) bool {
+	switch name {
+	case "li", "table", "thead", "tbody", "tfoot", "tr", "colgroup", "col":
+		return true
+	}
+	return false
+}
+
+// appendGeneratedContent renders a CSS content value (from ::before or
+// ::after) into te.Items as one or more sub-Texts: strings accumulate,
+// ContentLeader emits its own SettingLeader sub-Text so Mknodes can
+// build the fil³ glue. sty must be the pseudo-element's resolved style;
+// generated content inherits from its originating element. The styles
+// stack is only read (counter()/counters() walk it), nothing is pushed.
+func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue string, sty *FormattingStyles, item *HTMLItem, ss StylesStack, anchorPages map[string]int) {
+	tokens := csshtml.ParseContentValue(contentValue)
+	if len(tokens) == 0 {
+		return
+	}
+	attrLookup := func(name string) string {
+		return item.Attributes[name]
+	}
+	flushString := func(s string) {
+		if s == "" {
+			return
+		}
+		txt := frontend.NewText()
+		ApplySettings(txt.Settings, sty)
+		txt.Items = append(txt.Items, s)
+		te.Items = append(te.Items, txt)
+	}
+	var buf strings.Builder
+	single := make([]csshtml.ContentToken, 1)
+	for _, tok := range tokens {
+		if tok.Type == csshtml.ContentLeader {
+			flushString(buf.String())
+			buf.Reset()
+			leaderTxt := frontend.NewText()
+			ApplySettings(leaderTxt.Settings, sty)
+			leaderTxt.Settings[frontend.SettingLeader] = tok.Value
+			te.Items = append(te.Items, leaderTxt)
+			continue
+		}
+		single[0] = tok
+		buf.WriteString(evaluateContentWithStack(single, ss, anchorPages, cb.anchorTexts, cb.anchorCounters, attrLookup))
+	}
+	flushString(buf.String())
+}
+
 func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, ss StylesStack, currentFontsize bag.ScaledPoint, defaultFontsize bag.ScaledPoint, df *frontend.Document, anchorPages map[string]int) error {
 	switch item.Typ {
 	case html.TextNode:
@@ -1894,53 +2016,19 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			cb.anchorCount++
 		}
 
-		// emitGeneratedContent renders a CSS content value (from
-		// ::before or ::after) into te.Items as one or more sub-Texts:
-		// strings accumulate, ContentLeader emits its own SettingLeader
-		// sub-Text so Mknodes can build the fil³ glue. Used for both
-		// pseudo elements; <li>::before goes through its own marker
-		// path elsewhere.
+		// emitGeneratedContent resolves the pseudo-element's inherited
+		// style (a fresh frame carrying the element's own styles) and
+		// renders the content value via appendGeneratedContent. Used
+		// for both pseudo elements; <li>::before goes through its own
+		// marker path elsewhere.
 		emitGeneratedContent := func(contentValue string) error {
-			tokens := csshtml.ParseContentValue(contentValue)
-			if len(tokens) == 0 {
-				return nil
-			}
-			attrLookup := func(name string) string {
-				return item.Attributes[name]
-			}
 			sty := ss.PushStyles()
 			if err := StylesToStyles(sty, item.Styles, df, currentFontsize); err != nil {
 				ss.PopStyles()
 				return err
 			}
 			applyLangAndHyphens(sty, item.Attributes, df)
-
-			flushString := func(s string) {
-				if s == "" {
-					return
-				}
-				txt := frontend.NewText()
-				ApplySettings(txt.Settings, sty)
-				txt.Items = append(txt.Items, s)
-				te.Items = append(te.Items, txt)
-			}
-
-			var buf strings.Builder
-			single := make([]csshtml.ContentToken, 1)
-			for _, tok := range tokens {
-				if tok.Type == csshtml.ContentLeader {
-					flushString(buf.String())
-					buf.Reset()
-					leaderTxt := frontend.NewText()
-					ApplySettings(leaderTxt.Settings, sty)
-					leaderTxt.Settings[frontend.SettingLeader] = tok.Value
-					te.Items = append(te.Items, leaderTxt)
-					continue
-				}
-				single[0] = tok
-				buf.WriteString(evaluateContentWithStack(single, ss, anchorPages, cb.anchorTexts, cb.anchorCounters, attrLookup))
-			}
-			flushString(buf.String())
+			appendGeneratedContent(cb, te, contentValue, sty, item, ss, anchorPages)
 			ss.PopStyles()
 			return nil
 		}
