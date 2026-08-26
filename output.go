@@ -99,11 +99,11 @@ func resolveTargetID(tok csshtml.ContentToken, attrLookup func(string) string) s
 // evaluateContentWithStack turns parsed CSS content tokens into a string,
 // resolving counter() and counters() against the supplied StylesStack so
 // nested counters along the ancestor chain (e.g. "2.1.1") work. The
-// optional anchorPages and anchorTexts (from the previous render pass)
-// plus attrLookup (current element's attribute resolver) feed
-// target-counter() / target-text() and friends; pass nil for any of
-// them when not in element scope.
-func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anchorPages map[string]int, anchorTexts map[string]string, attrLookup func(string) string) string {
+// optional anchorPages, anchorTexts and anchorCounters (all from the
+// previous render pass) plus attrLookup (current element's attribute
+// resolver) feed target-counter() / target-text() and friends; pass nil
+// for any of them when not in element scope.
+func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anchorPages map[string]int, anchorTexts map[string]string, anchorCounters map[string]map[string][]int, attrLookup func(string) string) string {
 	var sb strings.Builder
 	for _, tok := range tokens {
 		switch tok.Type {
@@ -120,21 +120,39 @@ func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anc
 				sb.WriteString(strconv.Itoa(v))
 			}
 		case csshtml.ContentTargetCounter:
-			// v1: only "page" is supported. Other counters fall through to
-			// "?" because they would need per-anchor counter snapshots,
-			// which we don't collect yet.
-			if tok.Value == "page" {
-				if id := resolveTargetID(tok, attrLookup); id != "" {
+			// The "page" counter comes from anchorPages (assigned at
+			// shipout); every other counter from the per-anchor snapshot
+			// taken during the walk. Both resolve on pass 2+ via the aux
+			// roundtrip and render "?" until then.
+			if id := resolveTargetID(tok, attrLookup); id != "" {
+				if tok.Value == "page" {
 					if p, ok := anchorPages[id]; ok && p > 0 {
 						sb.WriteString(strconv.Itoa(p))
 						break
 					}
+				} else if chain, ok := anchorCounters[id][tok.Value]; ok && len(chain) > 0 {
+					// target-counter() wants the innermost value: the
+					// last element of the root-first chain.
+					sb.WriteString(strconv.Itoa(chain[len(chain)-1]))
+					break
 				}
 			}
 			sb.WriteString("?")
 		case csshtml.ContentTargetCounters:
-			// v1: not implemented (would need the counter stack at the
-			// anchor's position, not just the page number).
+			// Like ContentCounters, but against the anchor's snapshotted
+			// chain instead of the live stack. "page" has no chain (it is
+			// not a stack counter) and stays "?".
+			if id := resolveTargetID(tok, attrLookup); id != "" {
+				if chain, ok := anchorCounters[id][tok.Value]; ok && len(chain) > 0 {
+					for i, v := range chain {
+						if i > 0 {
+							sb.WriteString(tok.Separator)
+						}
+						sb.WriteString(strconv.Itoa(v))
+					}
+					break
+				}
+			}
 			sb.WriteString("?")
 		case csshtml.ContentTargetText:
 			// v1 covers the default `content` (the anchor's text). The

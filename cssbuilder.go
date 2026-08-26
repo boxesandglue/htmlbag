@@ -62,6 +62,13 @@ type AnchorEntry struct {
 	ID   string
 	Text string
 	Page int // 1-based page number, 0 until assigned
+	// Counters holds the CSS counter state at the anchor, keyed by
+	// counter name. Each value is the root-first chain of nested
+	// counter values (cf. StylesStack.CounterValues): the last element
+	// feeds target-counter(), the whole chain target-counters(). The
+	// "page" counter is not part of this map; it lives in Page because
+	// its value is only known at shipout.
+	Counters map[string][]int
 }
 
 // anchorTextCap is the character budget for AnchorEntry.Text. Block
@@ -134,6 +141,16 @@ type CSSBuilder struct {
 	// render pass (CSS target-text()). Same lifecycle as anchorPages:
 	// nil on first pass, populated via SetAnchorTexts before render.
 	anchorTexts map[string]string
+	// anchorCounters maps anchor id → counter snapshot from the
+	// *previous* render pass (CSS target-counter() / target-counters()
+	// with counters other than "page"). Same lifecycle as anchorPages.
+	anchorCounters map[string]map[string][]int
+	// anchorSnapshots carries counter snapshots for block-level anchors
+	// within the *current* pass, from the HTML walk (where the styles
+	// stack with its counters is live) to the VList builder (which runs
+	// after formatting, when the stack is gone, and creates the
+	// AnchorEntry). Keyed by element id; ids are document-unique.
+	anchorSnapshots map[string]map[string][]int
 	// PendingVLists stores pre-rendered VLists keyed by a unique ID.
 	// Used to pass already-rendered content (e.g. group contents) through
 	// the HTML/CSS pipeline into table cells.
@@ -332,6 +349,28 @@ func (cb *CSSBuilder) SetAnchorPages(m map[string]int) {
 // target-text() references. Pass nil to clear.
 func (cb *CSSBuilder) SetAnchorTexts(m map[string]string) {
 	cb.anchorTexts = m
+}
+
+// SetAnchorCounters installs the id → counter snapshot map collected on
+// the previous render pass. The CSS evaluator reads this when resolving
+// target-counter() / target-counters() references to counters other
+// than "page". Pass nil to clear.
+func (cb *CSSBuilder) SetAnchorCounters(m map[string]map[string][]int) {
+	cb.anchorCounters = m
+}
+
+// recordAnchorSnapshot stores the current counter state for a block
+// element carrying an id. Called during the HTML walk (Output), read
+// back by the VList builder when it turns the id into an AnchorEntry.
+func (cb *CSSBuilder) recordAnchorSnapshot(id string, ss StylesStack) {
+	snap := ss.CounterSnapshot()
+	if snap == nil {
+		return
+	}
+	if cb.anchorSnapshots == nil {
+		cb.anchorSnapshots = map[string]map[string][]int{}
+	}
+	cb.anchorSnapshots[id] = snap
 }
 
 func (cb *CSSBuilder) getPageType() *csshtml.Page {

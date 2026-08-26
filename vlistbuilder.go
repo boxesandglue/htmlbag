@@ -446,6 +446,11 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					cb.Anchors = append(cb.Anchors, AnchorEntry{
 						ID:   dest,
 						Text: truncateAnchorText(extractTextContent(t)),
+						// Snapshotted during the HTML walk (Output); the
+						// styles stack with the counter state no longer
+						// exists at this point. Nil-map lookup yields nil
+						// for ids without counters in scope.
+						Counters: cb.anchorSnapshots[dest],
 					})
 					cb.anchorCount++
 				}

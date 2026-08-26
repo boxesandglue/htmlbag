@@ -1184,6 +1184,25 @@ func (ss StylesStack) CounterValues(name string) []int {
 	return out
 }
 
+// CounterSnapshot captures every counter visible on the stack as
+// root-first value chains keyed by counter name, in the shape
+// AnchorEntry.Counters expects. Taken at anchor-registration time
+// because the stack (and with it the counter state) is torn down long
+// before target-counter() references to the anchor are resolved.
+// Returns nil when no counters are in scope.
+func (ss StylesStack) CounterSnapshot() map[string][]int {
+	var out map[string][]int
+	for i := 0; i < len(ss); i++ {
+		for name, v := range ss[i].LocalCounters {
+			if out == nil {
+				out = map[string][]int{}
+			}
+			out[name] = append(out[name], v)
+		}
+	}
+	return out
+}
+
 // PushStyles creates a new style instance, pushes it onto the stack and returns
 // the new style.
 func (ss *StylesStack) PushStyles() *FormattingStyles {
@@ -1350,8 +1369,15 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		}
 	}
 	// Any element with an id attribute creates a named PDF destination.
+	// The counter snapshot for target-counter()/target-counters() must
+	// be taken here, right after ss.applyCounters() above: the VList
+	// builder that later registers the AnchorEntry runs when the styles
+	// stack is long gone.
 	if id, ok := item.Attributes["id"]; ok {
 		newte.Settings[frontend.SettingDest] = id
+		if id != "" {
+			cb.recordAnchorSnapshot(id, ss)
+		}
 	}
 	switch item.Data {
 	case "html":
@@ -1444,7 +1470,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			attrLookup := func(name string) string {
 				return item.Attributes[name]
 			}
-			return evaluateContentWithStack(tokens, ss, anchorPages, cb.anchorTexts, attrLookup)
+			return evaluateContentWithStack(tokens, ss, anchorPages, cb.anchorTexts, cb.anchorCounters, attrLookup)
 		}
 		if markerContent, ok := item.Styles["marker::content"]; ok {
 			marker = resolveContent(markerContent)
@@ -1855,9 +1881,14 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 		// code path), so this only sees actually-inline elements.
 		if id, ok := item.Attributes["id"]; ok && id != "" {
 			childSettings[frontend.SettingDest] = id
+			// The counter snapshot reflects the enclosing blocks:
+			// counter-reset/-increment are block-level operations
+			// (applyCounters runs in Output), inline elements never
+			// modify counters themselves.
 			cb.Anchors = append(cb.Anchors, AnchorEntry{
-				ID:   id,
-				Text: truncateAnchorText(extractTextFromHTMLItem(item)),
+				ID:       id,
+				Text:     truncateAnchorText(extractTextFromHTMLItem(item)),
+				Counters: ss.CounterSnapshot(),
 			})
 			te.Items = append(te.Items, anchorMarker{Idx: cb.anchorCount})
 			cb.anchorCount++
@@ -1907,7 +1938,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					continue
 				}
 				single[0] = tok
-				buf.WriteString(evaluateContentWithStack(single, ss, anchorPages, cb.anchorTexts, attrLookup))
+				buf.WriteString(evaluateContentWithStack(single, ss, anchorPages, cb.anchorTexts, cb.anchorCounters, attrLookup))
 			}
 			flushString(buf.String())
 			ss.PopStyles()

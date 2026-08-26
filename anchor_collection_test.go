@@ -192,6 +192,87 @@ func TestAnchorCollection_InlineALink(t *testing.T) {
 	}
 }
 
+// TestAnchorCollection_CounterSnapshotBlock: a block anchor records the
+// counter state at its position, including a counter-increment on the
+// anchor element itself (applyCounters runs before the id is recorded).
+func TestAnchorCollection_CounterSnapshotBlock(t *testing.T) {
+	html := `<!DOCTYPE html><html><head><style>
+		body { counter-reset: chapter; }
+		h1 { counter-increment: chapter; }
+	</style></head><body>
+		<h1 id="one">First</h1>
+		<p>body</p>
+		<h1 id="two">Second</h1>
+	</body></html>`
+	cb := renderForAnchors(t, html)
+	got := map[string][]int{}
+	for _, a := range cb.Anchors {
+		got[a.ID] = a.Counters["chapter"]
+	}
+	if len(got["one"]) != 1 || got["one"][0] != 1 {
+		t.Errorf("anchor one: chapter chain = %v, want [1]", got["one"])
+	}
+	if len(got["two"]) != 1 || got["two"][0] != 2 {
+		t.Errorf("anchor two: chapter chain = %v, want [2]", got["two"])
+	}
+}
+
+// TestAnchorCollection_CounterSnapshotNestedChain: the same counter
+// name reset at two nesting levels yields a root-first chain — the
+// data target-counters() joins with its separator.
+func TestAnchorCollection_CounterSnapshotNestedChain(t *testing.T) {
+	html := `<!DOCTYPE html><html><head><style>
+		body { counter-reset: chap; }
+		div.chapter { counter-increment: chap; }
+		div.sub { counter-reset: chap; }
+		div.sub p { counter-increment: chap; }
+	</style></head><body>
+		<div class="chapter">
+			<div class="sub">
+				<p id="deep">nested target</p>
+			</div>
+		</div>
+	</body></html>`
+	cb := renderForAnchors(t, html)
+	var found *AnchorEntry
+	for i := range cb.Anchors {
+		if cb.Anchors[i].ID == "deep" {
+			found = &cb.Anchors[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("Anchor id=deep not found in %#v", cb.Anchors)
+	}
+	if chain := found.Counters["chap"]; len(chain) != 2 || chain[0] != 1 || chain[1] != 1 {
+		t.Errorf("chap chain = %v, want [1 1]", chain)
+	}
+}
+
+// TestAnchorCollection_CounterSnapshotInline: inline anchors snapshot
+// the counters of their enclosing blocks (inline elements never modify
+// counters themselves).
+func TestAnchorCollection_CounterSnapshotInline(t *testing.T) {
+	html := `<!DOCTYPE html><html><head><style>
+		p { counter-increment: para; }
+	</style></head><body>
+		<p>first</p>
+		<p>second <span id="mark">target</span></p>
+	</body></html>`
+	cb := renderForAnchors(t, html)
+	var found *AnchorEntry
+	for i := range cb.Anchors {
+		if cb.Anchors[i].ID == "mark" {
+			found = &cb.Anchors[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("Anchor id=mark not found in %#v", cb.Anchors)
+	}
+	if chain := found.Counters["para"]; len(chain) != 1 || chain[0] != 2 {
+		t.Errorf("para chain = %v, want [2]", chain)
+	}
+}
+
 // TestSetAnchorPages just covers the public setter contract. The
 // anchorPages map gets read by the evaluator (Phase 4), but the setter
 // itself is part of Phase 2's API surface and must accept nil cleanly.
