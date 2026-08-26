@@ -42,6 +42,17 @@ func isWhitespaceOnly(te *frontend.Text) bool {
 func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) (*node.VList, error) {
 	settings := te.Settings
 
+	// Capture-and-strip the settingLangTag sentinel (an explicit lang=
+	// switch on this element) before any formatting: frontend's strict
+	// settings switch rejects unknown types. The PDF/UA tagging blocks
+	// below stamp it as /Lang on the element's structure element. The
+	// deferred restore keeps table measurement re-formatting idempotent.
+	langTag, hasLangTag := settings[settingLangTag].(string)
+	if hasLangTag {
+		delete(settings, settingLangTag)
+		defer func() { settings[settingLangTag] = langTag }()
+	}
+
 	// If a CSS width is specified, use it instead of the inherited width.
 	if sWd, ok := settings[frontend.SettingWidth]; ok {
 		if wdStr, ok := sWd.(string); ok {
@@ -110,6 +121,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			if tag, ok := settings[frontend.SettingDebug].(string); ok {
 				if canonical := canonicalRoleForTag(tag); canonical != "" {
 					containerSE = newSE(canonical, cb.frontend.Doc.Format)
+					// lang= switch on the container (e.g. a fenced div
+					// with lang=en in a German document) → /Lang; the
+					// structure tree inherits it to all children.
+					containerSE.Lang = langTag
 					cb.structureCurrent.AddChild(containerSE)
 					savedStructureCurrent = cb.structureCurrent
 					cb.structureCurrent = containerSE
@@ -807,6 +822,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			if canonical != "" {
 				format := cb.frontend.Doc.Format
 				se := newSE(canonical, format)
+				// lang= switch declared on this block element → /Lang.
+				se.Lang = langTag
 				// A block that contains an inline <math> gets a Formula child
 				// (linked below). In that case we must NOT stamp ActualText on
 				// the block: ActualText replaces the element's entire content

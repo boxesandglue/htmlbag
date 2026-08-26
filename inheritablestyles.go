@@ -61,6 +61,14 @@ const settingBookmark frontend.SettingType = -2
 // something a typesetting engine should do by default).
 const settingCSSHeight frontend.SettingType = -3
 
+// settingLangTag is an htmlbag-private frontend.SettingType sentinel
+// carrying a language tag the element itself declared via lang= /
+// xml:lang= when that tag differs from the inherited language. The
+// PDF/UA tagging paths read it and stamp /Lang on the element's
+// structure element; descendants inherit /Lang through the structure
+// tree (PDF 1.7 §14.9.2), so only actual switches are stamped.
+const settingLangTag frontend.SettingType = -4
+
 // isCSSHeightExempt reports whether an element's CSS height is the business
 // of a dedicated layout path (table layout, replaced elements) rather than
 // the settingCSSHeight flow-space mechanism.
@@ -727,6 +735,7 @@ type FormattingStyles struct {
 	indentRows         int
 	language           string     // BCP47 tag (e.g. "en", "ar", "de-DE")
 	langPattern        *lang.Lang // resolved hyphenator for {language, hyphens}; nil = use parent / doc default
+	declaredLang       string     // lang= the element itself declared, only when it differs from the inherited language; NOT inherited (Clone drops it), feeds /Lang on the element's StructElem
 	letterSpacing      bag.ScaledPoint
 	lineheight         bag.ScaledPoint
 	lineheightFactor   float64 // unitless line-height factor (e.g. 1.2); recalculated per element
@@ -885,10 +894,27 @@ const noHyphenationKey = "x-htmlbag-nohyphenation"
 // a fallback only when lang is missing. dir= is mapped to CSS direction with
 // UA-stylesheet priority — author CSS direction:… wins (HTML §3.2.6.2).
 func applyLangAndHyphens(ih *FormattingStyles, attrs map[string]string, df *frontend.Document) {
+	// ih is freshly cloned from the parent style, so ih.language still
+	// holds the inherited language here; an empty value means the
+	// document default applies.
+	inherited := ih.language
+	if inherited == "" {
+		inherited = df.Doc.DefaultLanguageTag
+	}
+	declared := ""
 	if v, ok := attrs["lang"]; ok {
 		ih.language = strings.TrimSpace(v)
+		declared = ih.language
 	} else if v, ok := attrs["xml:lang"]; ok {
 		ih.language = strings.TrimSpace(v)
+		declared = ih.language
+	}
+	// Record an explicit language switch for the PDF/UA tagging paths
+	// (BCP47 tags compare case-insensitively). declaredLang is per
+	// element and intentionally not inherited (Clone drops it).
+	ih.declaredLang = ""
+	if declared != "" && !strings.EqualFold(declared, inherited) {
+		ih.declaredLang = declared
 	}
 	// HTML dir= attribute (HTML §3.2.6.2). Equivalent to a UA-stylesheet
 	// rule [dir=rtl] { direction: rtl; }, so author-CSS direction wins —
@@ -1290,6 +1316,14 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	ss.applyCounters()
 	ApplySettings(newte.Settings, styles)
 	newte.Settings[frontend.SettingDebug] = item.Data
+	// An explicit language switch on this block element (lang= differing
+	// from the inherited language) rides along as a private sentinel so
+	// the PDF/UA tagging in buildVlistInternal can stamp /Lang on the
+	// element's structure element. Block-level only: inline runs have no
+	// structure elements of their own (yet).
+	if styles.declaredLang != "" {
+		newte.Settings[settingLangTag] = styles.declaredLang
+	}
 	// Remember the element's own resolved CSS height: `styles` is
 	// reassigned when an inline run starts below, but the empty-block
 	// check at the end of this function needs the element's value.

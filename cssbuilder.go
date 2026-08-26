@@ -1833,6 +1833,8 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		delete(splitTe.Settings, settingCSSHeight)
 		bm, hasBM := splitTe.Settings[settingBookmark]
 		delete(splitTe.Settings, settingBookmark)
+		lt, hasLT := splitTe.Settings[settingLangTag]
+		delete(splitTe.Settings, settingLangTag)
 		tailVL, err := cb.frontend.FormatParagraphTail(splitTe, steps, newTeWidth)
 		if hasPBI {
 			splitTe.Settings[settingPageBreakInside] = pbi
@@ -1842,6 +1844,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		}
 		if hasBM {
 			splitTe.Settings[settingBookmark] = bm
+		}
+		if hasLT {
+			splitTe.Settings[settingLangTag] = lt
 		}
 		if err != nil || tailVL == nil {
 			slog.Debug("width reflow of splittable block failed, keeping built width", "error", err)

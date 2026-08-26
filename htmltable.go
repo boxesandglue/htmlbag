@@ -60,6 +60,15 @@ func parseColumnWidth(width string, tableWidth bag.ScaledPoint) *node.Glue {
 }
 
 func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.VList, error) {
+	// Capture-and-strip the settingLangTag sentinel (lang= switch on the
+	// <table> element) before any cell formatting; frontend's strict
+	// settings switch rejects unknown types. Restored on exit so a
+	// width-change rebuild sees the same input again.
+	langTag, hasLangTag := te.Settings[settingLangTag].(string)
+	if hasLangTag {
+		delete(te.Settings, settingLangTag)
+		defer func() { te.Settings[settingLangTag] = langTag }()
+	}
 	tbl := &frontend.Table{}
 	tbl.MaxWidth = wd
 	if sWd, ok := te.Settings[frontend.SettingWidth]; ok {
@@ -258,7 +267,7 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	// Repeated headers on continuation pages are left untagged
 	// (the backend will wrap them as artifacts in PDF/UA mode).
 	if cb.enableTagging {
-		cb.tagTable(vl, tbl)
+		cb.tagTable(vl, tbl, langTag)
 	}
 
 	// Source Text and its formatting width: lets outputTableRows rebuild
@@ -324,6 +333,11 @@ func (cb *CSSBuilder) buildTBody(te *frontend.Text, tbl *frontend.Table) {
 }
 
 func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
+	// Drop the settingLangTag sentinel: frontend's table layout copies
+	// row/cell settings onto text items whose strict settings switch
+	// rejects unknown types. Per-row /Lang tagging is not implemented,
+	// so the value has no consumer here.
+	delete(te.Settings, settingLangTag)
 	tr := &frontend.TableRow{}
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
@@ -343,6 +357,8 @@ func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
 // buildTD converts a <td>/<th> Text into a TableCell. tableWidth is the
 // table's maximum width and resolves a percentage `width` on the cell.
 func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeader bool, tableWidth bag.ScaledPoint) {
+	// See buildTR: the sentinel must not reach frontend's settings switch.
+	delete(te.Settings, settingLangTag)
 	td := &frontend.TableCell{}
 	td.IsHeader = isHeader
 
@@ -532,10 +548,14 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 	row.Cells = append(row.Cells, td)
 }
 
-// tagTable walks the table VList and creates Table/TR/TH/TD structure elements.
-func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table) {
+// tagTable walks the table VList and creates Table/TR/TH/TD structure
+// elements. langTag is a language switch declared on the <table> element
+// itself (empty if none); it becomes /Lang on the Table element and is
+// inherited by the whole subtree.
+func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table, langTag string) {
 	format := cb.frontend.Doc.Format
 	tableSE := newSE("Table", format)
+	tableSE.Lang = langTag
 	cb.structureCurrent.AddChild(tableSE)
 
 	// Create THead/TBody/TFoot grouping SEs. PDF/UA-1 §7.5 maps these
