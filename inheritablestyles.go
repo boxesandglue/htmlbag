@@ -926,6 +926,28 @@ func applyLangAndHyphens(ih *FormattingStyles, attrs map[string]string, df *fron
 	}
 }
 
+// hasVisibleDecoration reports whether a block with no content still
+// paints something on its own: a border edge with non-zero width or a
+// background color.
+func hasVisibleDecoration(settings frontend.TypesettingSettings) bool {
+	for _, k := range []frontend.SettingType{
+		frontend.SettingBorderTopWidth,
+		frontend.SettingBorderBottomWidth,
+		frontend.SettingBorderLeftWidth,
+		frontend.SettingBorderRightWidth,
+	} {
+		if wd, ok := settings[k].(bag.ScaledPoint); ok && wd > 0 {
+			return true
+		}
+	}
+	if bg, ok := settings[frontend.SettingBackgroundColor]; ok && bg != nil {
+		if col, ok := bg.(*color.Color); ok && col != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // ApplySettings converts the inheritable settings to boxes and glue text
 // settings.
 func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) {
@@ -1715,9 +1737,12 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				return nil, err
 			}
 			// Always include td/th/col elements even if empty (for table
-			// structure), and empty blocks that carry an explicit CSS
-			// height (visible swatches / spacers, settingCSSHeight).
-			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" || te.Settings[settingCSSHeight] != nil {
+			// structure), empty blocks that carry an explicit CSS
+			// height (visible swatches / spacers, settingCSSHeight),
+			// and empty blocks that still paint something through a
+			// border or background (<hr> is a zero-content element
+			// whose whole rendering is its border).
+			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" || te.Settings[settingCSSHeight] != nil || hasVisibleDecoration(te.Settings) {
 				newte.Items = append(newte.Items, te)
 			}
 		}
@@ -1778,6 +1803,13 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 	case html.TextNode:
 		te.Items = append(te.Items, item.Data)
 	case html.ElementNode:
+		// display:none removes the element and its subtree entirely,
+		// mirroring the styles.Hide check in the block path. Checked
+		// before anchor collection: a hidden element must not become
+		// a target-counter anchor either.
+		if item.Styles["display"] == "none" {
+			return nil
+		}
 		childSettings := make(frontend.TypesettingSettings, 8)
 
 		// Inline element with id="..." → record as anchor target for
