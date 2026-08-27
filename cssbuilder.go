@@ -2307,12 +2307,33 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		// for rows taller than a full page.
 		pageContent := pd.ContentHeight
 		effectiveLimit := *yLimit + footerHeight
+		// fitH is what must still fit on this page for row i to be placed
+		// here. For the very first row of a table with headers that is the
+		// whole header block plus the first data row: headers that fit while
+		// the first data row does not would sit orphaned at the bottom of
+		// the page, with the data starting on the next page under a repeated
+		// header. The empty-page guard mirrors avoidForcesBreak — when even
+		// a fresh page cannot hold the group, breaking cannot help.
+		fitH := h
+		if i == 0 && headerCount > 0 && dataEnd > headerCount {
+			groupH := bag.ScaledPoint(0)
+			for j := 0; j <= headerCount; j++ {
+				groupH += vlistNodeHeight(rows[j])
+			}
+			if groupH+footerHeight <= pageContent {
+				fitH = groupH
+			}
+		}
 		avoidForcesBreak := avoidBreakInside(row) && *y-h < effectiveLimit && !*pageHasContent && h+footerHeight <= pageContent
-		if (*y-h < effectiveLimit && *pageHasContent) || avoidForcesBreak {
+		if (*y-fitH < effectiveLimit && *pageHasContent) || avoidForcesBreak {
 			// Place footer at the bottom of the current page before
-			// breaking so it appears on every spanned page.
-			if err := placeFooters(); err != nil {
-				return err
+			// breaking so it appears on every spanned page. At i == 0 no
+			// row of this table is on the page yet, so there is nothing
+			// for a footer to close off.
+			if i > 0 {
+				if err := placeFooters(); err != nil {
+					return err
+				}
 			}
 			if err := cb.NewPage(); err != nil {
 				return err
