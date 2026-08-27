@@ -2157,10 +2157,14 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			continue
 		}
 
-		// Widow protection: the next page must carry at least splitMinLines HLists;
-		// otherwise pull items back from this batch until it does, while
-		// leaving at least splitMinLines in the current batch (don't trade a
-		// widow for an orphan).
+		// Widow protection: the next page must carry at least splitMinLines
+		// content children; otherwise pull items back from this batch until
+		// it does, while leaving at least splitMinLines in the current batch
+		// (don't trade a widow for an orphan). A pulled-back VList counts
+		// like an HList — the same HList/VList duality as in countHL: only
+		// counting HLists never advances remainingLines for a box container
+		// (a <ul> whose children are <li> VLists), so the loop would drain
+		// the batch down to the orphan minimum and leave the page half empty.
 		if i < len(children) {
 			remainingLines := countHL(children[i:])
 			for remainingLines < splitMinLines && countHL(batch) > splitMinLines {
@@ -2168,7 +2172,8 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 				batchH -= vlistNodeHeight(last)
 				batch = batch[:len(batch)-1]
 				i--
-				if _, ok := last.(*node.HList); ok {
+				switch last.(type) {
+				case *node.HList, *node.VList:
 					remainingLines++
 				}
 			}
