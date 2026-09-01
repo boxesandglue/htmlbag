@@ -549,11 +549,36 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "border-collapse":
 			// handled by table builder
 		case "text-decoration-style":
-			// not yet implemented
+			switch v {
+			case "solid":
+				ih.TextDecorationStyle = frontend.TextDecorationStyleSolid
+			case "double":
+				ih.TextDecorationStyle = frontend.TextDecorationStyleDouble
+			case "dotted":
+				ih.TextDecorationStyle = frontend.TextDecorationStyleDotted
+			case "dashed":
+				ih.TextDecorationStyle = frontend.TextDecorationStyleDashed
+			case "wavy":
+				ih.TextDecorationStyle = frontend.TextDecorationStyleWavy
+			}
+		case "text-decoration-color":
+			// Unset means CSS's `currentColor`, which is what the drawing does
+			// when no colour is given.
+			ih.TextDecorationColor = df.GetColor(v)
 		case "text-decoration-line":
+			// All three lines are drawn the same way, at different offsets, so
+			// there is no reason for overline and line-through to be dropped.
+			// CSS allows several at once ("underline overline"); csshtml keeps
+			// only the last one it sees, so this maps one line at a time.
 			switch v {
 			case "underline":
 				ih.TextDecorationLine = frontend.TextDecorationUnderline
+			case "overline":
+				ih.TextDecorationLine = frontend.TextDecorationOverline
+			case "line-through":
+				ih.TextDecorationLine = frontend.TextDecorationLineThrough
+			case "none":
+				ih.TextDecorationLine = frontend.TextDecorationLineNone
 			}
 		case "text-indent":
 			ih.indent = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
@@ -648,7 +673,23 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "height":
 			ih.height = v
 		case "white-space":
-			ih.preserveWhitespace = (v == "pre")
+			// CSS Text 3 §3. Only `pre` was recognised, so `pre-line` — the
+			// value you want for prose that carries a hard break — collapsed
+			// its newlines like `normal` and the break was lost.
+			switch v {
+			case "normal":
+				ih.whiteSpace = frontend.WhiteSpaceNormal
+			case "nowrap":
+				ih.whiteSpace = frontend.WhiteSpaceNowrap
+			case "pre":
+				ih.whiteSpace = frontend.WhiteSpacePre
+			case "pre-wrap":
+				ih.whiteSpace = frontend.WhiteSpacePreWrap
+			case "pre-line":
+				ih.whiteSpace = frontend.WhiteSpacePreLine
+			}
+			ih.preserveWhitespace = ih.whiteSpace == frontend.WhiteSpacePre ||
+				ih.whiteSpace == frontend.WhiteSpacePreWrap
 		case "-bag-font-expansion":
 			if strings.HasSuffix(v, "%") {
 				p := strings.TrimSuffix(v, "%")
@@ -751,27 +792,30 @@ type FormattingStyles struct {
 	// from the top down, so siblings share counters declared on the
 	// nearest common ancestor (e.g. <ol counter-reset: list-item> seen
 	// from each <li counter-increment: list-item>).
-	LocalCounters      map[string]int
-	counterReset       map[string]int // CSS counter-reset on THIS element
-	counterIncrement   map[string]int // CSS counter-increment on THIS element
-	ListPaddingLeft    bag.ScaledPoint
-	PaddingBottom      bag.ScaledPoint
-	PaddingLeft        bag.ScaledPoint
-	PaddingRight       bag.ScaledPoint
-	PaddingTop         bag.ScaledPoint
-	TextDecorationLine frontend.TextDecorationLine
-	leaderContent      string
-	preserveWhitespace bool
-	tabsize            bag.ScaledPoint
-	tabsizeSpaces      int
-	Valign             frontend.VerticalAlignment
-	width              string
-	height             string
-	pageBreakAfter     string
-	pageBreakBefore    string
-	pageBreakInside    string
-	bookmark           string // -bag-bookmark raw value (non-inherited; "" = unset)
-	yoffset            bag.ScaledPoint
+	LocalCounters       map[string]int
+	counterReset        map[string]int // CSS counter-reset on THIS element
+	counterIncrement    map[string]int // CSS counter-increment on THIS element
+	ListPaddingLeft     bag.ScaledPoint
+	PaddingBottom       bag.ScaledPoint
+	PaddingLeft         bag.ScaledPoint
+	PaddingRight        bag.ScaledPoint
+	PaddingTop          bag.ScaledPoint
+	TextDecorationLine  frontend.TextDecorationLine
+	TextDecorationStyle frontend.TextDecorationStyle
+	TextDecorationColor *color.Color
+	leaderContent       string
+	preserveWhitespace  bool
+	whiteSpace          frontend.WhiteSpace
+	tabsize             bag.ScaledPoint
+	tabsizeSpaces       int
+	Valign              frontend.VerticalAlignment
+	width               string
+	height              string
+	pageBreakAfter      string
+	pageBreakBefore     string
+	pageBreakInside     string
+	bookmark            string // -bag-bookmark raw value (non-inherited; "" = unset)
+	yoffset             bag.ScaledPoint
 	// CSS positioning (CSS 2.1 §9-§10). None of these inherit; Clone()
 	// deliberately drops them so every element starts at the default
 	// (position: static, all offsets/z-index auto).
@@ -860,10 +904,18 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		ListPaddingLeft:    is.ListPaddingLeft,
 		OlCounter:          is.OlCounter,
 		preserveWhitespace: is.preserveWhitespace,
-		tabsize:            is.tabsize,
-		tabsizeSpaces:      is.tabsizeSpaces,
-		Valign:             is.Valign,
-		Halign:             is.Halign,
+		// CSS Text Decoration 3 §2.2: a decoration propagates to in-flow
+		// descendants, so <u>a <b>b</b></u> underlines both runs. Without this
+		// the field reset to none on every child and only a leaf element that
+		// declared the property itself was ever decorated.
+		TextDecorationLine:  is.TextDecorationLine,
+		TextDecorationStyle: is.TextDecorationStyle,
+		TextDecorationColor: is.TextDecorationColor,
+		whiteSpace:          is.whiteSpace,
+		tabsize:             is.tabsize,
+		tabsizeSpaces:       is.tabsizeSpaces,
+		Valign:              is.Valign,
+		Halign:              is.Halign,
 		// vertical-align itself does not inherit, but the baseline shift it
 		// produces carries over: descendant inline boxes align to the
 		// parent's (shifted) baseline. Nested sub/super/length values add
@@ -930,7 +982,14 @@ func applyLangAndHyphens(ih *FormattingStyles, attrs map[string]string, df *fron
 			}
 		}
 	}
-	switch ih.hyphens {
+	// `white-space: pre` and `nowrap` do not wrap, so automatic hyphenation
+	// must not introduce breaks either (CSS Text 3 §3: these values suppress
+	// line breaking within the text).
+	hyphens := ih.hyphens
+	if ih.whiteSpace == frontend.WhiteSpacePre || ih.whiteSpace == frontend.WhiteSpaceNowrap {
+		hyphens = "none"
+	}
+	switch hyphens {
 	case "none", "manual":
 		l, err := df.GetLanguageCached(noHyphenationKey)
 		if err != nil {
@@ -1031,12 +1090,17 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	settings[frontend.SettingPaddingTop] = ih.PaddingTop
 	settings[frontend.SettingPaddingBottom] = ih.PaddingBottom
 	settings[frontend.SettingPreserveWhitespace] = ih.preserveWhitespace
+	settings[frontend.SettingWhiteSpace] = ih.whiteSpace
 	settings[frontend.SettingSize] = ih.Fontsize
 	settings[frontend.SettingStyle] = ih.fontstyle
 	settings[frontend.SettingYOffset] = ih.yoffset
 	settings[frontend.SettingTabSize] = ih.tabsize
 	settings[frontend.SettingTabSizeSpaces] = ih.tabsizeSpaces
 	settings[frontend.SettingTextDecorationLine] = ih.TextDecorationLine
+	settings[frontend.SettingTextDecorationStyle] = ih.TextDecorationStyle
+	if ih.TextDecorationColor != nil {
+		settings[frontend.SettingTextDecorationColor] = ih.TextDecorationColor
+	}
 
 	if ih.Valign != frontend.VAlignDefault {
 		settings[frontend.SettingVAlign] = ih.Valign

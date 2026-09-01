@@ -43,7 +43,29 @@ const (
 	ModeVertical
 )
 
-var preserveWhitespace = []bool{false}
+// whiteSpaceStack tracks the CSS white-space value in force, so a text node
+// knows whether its whitespace collapses. Only `pre` used to be recognised;
+// `pre-line` — collapse the spaces, keep the newlines — now has a mode of its
+// own, which is what lets a hard break survive in ordinary prose.
+var whiteSpaceStack = []frontend.WhiteSpace{frontend.WhiteSpaceNormal}
+
+var (
+	// A newline plus any horizontal space hugging it, which pre-line collapses
+	// down to the newline alone.
+	reNewlineRun = regexp.MustCompile(`[ \t\r\f]*\n[ \t\r\f]*`)
+	// Runs of horizontal whitespace, which pre-line collapses to one space.
+	reHorizWS = regexp.MustCompile(`[ \t\r\f]{2,}`)
+)
+
+// collapsesSpaces reports whether runs of whitespace collapse to one space.
+func collapsesSpaces(ws frontend.WhiteSpace) bool {
+	return ws != frontend.WhiteSpacePre && ws != frontend.WhiteSpacePreWrap
+}
+
+// keepsNewlines reports whether a newline survives as a forced break.
+func keepsNewlines(ws frontend.WhiteSpace) bool {
+	return ws != frontend.WhiteSpaceNormal && ws != frontend.WhiteSpaceNowrap
+}
 
 // HTMLItem is a struct which represents a HTML element or a text node.
 type HTMLItem struct {
@@ -87,7 +109,8 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			// ignore
 		case html.TextNode:
 			itm := &HTMLItem{}
-			preserveWhitespace := preserveWhitespace[len(preserveWhitespace)-1]
+			ws := whiteSpaceStack[len(whiteSpaceStack)-1]
+			collapse, keepNL := collapsesSpaces(ws), keepsNewlines(ws)
 			txt := thisNode.Data
 			// When turning from vertical to horizontal (a text is always
 			// horizontal material), trim the left space. TODO: honor preserve
@@ -95,9 +118,15 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			if direction == ModeVertical {
 				txt = strings.TrimLeftFunc(txt, isCollapsibleSpace)
 			}
-			if !preserveWhitespace {
+			if collapse {
 				if isSpace.MatchString(txt) {
-					txt = " "
+					// Whitespace-only: it collapses to a single space, except
+					// under pre-line, where a newline in it still breaks.
+					if keepNL && strings.ContainsRune(txt, '\n') {
+						txt = "\n"
+					} else {
+						txt = " "
+					}
 				}
 			}
 			if !isSpace.MatchString(txt) {
@@ -105,8 +134,12 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 					newDir = ModeHorizontal
 				}
 			}
-			if txt != "" {
-				if !preserveWhitespace {
+			if txt != "" && collapse {
+				if keepNL {
+					// pre-line: fold the spaces, keep the breaks.
+					txt = reNewlineRun.ReplaceAllString(txt, "\n")
+					txt = reHorizWS.ReplaceAllString(txt, " ")
+				} else {
 					txt = reLeadcloseWhtsp.ReplaceAllString(txt, " ")
 					txt = reInsideWS.ReplaceAllString(txt, " ")
 				}
@@ -115,7 +148,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			itm.Typ = html.TextNode
 			firstItem.Children = append(firstItem.Children, itm)
 		case html.ElementNode:
-			ws := preserveWhitespace[len(preserveWhitespace)-1]
+			ws := whiteSpaceStack[len(whiteSpaceStack)-1]
 			eltname := thisNode.Data
 			switch eltname {
 			case "body", "address", "article", "aside", "blockquote", "canvas", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
@@ -142,10 +175,17 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 
 				for key, value := range itm.Styles {
 					if key == "white-space" {
-						if value == "pre" {
-							ws = true
-						} else {
-							ws = false
+						switch value {
+						case "normal":
+							ws = frontend.WhiteSpaceNormal
+						case "nowrap":
+							ws = frontend.WhiteSpaceNowrap
+						case "pre":
+							ws = frontend.WhiteSpacePre
+						case "pre-wrap":
+							ws = frontend.WhiteSpacePreWrap
+						case "pre-line":
+							ws = frontend.WhiteSpacePreLine
 						}
 					}
 				}
@@ -216,13 +256,13 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 					// recognized as self-closing by the HTML5 parser,
 					// so subsequent siblings get incorrectly nested as
 					// children. Promote them back to the parent level.
-					preserveWhitespace = append(preserveWhitespace, ws)
+					whiteSpaceStack = append(whiteSpaceStack, ws)
 					GetHTMLItemFromHTMLNode(thisNode.FirstChild, direction, firstItem)
-					preserveWhitespace = preserveWhitespace[:len(preserveWhitespace)-1]
+					whiteSpaceStack = whiteSpaceStack[:len(whiteSpaceStack)-1]
 				} else {
-					preserveWhitespace = append(preserveWhitespace, ws)
+					whiteSpaceStack = append(whiteSpaceStack, ws)
 					GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, itm)
-					preserveWhitespace = preserveWhitespace[:len(preserveWhitespace)-1]
+					whiteSpaceStack = whiteSpaceStack[:len(whiteSpaceStack)-1]
 				}
 			}
 		case html.DocumentNode:
