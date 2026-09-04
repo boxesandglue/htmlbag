@@ -2164,7 +2164,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				if alt, ok := item.Attributes["alt"]; ok {
 					vl.Attributes["alt"] = alt
 				}
-				setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, pct, ht, df))
+				setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, imageDims{widthPct: pct, ht: ht}, df))
 				te.Items = append(te.Items, vl)
 				break
 			}
@@ -2275,8 +2275,9 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			}
 			cs := ss.CurrentStyle()
 			var filename string
-			var wd, ht bag.ScaledPoint
-			var widthPct float64 // 0 means: width is absolute (or absent)
+			var wd, ht, maxWd bag.ScaledPoint
+			var widthPct float64    // 0 means: width is absolute (or absent)
+			var maxWidthPct float64 // 0 means: max-width is absolute (or absent)
 
 			for k, v := range item.Attributes {
 				switch k {
@@ -2295,6 +2296,20 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					} else {
 						wd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
 					}
+				case "!max-width":
+					// CSS max-width. Percent resolves against the
+					// container (deferred path), absolute lengths cap
+					// eagerly. Keyword values (none, max-content, …)
+					// mean "no cap" and must not reach
+					// ParseRelativeSize, which returns the font size
+					// for unparseable input.
+					if pct, isPct := parseSVGPercentWidth(v); isPct {
+						maxWidthPct = pct
+					} else if sp, err := bag.SP(v); err == nil {
+						maxWd = sp
+					} else if strings.HasSuffix(v, "em") || strings.HasSuffix(v, "rem") {
+						maxWd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
+					}
 				case "height":
 					if sp, err := bag.SP(v); err == nil {
 						ht = sp
@@ -2303,6 +2318,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					filename = v
 				}
 			}
+			imgDims := imageDims{wd: wd, widthPct: widthPct, ht: ht, maxWd: maxWd, maxPct: maxWidthPct}
 
 			if strings.ToLower(filepath.Ext(filename)) == ".svg" {
 				// SVG image via <img src=x.svg>. Same eager / deferred
@@ -2319,7 +2335,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					ss.PopStyles()
 					return fmt.Errorf("parsing SVG %s: %w", filename, err)
 				}
-				if widthPct > 0 {
+				if imgDims.needsContainerWidth() {
 					placeholder := df.Doc.CreateSVGNodeFromDocument(svgDoc, 0, ht, frontend.NewSVGTextRenderer(df))
 					vl := node.Vpack(placeholder)
 					if vl.Attributes == nil {
@@ -2330,9 +2346,20 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					if alt, ok := item.Attributes["alt"]; ok {
 						vl.Attributes["alt"] = alt
 					}
-					setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, widthPct, ht, df))
+					setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, imgDims, df))
 					te.Items = append(te.Items, vl)
 				} else {
+					// Absolute max-width caps eagerly against the
+					// requested (or natural) width.
+					if maxWd > 0 {
+						eff := wd
+						if eff == 0 {
+							eff = bag.ScaledPointFromFloat(svgDoc.Width)
+						}
+						if eff > maxWd {
+							wd = maxWd
+						}
+					}
 					textRenderer := frontend.NewSVGTextRenderer(df)
 					svgNode := df.Doc.CreateSVGNodeFromDocument(svgDoc, wd, ht, textRenderer)
 					// Wrap in VList so the SVG is correctly positioned in
@@ -2365,7 +2392,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				if alt, ok := item.Attributes["alt"]; ok {
 					imgNode.Attributes["alt"] = alt
 				}
-				if widthPct > 0 {
+				if imgDims.needsContainerWidth() {
 					// Defer geometry resolution to layout time. The
 					// placeholder gets a small intrinsic-size rendering
 					// so debug dumps look sane; Materialize will
@@ -2382,7 +2409,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					if alt, ok := item.Attributes["alt"]; ok {
 						vl.Attributes["alt"] = alt
 					}
-					setDeferredFormatter(vl, newRasterImageFormatter(imgNode, intrinsicWd, intrinsicHt, widthPct, ht))
+					setDeferredFormatter(vl, newRasterImageFormatter(imgNode, intrinsicWd, intrinsicHt, imgDims))
 					te.Items = append(te.Items, vl)
 					ss.PopStyles()
 					break
@@ -2398,6 +2425,14 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				} else if ht > 0 {
 					imgNode.Width = bag.ScaledPoint(float64(intrinsicWd) * float64(ht) / float64(intrinsicHt))
 					imgNode.Height = ht
+				}
+				// Absolute max-width caps the result; height follows
+				// the aspect ratio unless an explicit height pinned it.
+				if maxWd > 0 && imgNode.Width > maxWd {
+					if ht == 0 {
+						imgNode.Height = bag.ScaledPoint(float64(imgNode.Height) * float64(maxWd) / float64(imgNode.Width))
+					}
+					imgNode.Width = maxWd
 				}
 				// CSS vertical-align: top|text-top — split the image into a
 				// (Height above baseline, Depth below baseline) pair so the

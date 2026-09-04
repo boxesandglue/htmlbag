@@ -11,11 +11,12 @@ import (
 )
 
 // newInlineSVGFormatter returns a frontend.FormatToVList closure that
-// renders an inline <svg> element with width: pct% against whatever
-// container width the consumer supplies. The svgreader.Document is
-// parsed once at construction time (potentially expensive); the cheap-
-// to-redo step — CreateSVGNodeFromDocument at the resolved width — is
-// what the closure wraps. Successive calls at different widths produce
+// renders an inline <svg> element (or <img src="x.svg">) at the width
+// dims resolves against whatever container width the consumer
+// supplies. The svgreader.Document is parsed once at construction time
+// (potentially expensive); the cheap-to-redo step —
+// CreateSVGNodeFromDocument at the resolved width — is what the
+// closure wraps. Successive calls at different widths produce
 // independently correct renderings (idempotent contract).
 //
 // Probe vs. build calls: frontend.TableCell.minWidth and maxWidth
@@ -47,7 +48,7 @@ import (
 // "vertical cell part" VList. A bare Rule sitting directly under a
 // nested VList would not reach the horizontal emit path that knows
 // how to write the Pre stream with positioning.
-func newInlineSVGFormatter(doc *svgreader.Document, pct float64, explicitHt bag.ScaledPoint, df *frontend.Document) frontend.FormatToVList {
+func newInlineSVGFormatter(doc *svgreader.Document, dims imageDims, df *frontend.Document) frontend.FormatToVList {
 	return func(containerWidth bag.ScaledPoint) (*node.VList, error) {
 		tr := frontend.NewSVGTextRenderer(df)
 
@@ -70,14 +71,8 @@ func newInlineSVGFormatter(doc *svgreader.Document, pct float64, explicitHt bag.
 			return vl, nil
 		}
 
-		var wd bag.ScaledPoint
-		if containerWidth > naturalW*100 {
-			// Max-content probe.
-			wd = naturalW
-		} else {
-			wd = bag.ScaledPoint(float64(containerWidth) * pct / 100.0)
-		}
-		svgNode := df.Doc.CreateSVGNodeFromDocument(doc, wd, explicitHt, tr)
+		wd := dims.resolveWidth(containerWidth, naturalW)
+		svgNode := df.Doc.CreateSVGNodeFromDocument(doc, wd, dims.ht, tr)
 
 		// Pure-Depth rule (see Geometry trick above).
 		svgHeight := svgNode.Height
