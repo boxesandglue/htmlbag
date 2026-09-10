@@ -358,6 +358,15 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 				ih.linebreakTolerance = f
 			}
+		case "-bag-leading-model":
+			// boxesandglue-specific: how the leading (line-height minus the
+			// line's natural height) is distributed. "half" splits it above
+			// and below each line box (CSS 2.1 section 10.8.1), "trailing"
+			// puts all of it below the line (the TeX-flavored default).
+			switch lm := strings.ToLower(strings.TrimSpace(v)); lm {
+			case "half", "trailing":
+				ih.leadingModel = lm
+			}
 		case "display":
 			ih.Hide = (v == "none")
 		case "background-color":
@@ -770,6 +779,7 @@ type FormattingStyles struct {
 	hyphens            string  // CSS hyphens: "" (auto), "auto", "manual", "none"
 	hyphenPenalty      int     // -bag-linebreak-hyphen-penalty (0 = inherit/default)
 	linebreakTolerance float64 // -bag-linebreak-tolerance (0 = inherit/default)
+	leadingModel       string  // -bag-leading-model: "half" or "trailing" ("" = inherit/default)
 	indent             bag.ScaledPoint
 	initialLetterLines int
 	italicCorrection   bool
@@ -895,6 +905,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		hyphens:            is.hyphens,
 		hyphenPenalty:      is.hyphenPenalty,
 		linebreakTolerance: is.linebreakTolerance,
+		leadingModel:       is.leadingModel,
 		language:           is.language,
 		langPattern:        is.langPattern,
 		letterSpacing:      is.letterSpacing,
@@ -1149,6 +1160,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	if ih.hyphenPenalty != 0 {
 		settings[frontend.SettingHyphenPenalty] = ih.hyphenPenalty
 	}
+	if ih.leadingModel != "" {
+		settings[frontend.SettingHalfLeading] = ih.leadingModel == "half"
+	}
 	if ih.linebreakTolerance != 0 {
 		settings[frontend.SettingLinebreakTolerance] = ih.linebreakTolerance
 	}
@@ -1272,7 +1286,11 @@ func (ss StylesStack) CounterSnapshot() map[string][]int {
 func (ss *StylesStack) PushStyles() *FormattingStyles {
 	var is *FormattingStyles
 	if len(*ss) == 0 {
-		is = &FormattingStyles{Halign: frontend.HAlignStart}
+		// The stack root carries the CSS-conforming defaults for content
+		// that never passes a body element (HTML fragments, e.g. xts
+		// paragraphs). Full documents get the same defaults from the UA
+		// stylesheet's body rule (csshtml.CSSdefaults); keep both in sync.
+		is = &FormattingStyles{Halign: frontend.HAlignStart, leadingModel: "half"}
 	} else {
 		is = (*ss)[len(*ss)-1].Clone()
 	}
