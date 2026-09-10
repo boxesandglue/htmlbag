@@ -358,6 +358,17 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 				ih.linebreakTolerance = f
 			}
+		case "-bag-leading-model":
+			// boxesandglue-specific: where a line's leading goes. "half"
+			// splits it above and below the line box (CSS 2.1 §10.8.1),
+			// "trailing" emits it all after the line (the TeX model, and
+			// bag's default). csshtml's UA stylesheet sets half on body.
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "half":
+				ih.halfLeading = true
+			case "trailing":
+				ih.halfLeading = false
+			}
 		case "display":
 			ih.Hide = (v == "none")
 		case "background-color":
@@ -770,6 +781,7 @@ type FormattingStyles struct {
 	hyphens            string  // CSS hyphens: "" (auto), "auto", "manual", "none"
 	hyphenPenalty      int     // -bag-linebreak-hyphen-penalty (0 = inherit/default)
 	linebreakTolerance float64 // -bag-linebreak-tolerance (0 = inherit/default)
+	halfLeading        bool    // -bag-leading-model: half
 	indent             bag.ScaledPoint
 	initialLetterLines int
 	italicCorrection   bool
@@ -895,6 +907,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		hyphens:            is.hyphens,
 		hyphenPenalty:      is.hyphenPenalty,
 		linebreakTolerance: is.linebreakTolerance,
+		halfLeading:        is.halfLeading,
 		language:           is.language,
 		langPattern:        is.langPattern,
 		letterSpacing:      is.letterSpacing,
@@ -1152,6 +1165,7 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	if ih.linebreakTolerance != 0 {
 		settings[frontend.SettingLinebreakTolerance] = ih.linebreakTolerance
 	}
+	settings[frontend.SettingHalfLeading] = ih.halfLeading
 }
 
 // parseCounterList parses a CSS counter-reset / counter-increment value
