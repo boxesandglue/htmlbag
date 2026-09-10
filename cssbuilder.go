@@ -126,6 +126,14 @@ type CSSBuilder struct {
 	// build their own outline (e.g. glu's Markdown pipeline) set it to
 	// false to opt out.
 	GenerateOutline bool
+	// TraceBoxModel paints a translucent overlay visualising the CSS box
+	// model of block-level elements (margin / border / padding / content,
+	// devtools color scheme). Overlapping margins of neighbouring blocks
+	// tint twice and show up darker. Debug aid; toggled by consumers such
+	// as xts' <Trace boxmodel="yes">. When the document format forbids
+	// transparency (PDF/A-1, PDF/X-3) the overlay falls back to thin
+	// colored outlines.
+	TraceBoxModel bool
 	// Anchors collects every block-level element with an id attribute
 	// encountered during VList construction. Page numbers are assigned
 	// during shipout, just like Headings. Read by the multi-pass aux

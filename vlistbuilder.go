@@ -810,6 +810,14 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			vl.Attributes["_splittableTe"] = te
 			vl.Attributes["_splittableTeWidth"] = contentWidth
 		}
+		// Box model trace overlay for the borderless leaf (HTMLBorder does
+		// not run here). The vertical padding kerns above are already part
+		// of the box, so they shrink the content box inward. Inserted
+		// after the splittable snapshot: a later fragmentation drops the
+		// overlay instead of duplicating it at full height per fragment.
+		if cb.TraceBoxModel {
+			cb.traceBoxModel(vl, hv, true)
+		}
 	}
 
 	// PDF/UA: tag leaf block elements (p, h1-h6, pre, code)
@@ -1143,6 +1151,18 @@ func settingsToHTMLValues(settings frontend.TypesettingSettings) HTMLValues {
 	}
 	if v, ok := settings[frontend.SettingPaddingLeft]; ok && v != nil {
 		hv.PaddingLeft = v.(bag.ScaledPoint)
+	}
+	if v, ok := settings[frontend.SettingMarginTop]; ok && v != nil {
+		hv.MarginTop = v.(bag.ScaledPoint)
+	}
+	if v, ok := settings[frontend.SettingMarginRight]; ok && v != nil {
+		hv.MarginRight = v.(bag.ScaledPoint)
+	}
+	if v, ok := settings[frontend.SettingMarginBottom]; ok && v != nil {
+		hv.MarginBottom = v.(bag.ScaledPoint)
+	}
+	if v, ok := settings[frontend.SettingMarginLeft]; ok && v != nil {
+		hv.MarginLeft = v.(bag.ScaledPoint)
 	}
 
 	return hv

@@ -366,6 +366,13 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 		vl.List = node.InsertBefore(vl.List, vl.List, rbg)
 	}
 
+	// Box model trace overlay. Anchored inside the content vlist (above a
+	// background rule, below the text), so it survives the padding/border
+	// wrapping below and the per-fragment re-wrap after a page split.
+	if cb.TraceBoxModel {
+		cb.traceBoxModel(vl, hv, false)
+	}
+
 	lgWd := hv.PaddingLeft + hv.BorderLeftWidth
 	rgWd := hv.PaddingRight + hv.BorderRightWidth
 	tgWd := hv.PaddingTop + hv.BorderTopWidth
