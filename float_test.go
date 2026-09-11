@@ -250,3 +250,264 @@ func TestFloatedImageIsRecognisedThroughItsInlineRun(t *testing.T) {
 		t.Errorf("the first line beside a floated image is not indented")
 	}
 }
+
+// cssLength writes a measured length the way CSS wants it: ScaledPoint prints
+// the number alone, which is not a length at all to the parser.
+func cssLength(sp bag.ScaledPoint) string {
+	return sp.String() + "pt"
+}
+
+// buildHTMLErr is buildHTML without the Fatal: the sentinel tests are about
+// whether the document builds at all.
+func buildHTMLErr(t *testing.T, cb *CSSBuilder, body string) error {
+	t.Helper()
+	te, err := cb.HTMLToText(`<!DOCTYPE html><html><body>` + body + `</body></html>`)
+	if err != nil {
+		return err
+	}
+	_, err = cb.CreateVlist(te, bag.MustSP(floatMeasure))
+	return err
+}
+
+// float and clear are stamped on whatever declares them, including elements a
+// float is never lifted out of. The sentinels are htmlbag-private SettingTypes
+// and FormatParagraph rejects what it does not know, so an inline float used to
+// abort the whole document rather than being ignored.
+func TestFloatOnInlineContentIsIgnoredRatherThanFatal(t *testing.T) {
+	for _, body := range []string{
+		`<p>before <span style="float:left">floated</span> after</p>`,
+		`<p>before <span style="clear:both">cleared</span> after</p>`,
+		`<p style="float:left">a floated paragraph of inline content</p>`,
+	} {
+		if err := buildHTMLErr(t, floatBuilder(t), body); err != nil {
+			t.Errorf("%s: %v", body, err)
+		}
+	}
+}
+
+// A table cell formats its content through its own path, which never passed the
+// container branch that strips the sentinels.
+func TestFloatInATableCellIsIgnoredRatherThanFatal(t *testing.T) {
+	body := `<table><tr><td><p style="float:left">cell</p></td><td>label</td></tr></table>`
+	if err := buildHTMLErr(t, floatBuilder(t), body); err != nil {
+		t.Errorf("float inside a table cell: %v", err)
+	}
+}
+
+// A float's own Text is formatted by buildFloat, which is not the path that
+// strips -bag-bookmark for a container's children.
+func TestBookmarkOnAFloatIsNotFatal(t *testing.T) {
+	cb := floatBuilder(t)
+	if err := cb.ParseCSSString(`.mark { -bag-bookmark: 2; }`); err != nil {
+		t.Fatal(err)
+	}
+	body := `<div><p class="mark" style="float:left;width:60pt">marked</p><p>` + floatProse + `</p></div>`
+	if err := buildHTMLErr(t, cb, body); err != nil {
+		t.Errorf("bookmark on a floated element: %v", err)
+	}
+}
+
+// The same Text is formatted more than once — a table cell measures min/max/
+// final, a page-width reflow rebuilds the page. Consuming the settings that
+// describe the float left the second pass with an ex-float in flow.
+func TestFloatSurvivesASecondFormattingPass(t *testing.T) {
+	cb := floatBuilder(t)
+	te, err := cb.HTMLToText(`<!DOCTYPE html><html><body>` +
+		`<div><div style="float:left;width:60pt;height:40pt"></div><p>` + floatProse + `</p></div>` +
+		`</body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := cb.CreateVlist(te, bag.MustSP(floatMeasure))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := cb.CreateVlist(te, bag.MustSP(floatMeasure))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ha, hb := first.Height+first.Depth, second.Height+second.Depth; ha != hb {
+		t.Errorf("the container is %s tall on the first pass and %s on the second: the float was taken out of the flow once only", ha, hb)
+	}
+	a, b := lineIndents(first), lineIndents(second)
+	if len(a) == 0 || a[0] == 0 {
+		t.Fatalf("the first pass did not indent beside the float: %v", a)
+	}
+	if len(b) != len(a) {
+		t.Fatalf("second pass produced %d lines, first produced %d", len(b), len(a))
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("line %d: first pass indented %s, second %s", i, a[i], b[i])
+		}
+	}
+}
+
+// A float opening while a band is live must not simply replace it: the first
+// float would then overhang everything after it by whatever was left.
+func TestASecondFloatStartsBelowTheFirst(t *testing.T) {
+	cb := floatBuilder(t)
+	two := buildHTML(t, cb, `<div>`+
+		`<div style="float:left;width:60pt;height:40pt"></div>`+
+		`<div style="float:left;width:60pt;height:40pt"></div>`+
+		`<p>one short line</p></div>`)
+	got := two.Height + two.Depth
+	want := bag.MustSP("80pt")
+	if got < want {
+		t.Errorf("container is %s tall, want at least %s: the second float overwrote the first one's band", got, want)
+	}
+}
+
+// The band is consumed by what a child actually advances the cursor by. A
+// child's own depth becomes the container's depth rather than its height, so
+// measuring the height alone counts the previous child's depth and misses this
+// one's — a drift that shows up as a phantom indent on the child after the band
+// should have ended.
+func TestTheBandEndsWhereTheContentItCoversEnds(t *testing.T) {
+	// Measure one paragraph's advance, then float exactly that much.
+	one := buildHTML(t, floatBuilder(t), `<div><p>one</p></div>`)
+	// A point inside the paragraph's own advance: the band must end with it. The
+	// drift being tested for is a whole line's depth, several points of it.
+	advance := one.Height + one.Depth - bag.MustSP("1pt")
+
+	cb := floatBuilder(t)
+	vl := buildHTML(t, cb, `<div><div style="float:left;width:60pt;height:`+cssLength(advance)+`"></div><p>one</p><p>two</p></div>`)
+	indents := lineIndents(vl)
+	if len(indents) < 2 {
+		t.Fatalf("want a line per paragraph, got %d", len(indents))
+	}
+	if indents[0] == 0 {
+		t.Errorf("the paragraph the float covers is not indented")
+	}
+	if indents[1] != 0 {
+		t.Errorf("the paragraph after the band is indented by %s: the band outlived the content it covers", indents[1])
+	}
+}
+
+// A bare container inside a band carries it as a live band rather than stamping
+// its full height on every child: only the children the float still covers are
+// narrowed, and a `clear` among them ends it.
+func TestABareContainerNarrowsOnlyWhatTheFloatCovers(t *testing.T) {
+	one := buildHTML(t, floatBuilder(t), `<div><p>one</p></div>`)
+	advance := one.Height + one.Depth - bag.MustSP("1pt")
+
+	cb := floatBuilder(t)
+	vl := buildHTML(t, cb, `<div><div style="float:left;width:60pt;height:`+cssLength(advance)+`"></div>`+
+		`<div><p>one</p><p>two</p></div></div>`)
+	indents := lineIndents(vl)
+	if len(indents) < 2 {
+		t.Fatalf("want a line per paragraph, got %d", len(indents))
+	}
+	if indents[0] == 0 {
+		t.Errorf("the first paragraph of the nested container is not clear of the float")
+	}
+	if indents[1] != 0 {
+		t.Errorf("the second is indented by %s: the band was stamped whole on every child", indents[1])
+	}
+}
+
+// `clear` inside a bare container was consumed without effect: the container
+// stamped the band on its children up front and had nothing left to end.
+func TestClearWorksInsideABareContainer(t *testing.T) {
+	cb := floatBuilder(t)
+	vl := buildHTML(t, cb, `<div><div style="float:left;width:60pt;height:120pt"></div>`+
+		`<div><p>one</p><p style="clear:left">two</p></div></div>`)
+	indents := lineIndents(vl)
+	if len(indents) < 2 {
+		t.Fatalf("want two lines, got %d", len(indents))
+	}
+	if indents[0] == 0 {
+		t.Errorf("the first paragraph should sit beside the float")
+	}
+	if indents[1] != 0 {
+		t.Errorf("the paragraph that clears the float is indented by %s", indents[1])
+	}
+}
+
+// boxAfterTheFloat returns the first box laid out beside a float — the sibling
+// the float's own box is inserted in front of.
+func boxAfterTheFloat(v *node.VList) *node.VList {
+	var found *node.VList
+	var walk func(n node.Node)
+	walk = func(n node.Node) {
+		for e := n; e != nil; e = e.Next() {
+			c, ok := e.(*node.VList)
+			if !ok {
+				continue
+			}
+			if origin, _ := c.Attributes["origin"].(string); origin == "float" {
+				for m := c.Next(); m != nil && found == nil; m = m.Next() {
+					if sib, ok := m.(*node.VList); ok {
+						found = sib
+					}
+				}
+				continue
+			}
+			walk(c.List)
+		}
+	}
+	walk(v.List)
+	return found
+}
+
+// A container with a border or background is narrowed whole rather than having
+// only its lines shortened, so it has to move clear of the float as well. The
+// shift belongs on the box HTMLBorder returns: applied to the box inside it, the
+// frame stays behind under the float while its content moves out.
+func TestABorderedContainerInABandMovesItsFrameToo(t *testing.T) {
+	cb := floatBuilder(t)
+	vl := buildHTML(t, cb, `<div><div style="float:left;width:60pt;height:120pt"></div>`+
+		`<div style="border:1pt solid black"><p>one</p></div></div>`)
+
+	box := boxAfterTheFloat(vl)
+	if box == nil {
+		t.Fatal("no box beside the float")
+	}
+	inset := bag.MustSP("60pt") + floatGutter
+	if box.ShiftX != inset {
+		t.Errorf("the framed box is shifted by %s, want the float's %s", box.ShiftX, inset)
+	}
+	if want := bag.MustSP(floatMeasure) - inset; box.Width != want {
+		t.Errorf("the framed box is %s wide, want %s", box.Width, want)
+	}
+}
+
+// The band's inset is written to the same setting as text-indent and the
+// initial-letter corner, and it is derived per pass. Leaving it behind means
+// the paragraph carries an indent it never declared into whatever formats it
+// next.
+func TestTheBandDoesNotKeepTheIndentChannel(t *testing.T) {
+	cb := floatBuilder(t)
+	te, err := cb.HTMLToText(`<!DOCTYPE html><html><body>` +
+		`<div><div style="float:left;width:60pt;height:40pt"></div><p>` + floatProse + `</p></div>` +
+		`</body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cb.CreateVlist(te, bag.MustSP(floatMeasure)); err != nil {
+		t.Fatal(err)
+	}
+
+	// ApplySettings writes a zero indent on every element, so the invariant is
+	// the band's own value, not the presence of the setting.
+	inset := bag.MustSP("60pt") + floatGutter
+	var walk func(tx *frontend.Text)
+	walk = func(tx *frontend.Text) {
+		for _, key := range []frontend.SettingType{frontend.SettingIndentLeft, frontend.SettingIndentRight} {
+			if v, _ := tx.Settings[key].(bag.ScaledPoint); v == inset {
+				t.Errorf("%v left behind as the float's inset (%s): nothing here declares an indent", key, v)
+			}
+		}
+		for _, key := range []frontend.SettingType{frontend.SettingIndentLeftRows, frontend.SettingIndentRightRows} {
+			if rows, _ := tx.Settings[key].(int); rows > 0 {
+				t.Errorf("%v left behind as %d: the band's row count outlived the pass that derived it", key, rows)
+			}
+		}
+		for _, itm := range tx.Items {
+			if inner, ok := itm.(*frontend.Text); ok {
+				walk(inner)
+			}
+		}
+	}
+	walk(te)
+}

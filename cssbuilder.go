@@ -176,7 +176,12 @@ type CSSBuilder struct {
 	// currently in-flight table. Saved/restored across nested buildTable
 	// calls. Drained into the table VList's "inserts" attribute at the
 	// end of buildTable.
-	tableInserts []*Insert
+	// tableFloatRestores puts back the float/clear sentinels stripped from the
+	// cell content that reaches frontend.BuildTable unbuilt. They cannot be
+	// restored where they are taken: the cell's Text is formatted by BuildTable
+	// much later, so the restore belongs at the end of buildTable.
+	tableFloatRestores []func()
+	tableInserts       []*Insert
 	// tableInsertWidth is the width to format insert bodies inside a
 	// table cell. Set by buildTable at entry, read by buildTD.
 	tableInsertWidth bag.ScaledPoint

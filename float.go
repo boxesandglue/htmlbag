@@ -37,9 +37,13 @@ import (
 //   - A float is recognised only as a direct child of a block container. One
 //     written inside a paragraph's inline content is left in flow; lifting it to
 //     the container is a separate change.
-//   - One band at a time: a second float opening while a band is live replaces
-//     it rather than stacking beside it, so two floats on the same side overlap.
+//   - One band at a time: a float opening while a band is live starts below it
+//     rather than beside it, so two floats never overlap but neither do they sit
+//     side by side as a browser would place them.
 //   - A float needs a declared width (see buildFloat).
+//   - Pagination runs through a band: the float box reserves no vertical space,
+//     so a float near the bottom of a page paints past the page edge and the
+//     lines it shortened continue on the next page beside nothing.
 
 // floatGutter is the space between a float and the text beside it when the float
 // declares no margin of its own. CSS has no default here, but a picture butting
@@ -51,6 +55,10 @@ type floatBand struct {
 	side      string          // "left" or "right"
 	inset     bag.ScaledPoint // what content has to give up to clear the float
 	remaining bag.ScaledPoint // float height not yet passed
+	// inherited marks a band that belongs to an ancestor: the float is painted
+	// and extended by whoever opened it, and this container only narrows the
+	// children the band still covers.
+	inherited bool
 }
 
 // floatSideOf reports the float a container child is, if it is one. A replaced
@@ -120,7 +128,11 @@ func clearsBand(itm any, side string) bool {
 func (cb *CSSBuilder) buildFloat(itm any, wd bag.ScaledPoint) (*node.VList, error) {
 	switch t := itm.(type) {
 	case *frontend.Text:
-		delete(t.Settings, settingFloat)
+		// Captured and restored, not consumed: a second formatting pass (a table
+		// cell's min/max/final measurements, a page-width reflow) walks the same
+		// Text again, and a float stripped of what makes it a float renders in
+		// flow the second time round.
+		defer captureFloatSettings(t.Settings)()
 		// The float is built at the container's width, so a float that declares
 		// no width of its own fills the measure and leaves nothing beside it.
 		// CSS 2.1 §10.3.5 shrinks it to fit its content instead; that needs a
@@ -166,21 +178,25 @@ func (b *floatBand) narrow(itm any) {
 	setFloatBand(t.Settings, b.inset, b.remaining, b.side)
 }
 
+// clearBandStamp wipes any band a previous pass stamped on a child, so that a
+// child no longer covered by a float is not indented by a leftover.
+func clearBandStamp(itm any) {
+	if t, ok := itm.(*frontend.Text); ok {
+		clearFloatBand(t.Settings)
+	}
+}
+
 func (b *floatBand) consume(height bag.ScaledPoint) bool {
 	b.remaining -= height
 	return b.remaining > 0
 }
 
-// floatIndentFor turns a band into the linebreaker's per-row inset. It consumes
-// the sentinels, which FormatParagraph would otherwise reject as unknown.
+// floatIndentFor turns a band into the linebreaker's per-row inset, consuming
+// the band as it goes: the band is derived afresh by the container on every
+// formatting pass, so a stamp left behind would be a phantom indent the next
+// time this paragraph is measured. The author's own float/clear settings are
+// not touched here — see stripFloatSettings.
 func floatIndentFor(settings frontend.TypesettingSettings) (inset bag.ScaledPoint, rows int, side string) {
-	// float and clear describe the element itself, not its lines. They are
-	// stamped by ApplySettings on every element that declares them, so they have
-	// to be dropped here whether or not this paragraph is inside a band —
-	// FormatParagraph rejects settings it does not know.
-	delete(settings, settingFloat)
-	delete(settings, settingClear)
-
 	raw, height, side := floatBandOf(settings)
 	if raw <= 0 {
 		return 0, 0, ""
@@ -217,6 +233,89 @@ func floatBandOf(settings frontend.TypesettingSettings) (inset bag.ScaledPoint, 
 	delete(settings, settingFloatHeight)
 	delete(settings, settingFloatSide)
 	return inset, height, side
+}
+
+// captureFloatSettings removes the author-declared float and clear sentinels
+// from one element's settings and returns the restore. They are captured rather
+// than consumed because the same Text is formatted more than once — a table
+// cell measures min/max/final, a page-width reflow rebuilds the page — and a
+// float stripped of what makes it a float renders in flow the second time.
+func captureFloatSettings(settings frontend.TypesettingSettings) func() {
+	var saved []struct {
+		key   frontend.SettingType
+		value any
+	}
+	for _, key := range [...]frontend.SettingType{settingFloat, settingClear} {
+		if v, ok := settings[key]; ok {
+			saved = append(saved, struct {
+				key   frontend.SettingType
+				value any
+			}{key, v})
+			delete(settings, key)
+		}
+	}
+	return func() {
+		for _, s := range saved {
+			settings[s.key] = s.value
+		}
+	}
+}
+
+// captureInlineFloatSettings does the same for a paragraph and everything
+// inline inside it. A float is only recognised as a child of a block container,
+// so one written on a <span> stays in flow — but ApplySettings has still stamped
+// the sentinel on that span's Text, which goes straight into FormatParagraph's
+// strict switch. Only for a paragraph: on a container this would reach the
+// children, and the child that IS the float would stop being one.
+func captureInlineFloatSettings(te *frontend.Text) func() {
+	var restores []func()
+	var walk func(t *frontend.Text)
+	walk = func(t *frontend.Text) {
+		if t == nil {
+			return
+		}
+		restores = append(restores, captureFloatSettings(t.Settings))
+		for _, itm := range t.Items {
+			if inner, ok := itm.(*frontend.Text); ok {
+				walk(inner)
+			}
+		}
+	}
+	walk(te)
+	return func() {
+		for _, restore := range restores {
+			restore()
+		}
+	}
+}
+
+// restoreSettings snapshots the given keys and returns the restore, putting
+// back what was there — including nothing at all.
+func restoreSettings(settings frontend.TypesettingSettings, keys []frontend.SettingType) func() {
+	saved := make([]any, len(keys))
+	had := make([]bool, len(keys))
+	for i, key := range keys {
+		saved[i], had[i] = settings[key]
+	}
+	return func() {
+		for i, key := range keys {
+			if had[i] {
+				settings[key] = saved[i]
+			} else {
+				delete(settings, key)
+			}
+		}
+	}
+}
+
+// clearFloatBand drops a band stamped by an earlier formatting pass. The stamp
+// is derived from where the float actually landed, so it has to be re-derived
+// rather than carried: at another page width the same child may be clear of the
+// float altogether.
+func clearFloatBand(settings frontend.TypesettingSettings) {
+	delete(settings, settingFloatInset)
+	delete(settings, settingFloatHeight)
+	delete(settings, settingFloatSide)
 }
 
 func setFloatBand(settings frontend.TypesettingSettings, inset, height bag.ScaledPoint, side string) {

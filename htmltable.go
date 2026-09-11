@@ -84,6 +84,20 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 		}
 	}
 
+	// A cell's content that goes to BuildTable as a Text is formatted by
+	// frontend, whose strict settings switch rejects htmlbag's own sentinels.
+	// The float/clear pair is stripped where that content is collected and put
+	// back here, once the table is built: a width-change rebuild has to see the
+	// same input again.
+	savedFloatRestores := cb.tableFloatRestores
+	cb.tableFloatRestores = nil
+	defer func() {
+		for _, restore := range cb.tableFloatRestores {
+			restore()
+		}
+		cb.tableFloatRestores = savedFloatRestores
+	}()
+
 	// Push a fresh insert-collection scope; restore on exit so nested
 	// tables don't leak their inserts into the enclosing table.
 	savedInserts := cb.tableInserts
@@ -468,6 +482,14 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 			if err == nil && len(bottomFls) > 0 {
 				cb.tableInserts = append(cb.tableInserts, bottomFls...)
 			}
+			// Anything but a box reaches frontend as a Text and is formatted
+			// there, so htmlbag's float sentinels have to come off first. A box
+			// goes through CreateVlist, which handles them — and can still float
+			// what is inside it.
+			if isBox, _ := t.Settings[frontend.SettingBox].(bool); !isBox {
+				cb.tableFloatRestores = append(cb.tableFloatRestores, captureInlineFloatSettings(t))
+			}
+
 			// For box elements (ul, ol, div, etc.), create a FormatToVList function
 			// that uses CreateVlist - this ensures the same code path as outside tables
 			if isBox, ok := t.Settings[frontend.SettingBox]; ok && isBox.(bool) {
