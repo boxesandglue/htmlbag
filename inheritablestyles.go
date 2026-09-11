@@ -571,8 +571,6 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 				ih.TextDecorationStyle = frontend.TextDecorationStyleWavy
 			}
 		case "text-decoration-color":
-			// Unset means CSS's `currentColor`, which is what the drawing does
-			// when no colour is given.
 			ih.TextDecorationColor = df.GetColor(v)
 		case "text-decoration-line":
 			// All three lines are drawn the same way, at different offsets, so
@@ -711,6 +709,30 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			}
 		default:
 			slog.Debug("unresolved attribute", k, v)
+		}
+	}
+
+	// CSS Text Decoration 3 §2.2: text-decoration-color's initial value is
+	// `currentcolor`, resolved with originating-element semantics — the line
+	// takes the colour of the element that DECLARES the decoration and keeps it
+	// across descendants that change `color`. So an underlined paragraph holding
+	// a red span underlines the red word in the paragraph's colour, not in red.
+	//
+	// Capturing it only where the decoration is declared is what gives that: a
+	// descendant that merely inherits the decoration must not re-capture, and
+	// one that declares its own line starts a new decoration and does.
+	//
+	// It cannot be done inside the property loop. The declarations arrive as a
+	// map, so whether `color` is seen before or after `text-decoration-line` is
+	// chance — the same reason the border widths below are resolved here.
+	//
+	// Leaving it unset is not equivalent. Glyphs are filled, so a run's colour
+	// is set as the non-stroking colour, but the decoration is stroked, and the
+	// stroking colour is a separate graphics state entry. Nothing sets it, so an
+	// unset decoration colour falls back to black.
+	if _, declaresLine := attributes["text-decoration-line"]; declaresLine {
+		if _, declaresColor := attributes["text-decoration-color"]; !declaresColor {
+			ih.TextDecorationColor = ih.color
 		}
 	}
 
