@@ -193,10 +193,66 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		vls := node.NewVList()
 		vls.Attributes = node.H{"origin": "buildVListInternal"}
 
+		// This container may itself be sitting in a float's band. Where it has a
+		// border or background the whole box is narrowed, as if it established a
+		// block formatting context: the alternative is a border drawn full width
+		// with only the text inside it clearing the float, which looks like a
+		// mistake. A bare container passes the band down instead, so the inset
+		// lands on the paragraph that actually breaks the lines and only the rows
+		// the float covers are shortened.
+		delete(settings, settingFloat)
+		delete(settings, settingClear)
+		inheritedBand, inheritedRows, inheritedSide := floatBandOf(settings)
+		var bandShiftX bag.ScaledPoint
+		if inheritedBand > 0 {
+			if hasBorderOrBg {
+				childBaseWidth -= inheritedBand
+				if inheritedSide != "right" {
+					bandShiftX = inheritedBand
+				}
+			} else {
+				for _, child := range te.Items {
+					if t, ok := child.(*frontend.Text); ok {
+						setFloatBand(t.Settings, inheritedBand, inheritedRows, inheritedSide)
+					}
+				}
+			}
+		}
+
 		// Track previous element's margin-bottom for margin collapsing
 		var prevMarginBottom bag.ScaledPoint
 
+		// The band a float left behind, if the container is inside one. See
+		// float.go: the float itself is painted and leaves the vertical flow;
+		// the band is what keeps the content after it clear.
+		var band *floatBand
+
 		for i, itm := range te.Items {
+			if band != nil && clearsBand(itm, band.side) {
+				// `clear` skips past whatever is left of the float.
+				if band.remaining > 0 {
+					k := node.NewKern()
+					k.Kern = band.remaining
+					k.Attributes = node.H{"origin": "clear"}
+					vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
+					vls.Height += band.remaining
+				}
+				band = nil
+			}
+			if side, isFloat := floatSideOf(itm); isFloat {
+				box, err := cb.buildFloat(itm, childBaseWidth)
+				if err != nil {
+					return nil, err
+				}
+				if box != nil && box.Width > 0 {
+					band = openBand(vls, box, side, childBaseWidth)
+					continue
+				}
+			}
+			if band != nil {
+				band.narrow(itm)
+			}
+			heightBefore := vls.Height
 			switch t := itm.(type) {
 			case *frontend.Text:
 				// Skip whitespace-only text elements (e.g. whitespace
@@ -468,6 +524,27 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					prevMarginBottom = 0
 				}
 			}
+			if band != nil && !band.consume(vls.Height-heightBefore) {
+				band = nil
+			}
+		}
+
+		// A float taller than everything beside it extends its container rather
+		// than hanging out of the bottom of it. A browser lets it overflow; this
+		// engine does not paint out-of-flow content over the following flow, and
+		// an overhanging float has nothing sensible to do at a page break.
+		if band != nil && band.remaining > 0 {
+			k := node.NewKern()
+			k.Kern = band.remaining
+			k.Attributes = node.H{"origin": "float"}
+			vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
+			vls.Height += band.remaining
+		}
+
+		// A bordered container inside a band was built narrow; this is where it
+		// moves clear of the float.
+		if bandShiftX > 0 {
+			vls.ShiftX += bandShiftX
 		}
 
 		// Handle final margin-bottom after last element.
@@ -680,6 +757,21 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	if hasCSSHeight {
 		delete(te.Settings, settingCSSHeight)
 		cssHeight, _ = cssHeightRaw.(bag.ScaledPoint)
+	}
+
+	// Inside a float's band: the lines this paragraph contributes have to keep
+	// clear of the float, which is the linebreaker's own per-row inset. The row
+	// count is resolved here rather than in the container, because it is the
+	// band's height divided by the leading these lines will be set at — which
+	// only this point knows.
+	if inset, rows, side := floatIndentFor(te.Settings); rows > 0 {
+		if side == "right" {
+			te.Settings[frontend.SettingIndentRight] = inset
+			te.Settings[frontend.SettingIndentRightRows] = rows
+		} else {
+			te.Settings[frontend.SettingIndentLeft] = inset
+			te.Settings[frontend.SettingIndentLeftRows] = rows
+		}
 	}
 
 	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points).
