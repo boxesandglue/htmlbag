@@ -239,8 +239,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				}
 				band = nil
 			}
-			if side, isFloat := floatSideOf(itm); isFloat {
-				box, err := cb.buildFloat(itm, childBaseWidth)
+			if side, float, isFloat := floatSideOf(itm); isFloat {
+				box, err := cb.buildFloat(float, childBaseWidth)
 				if err != nil {
 					return nil, err
 				}

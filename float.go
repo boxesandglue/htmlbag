@@ -1,6 +1,8 @@
 package htmlbag
 
 import (
+	"strings"
+
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
@@ -51,20 +53,54 @@ type floatBand struct {
 	remaining bag.ScaledPoint // float height not yet passed
 }
 
-func floatSideOf(itm any) (string, bool) {
+// floatSideOf reports the float a container child is, if it is one. A replaced
+// element arrives wrapped in the anonymous inline run its siblings share, so a
+// run holding nothing but a floated node is unwrapped to the node itself —
+// otherwise an `<img style="float:left">` beside a block would never be seen as
+// a float at all.
+func floatSideOf(itm any) (string, any, bool) {
 	switch t := itm.(type) {
 	case *frontend.Text:
-		side, ok := t.Settings[settingFloat].(string)
-		return side, ok
-	case node.Node:
-		v, ok := t.GetAttribute(attrFloat)
-		if !ok {
-			return "", false
+		if side, ok := t.Settings[settingFloat].(string); ok {
+			return side, t, true
 		}
-		side, ok := v.(string)
-		return side, ok
+		if inner, ok := soleItem(t); ok {
+			if n, isNode := inner.(node.Node); isNode {
+				if side, ok := nodeFloatSide(n); ok {
+					return side, n, true
+				}
+			}
+		}
+	case node.Node:
+		if side, ok := nodeFloatSide(t); ok {
+			return side, t, true
+		}
 	}
-	return "", false
+	return "", nil, false
+}
+
+func nodeFloatSide(n node.Node) (string, bool) {
+	v, ok := n.GetAttribute(attrFloat)
+	if !ok {
+		return "", false
+	}
+	side, ok := v.(string)
+	return side, ok
+}
+
+// soleItem returns a Text's only item, ignoring whitespace either side of it.
+func soleItem(t *frontend.Text) (any, bool) {
+	var found any
+	for _, itm := range t.Items {
+		if s, isStr := itm.(string); isStr && strings.TrimSpace(s) == "" {
+			continue
+		}
+		if found != nil {
+			return nil, false
+		}
+		found = itm
+	}
+	return found, found != nil
 }
 
 func clearsBand(itm any, side string) bool {
@@ -106,10 +142,10 @@ func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint)
 	if side == "right" {
 		box.ShiftX = wd - box.Width
 	}
-	// Shift is a pure rendering offset, so the box paints downward from the
-	// cursor without the parent reserving anything for it. The band is what
-	// keeps the following content clear.
-	box.Shift = -height
+	// Zero height is what takes the box out of the vertical flow: the parent
+	// reserves nothing for it and the following content is held clear by the
+	// band instead. A box with no height above its reference point already hangs
+	// below it, so no shift is wanted on top of that.
 	box.Height, box.Depth = 0, 0
 	if box.Attributes == nil {
 		box.Attributes = node.H{}

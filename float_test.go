@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
@@ -228,5 +229,24 @@ func TestFloatRightNarrowsFromTheEnd(t *testing.T) {
 	}
 	if widest <= limit {
 		t.Errorf("no line exceeds %s: the inset was applied past the float's height", limit)
+	}
+}
+
+// A floated <img> arrives wrapped in the anonymous inline run its siblings
+// share. Without unwrapping it, the commonest float of all — a picture beside
+// its caption — is never recognised as one.
+func TestFloatedImageIsRecognisedThroughItsInlineRun(t *testing.T) {
+	cb := floatBuilder(t)
+	png, err := filepath.Abs("testdata/float.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vl := buildHTML(t, cb, `<div><img src="`+png+`" width="60pt" height="40pt" style="float:left"><p>`+floatProse+`</p></div>`)
+	indents := lineIndents(vl)
+	if len(indents) == 0 {
+		t.Fatal("no lines")
+	}
+	if indents[0] == 0 {
+		t.Errorf("the first line beside a floated image is not indented")
 	}
 }
