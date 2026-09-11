@@ -360,7 +360,13 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				if vl.Width > vls.Width {
 					vls.Width = vl.Width
 				}
-				vls.Height += vl.Height
+				// Vpack semantics: only the last child's depth remains the
+				// container's depth; every earlier child's depth is interior
+				// and belongs to the height. Under the half-leading model a
+				// paragraph's depth carries L/2 plus the font depth, so
+				// dropping it here made everything after a nested container
+				// (blockquote > ul > li) sit one depth per level too high.
+				vls.Height += vls.Depth + vl.Height
 				vls.Depth = vl.Depth
 
 				// A reflow rebuild (page width change during pagination)
