@@ -99,6 +99,10 @@ func AddFontFamiliesFromCSS(cs *csshtml.CSS, fe *frontend.Document) error {
 			fs.FontFeatures = v.Features
 			fs.VariationSettings = v.VariationSettings
 		}
+		// CSS size-adjust (csshtml stores 1 - percentage/100, the same
+		// encoding FontSource expects); applied at shape time via
+		// frontend.shapeFontFor.
+		fs.SizeAdjust = v.SizeAdjust
 		bag.Logger.Debug("AddFontFamiliesFromCSS", "family", v.Family, "variations", fs.VariationSettings)
 		var fontstyle frontend.FontStyle
 		switch v.Style {
