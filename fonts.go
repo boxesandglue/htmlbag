@@ -109,7 +109,14 @@ func AddFontFamiliesFromCSS(cs *csshtml.CSS, fe *frontend.Document) error {
 		default:
 			panic("nyi" + v.Style)
 		}
-		fontfamily.AddMember(fs, frontend.FontWeight(v.Weight), fontstyle)
+		if v.WeightMax > v.Weight {
+			// CSS Fonts 4 weight range (`font-weight: 200 900`), typically
+			// a variable font: matched by containment, the used weight pins
+			// the wght axis.
+			fontfamily.AddMemberRange(fs, frontend.FontWeight(v.Weight), frontend.FontWeight(v.WeightMax), fontstyle)
+		} else {
+			fontfamily.AddMember(fs, frontend.FontWeight(v.Weight), fontstyle)
+		}
 	}
 	return nil
 }
