@@ -6,7 +6,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/boxesandglue/baseline-pdf v1.1.22
 	github.com/boxesandglue/boxesandglue v0.2.51
-	github.com/boxesandglue/csshtml v0.0.19
+	github.com/boxesandglue/csshtml v0.0.20
 	github.com/boxesandglue/svgreader v0.0.4
 	github.com/boxesandglue/textshape v0.0.15
 	github.com/speedata/barcode v1.1.1
