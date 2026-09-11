@@ -2239,6 +2239,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				return fmt.Errorf("htmlbag <math>: %w", err)
 			}
 			mathFnt := font.NewFont(mathFace, cs.Fontsize)
+			mathFnt.MissingGlyphFunc = df.MissingGlyphFunc
 			hl, err := mathml.Render([]byte(src), mathFnt)
 			ss.PopStyles()
 			if err != nil {
