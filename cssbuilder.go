@@ -759,11 +759,15 @@ func (cb *CSSBuilder) drawPageBackgroundImage(res map[string]string, wd, ht bag.
 	if filename == "" || filename == "none" {
 		return nil
 	}
-	// FindFile honours both CSS.FileFinder (xts route) and the dirstack
-	// (glu/markdown route via PushDir(baseDir)); resolving relative to the
-	// document is what the letterhead use case needs.
-	if resolved, ferr := cb.css.FindFile(filename); ferr == nil && resolved != "" {
-		filename = resolved
+	// csshtml resolves the path at parse time, relative to the declaring
+	// stylesheet (csshtml issue #3). This FindFile call is a fallback for
+	// values that arrive unresolved; already-absolute paths must not go
+	// through FileFinder a second time. FindFile honours both CSS.FileFinder
+	// (xts route) and the dirstack (glu/markdown route via PushDir(baseDir)).
+	if !filepath.IsAbs(filename) {
+		if resolved, ferr := cb.css.FindFile(filename); ferr == nil && resolved != "" {
+			filename = resolved
+		}
 	}
 	pageno := 1
 	if p, ok := res["-bag-background-page"]; ok {

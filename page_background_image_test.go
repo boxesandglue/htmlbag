@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,6 +110,45 @@ func TestPageBackgroundImagePerPage(t *testing.T) {
 	}
 	if !strings.HasSuffix(img2.ImageFile.Filename, "bg2.png") {
 		t.Errorf("page 2 background = %q, want …bg2.png (generic @page)", img2.ImageFile.Filename)
+	}
+}
+
+// TestPageBackgroundImageStylesheetRelative: a relative url() in an @page
+// rule of an external stylesheet must resolve against the stylesheet's
+// directory, not the document directory (csshtml issue #3). ReadCSSFile
+// pushes the stylesheet's directory around parsing; csshtml resolves the
+// path inside that window, so the stored page attribute is already absolute.
+func TestPageBackgroundImageStylesheetRelative(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "template")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cssfile := filepath.Join(sub, "custom.css")
+	css := `@page { size: a4; background-image: url(briefbogen.pdf); }`
+	if err := os.WriteFile(cssfile, []byte(css), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatalf("htmlbag.New: %v", err)
+	}
+	if err := cb.ReadCSSFile(cssfile); err != nil {
+		t.Fatalf("ReadCSSFile: %v", err)
+	}
+	pt := cb.getPageType()
+	if pt == nil {
+		t.Fatal("getPageType returned nil")
+	}
+	res, _ := csshtml.ResolveAttributes(pt.Attributes)
+	want := "url(" + filepath.Join(sub, "briefbogen.pdf") + ")"
+	if got := res["background-image"]; got != want {
+		t.Errorf("background-image = %q, want %q (stylesheet relative)", got, want)
 	}
 }
 

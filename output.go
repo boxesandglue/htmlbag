@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -326,8 +327,13 @@ func (cb *CSSBuilder) BeforeShipout() error {
 
 				// Check for url() content (image in margin box).
 				if imgURL := firstContentURL(contentTokens); imgURL != "" {
-					if cb.css.FileFinder != nil {
-						if resolved, ferr := cb.css.FileFinder(imgURL); ferr == nil && resolved != "" {
+					// csshtml resolves the path at parse time (stylesheet
+					// relative); this is a fallback for values that arrive
+					// unresolved, so already-absolute paths must not go
+					// through FileFinder a second time. FindFile covers both
+					// the FileFinder (xts) and the dirstack (glu) route.
+					if !filepath.IsAbs(imgURL) {
+						if resolved, ferr := cb.css.FindFile(imgURL); ferr == nil && resolved != "" {
 							imgURL = resolved
 						}
 					}
