@@ -69,6 +69,25 @@ const settingCSSHeight frontend.SettingType = -3
 // tree (PDF 1.7 §14.9.2), so only actual switches are stamped.
 const settingLangTag frontend.SettingType = -4
 
+// Sentinels for CSS floats that text flows beside (see float.go). They carry
+// state from style resolution and from the block container down to the
+// paragraph, and are consumed before FormatParagraph, whose settings switch
+// rejects types it does not know.
+//
+// settingFloat and attrFloat mark the float itself — the first for an element,
+// the second for a replaced one, which never becomes a frontend.Text.
+// settingClear marks a child that ends the band. The remaining three describe
+// the band a child sits in.
+const (
+	settingFloat       frontend.SettingType = -5
+	settingClear       frontend.SettingType = -6
+	settingFloatInset  frontend.SettingType = -7
+	settingFloatHeight frontend.SettingType = -8
+	settingFloatSide   frontend.SettingType = -9
+)
+
+const attrFloat = "float"
+
 // isCSSHeightExempt reports whether an element's CSS height is the business
 // of a dedicated layout path (table layout, replaced elements) rather than
 // the settingCSSHeight flow-space mechanism.
@@ -553,6 +572,16 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 			} else {
 				ih.tabsize = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 			}
+		case "float":
+			// Only the values text flows beside; the paged-media ones
+			// (top/before/bottom/after) are handled by isFloatElement.
+			if v == "left" || v == "right" {
+				ih.floatSide = v
+			}
+		case "clear":
+			if v == "left" || v == "right" || v == "both" {
+				ih.clear = v
+			}
 		case "text-align":
 			ih.Halign = ParseHorizontalAlign(v, ih)
 		case "border-collapse":
@@ -835,19 +864,23 @@ type FormattingStyles struct {
 	TextDecorationLine  frontend.TextDecorationLine
 	TextDecorationStyle frontend.TextDecorationStyle
 	TextDecorationColor *color.Color
-	leaderContent       string
-	preserveWhitespace  bool
-	whiteSpace          frontend.WhiteSpace
-	tabsize             bag.ScaledPoint
-	tabsizeSpaces       int
-	Valign              frontend.VerticalAlignment
-	width               string
-	height              string
-	pageBreakAfter      string
-	pageBreakBefore     string
-	pageBreakInside     string
-	bookmark            string // -bag-bookmark raw value (non-inherited; "" = unset)
-	yoffset             bag.ScaledPoint
+	// floatSide and clear are CSS float/clear (see float.go). Neither is
+	// inherited: both are cleared for each element as its own styles resolve.
+	floatSide          string
+	clear              string
+	leaderContent      string
+	preserveWhitespace bool
+	whiteSpace         frontend.WhiteSpace
+	tabsize            bag.ScaledPoint
+	tabsizeSpaces      int
+	Valign             frontend.VerticalAlignment
+	width              string
+	height             string
+	pageBreakAfter     string
+	pageBreakBefore    string
+	pageBreakInside    string
+	bookmark           string // -bag-bookmark raw value (non-inherited; "" = unset)
+	yoffset            bag.ScaledPoint
 	// CSS positioning (CSS 2.1 §9-§10). None of these inherit; Clone()
 	// deliberately drops them so every element starts at the default
 	// (position: static, all offsets/z-index auto).
@@ -1069,6 +1102,15 @@ func hasVisibleDecoration(settings frontend.TypesettingSettings) bool {
 // ApplySettings converts the inheritable settings to boxes and glue text
 // settings.
 func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) {
+	// Neither is inherited, so both are absent on every element that did not
+	// declare them (the styles clone copies a named field list, and these are
+	// not in it).
+	if ih.floatSide != "" {
+		settings[settingFloat] = ih.floatSide
+	}
+	if ih.clear != "" {
+		settings[settingClear] = ih.clear
+	}
 	if ih.Fontweight > 0 {
 		settings[frontend.SettingFontWeight] = ih.Fontweight
 	}
@@ -2451,6 +2493,9 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 						vl.Attributes["alt"] = alt
 					}
 					setDeferredFormatter(vl, newRasterImageFormatter(imgNode, intrinsicWd, intrinsicHt, imgDims))
+					if cs.floatSide != "" {
+						vl.Attributes[attrFloat] = cs.floatSide
+					}
 					te.Items = append(te.Items, vl)
 					ss.PopStyles()
 					break
@@ -2488,6 +2533,12 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 						imgNode.Depth = imgNode.Height - ascent
 						imgNode.Height = ascent
 					}
+				}
+				if cs.floatSide != "" {
+					if imgNode.Attributes == nil {
+						imgNode.Attributes = node.H{}
+					}
+					imgNode.Attributes[attrFloat] = cs.floatSide
 				}
 				te.Items = append(te.Items, imgNode)
 			}
