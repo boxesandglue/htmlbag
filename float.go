@@ -63,10 +63,20 @@ const floatGutter = 9 * bag.Factor
 // floatMargins is what a float holds clear around itself.
 type floatMargins struct{ left, right, top, bottom bag.ScaledPoint }
 
-// marginsOf reads the margins declared on the float. A replaced element that
-// arrives as a bare node carries none — there is no Text to read them from —
-// and falls back to the gutter.
+// marginsOf reads the margins declared on the float.
+//
+// Two places to read them from, because a float arrives as one of two things. An
+// element is a frontend.Text and carries its margins in its settings. A replaced
+// element never becomes one: it is a node, and the anonymous inline run it
+// arrives in is not it — that run's margins are its own, which is to say zeros,
+// so an image read through it holds no more space than its own box. Its margins
+// are stamped on the node beside the side it floats to (see attrFloatMargins).
 func marginsOf(itm any) floatMargins {
+	if n, ok := itm.(node.Node); ok {
+		m, _ := n.GetAttribute(attrFloatMargins)
+		fm, _ := m.(floatMargins)
+		return fm
+	}
 	t, ok := itm.(*frontend.Text)
 	if !ok {
 		return floatMargins{}
@@ -80,6 +90,17 @@ func marginsOf(itm any) floatMargins {
 		right:  sp(frontend.SettingMarginRight),
 		top:    sp(frontend.SettingMarginTop),
 		bottom: sp(frontend.SettingMarginBottom),
+	}
+}
+
+// floatMargins reads the margins the style resolution has already worked out, so
+// a replaced element can carry them on its node.
+func (fs *FormattingStyles) floatMargins() floatMargins {
+	return floatMargins{
+		left:   fs.marginLeft,
+		right:  fs.marginRight,
+		top:    fs.marginTop,
+		bottom: fs.marginBottom,
 	}
 }
 
@@ -215,7 +236,15 @@ func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint,
 		wrapper.List = node.InsertAfter(k, k, box)
 		wrapper.Width = box.Width
 		wrapper.Height = box.Height + box.Depth + m.top
-		wrapper.Attributes = node.H{"origin": "float-box"}
+		// Everything the box carried moves to the wrapper: a footnote raised out
+		// of the float, and the _splittable family that lets it break across a
+		// page, are read off the one node in the list without recursing into it.
+		// Copied rather than shared, so marking the wrapper does not mark the box
+		// inside it as a second float.
+		wrapper.Attributes = node.H{}
+		for key, value := range box.Attributes {
+			wrapper.Attributes[key] = value
+		}
 		box = wrapper
 	}
 	height := box.Height + box.Depth + m.bottom

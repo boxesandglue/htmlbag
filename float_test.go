@@ -666,3 +666,77 @@ func TestARightFloatsFarSideMarginMovesItInFromTheEdge(t *testing.T) {
 		t.Errorf("the float sits at %s, want %s — in from the right edge by its margin", box.ShiftX, want)
 	}
 }
+
+// The three below are pgundlach's, from the review of #12, kept as he wrote
+// them: the failures are his, and so is the point that a fix has to make all
+// three green rather than the first one.
+
+// A float's margins reach the band through whatever object openBand is handed
+// them from. For a <div> that is the float itself. For a replaced element it is
+// the anonymous inline run around it, whose margin settings are stamped zeros,
+// so the picture holds no more space than its own box.
+func TestAFloatedImagesSideMarginHoldsTheTextClear(t *testing.T) {
+	png, err := filepath.Abs("testdata/float.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vl := buildHTML(t, floatBuilder(t), `<div><img src="`+png+
+		`" style="float:left;width:60pt;margin-right:30pt"><p>`+floatProse+`</p></div>`)
+	indents := lineIndents(vl)
+	if len(indents) == 0 {
+		t.Fatal("no lines")
+	}
+	if want := bag.MustSP("60pt") + bag.MustSP("30pt"); indents[0] != want {
+		t.Errorf("the first line is indented %s, want %s: the image plus the margin it asked for", indents[0], want)
+	}
+}
+
+// The control, and the whole of the difference: the same declaration on a <div>
+// float does hold the text clear. The two paths differ only in which object the
+// margins are read from, so a fix that closes the gap leaves this one alone.
+func TestADivAndAnImageFloatAgreeOnTheirMargins(t *testing.T) {
+	png, err := filepath.Abs("testdata/float.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	style := `float:left;width:60pt;height:40pt;margin-right:30pt`
+	div := lineIndents(buildHTML(t, floatBuilder(t),
+		`<div><div style="`+style+`"></div><p>`+floatProse+`</p></div>`))
+	img := lineIndents(buildHTML(t, floatBuilder(t),
+		`<div><img src="`+png+`" style="`+style+`"><p>`+floatProse+`</p></div>`))
+	if len(div) == 0 || len(img) == 0 {
+		t.Fatal("no lines")
+	}
+	if div[0] != img[0] {
+		t.Errorf("the same float declaration indents the first line by %s as a div and %s as an image", div[0], img[0])
+	}
+}
+
+// The float's own VList carries what later passes scan it for: "inserts" for a
+// footnote raised out of the float, the _splittable family for a float that has
+// to break across a page. Those scans read one node's attributes and do not
+// recurse, so whatever openBand wraps the box in has to carry them on.
+func TestAFloatsTopMarginKeepsTheBoxsAttributes(t *testing.T) {
+	body := func(style string) string {
+		return `<div><div style="float:left;width:60pt;height:40pt;` + style +
+			`">pic<fn>raised out of the float</fn></div><p>` + floatProse + `</p></div>`
+	}
+	plain := floatBox(buildHTML(t, floatBuilder(t), body("")))
+	pushed := floatBox(buildHTML(t, floatBuilder(t), body("margin-top:20pt")))
+	if plain == nil || pushed == nil {
+		t.Fatal("no float box")
+	}
+	// Without this the rest proves nothing: the footnote has to be on the float
+	// in the first place for its loss to mean anything.
+	if got := len(insertsOnNode(plain)); got != 1 {
+		t.Fatalf("the float carries %d inserts with no top margin, want 1", got)
+	}
+	if got := len(insertsOnNode(pushed)); got != 1 {
+		t.Errorf("the float carries %d inserts once it declares a top margin, want 1: the footnote is lost", got)
+	}
+	for key := range plain.Attributes {
+		if _, ok := pushed.Attributes[key]; !ok {
+			t.Errorf("%q is on the float box but not on the wrapper its top margin puts around it", key)
+		}
+	}
+}

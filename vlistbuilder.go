@@ -262,7 +262,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					if band != nil {
 						skipBand("float")
 					}
-					band = openBand(vls, box, side, childBaseWidth, marginsOf(itm))
+					// The float, not the item it arrived in: a replaced element
+					// comes wrapped in an anonymous inline run whose margins are
+					// its own, which is to say zeros.
+					band = openBand(vls, box, side, childBaseWidth, marginsOf(float))
 					continue
 				}
 			}
