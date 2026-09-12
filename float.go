@@ -139,9 +139,15 @@ func (cb *CSSBuilder) buildFloat(itm any, wd bag.ScaledPoint) (*node.VList, erro
 		// measuring pass this does not do yet, so a float needs a width.
 		return cb.CreateVlist(t, wd)
 	case node.Node:
-		// A replaced element (an image) is already sized. Unlink it first:
-		// Vpack packs from the node it is given to the end of the list, which
-		// would take the rest of the content into the float box with it.
+		// A replaced element whose size is a percentage of its containing block
+		// has not been sized yet: the pass that resolves those runs on a
+		// paragraph's items, and a float never reaches it. Left unresolved, an
+		// image wider than the measure becomes a float wider than the page, with
+		// nothing but negative space beside it.
+		resolveDeferredSizing([]any{t}, wd)
+		// A replaced element is sized by now. Unlink it first: Vpack packs from
+		// the node it is given to the end of the list, which would take the rest
+		// of the content into the float box with it.
 		t.SetNext(nil)
 		t.SetPrev(nil)
 		return node.Vpack(t), nil

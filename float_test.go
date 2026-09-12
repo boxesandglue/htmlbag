@@ -511,3 +511,31 @@ func TestTheBandDoesNotKeepTheIndentChannel(t *testing.T) {
 	}
 	walk(te)
 }
+
+// A percentage width resolves against the containing block. The float is taken
+// out of the flow before the pass that usually resolves deferred sizes, so it
+// used to be packed at the image's intrinsic size — for a picture wider than the
+// measure, a float wider than the page, with every line beside it squeezed to
+// nothing.
+func TestAPercentWidthFloatResolvesAgainstItsContainer(t *testing.T) {
+	png, err := filepath.Abs("testdata/float.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vl := buildHTML(t, floatBuilder(t), `<div><img src="`+png+`" style="float:left;width:50%"><p>`+floatProse+`</p></div>`)
+	indents := lineIndents(vl)
+	if len(indents) == 0 {
+		t.Fatal("no lines")
+	}
+	measure := bag.MustSP(floatMeasure)
+	if want := measure/2 + floatGutter; indents[0] != want {
+		t.Errorf("the first line is indented %s, want %s — half the measure plus the gutter", indents[0], want)
+	}
+	// And the text beside it is still text: an intrinsically-sized float left
+	// lines with no room at all.
+	for _, w := range lineContentWidths(vl)[:1] {
+		if w <= 0 {
+			t.Errorf("the first line holds %s of content: nothing fits beside the float", w)
+		}
+	}
+}
