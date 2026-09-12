@@ -596,3 +596,73 @@ func TestAFloatsTopMarginPushesItDown(t *testing.T) {
 		t.Errorf("the container is %s tall, want %s — the float's own height plus the margin above it", got, want)
 	}
 }
+
+// floatBox returns the float's own box: the one openBand takes out of the flow.
+func floatBox(v *node.VList) *node.VList {
+	var found *node.VList
+	var walk func(n node.Node)
+	walk = func(n node.Node) {
+		for e := n; e != nil && found == nil; e = e.Next() {
+			c, ok := e.(*node.VList)
+			if !ok {
+				continue
+			}
+			if origin, _ := c.Attributes["origin"].(string); origin == "float" {
+				found = c
+				return
+			}
+			walk(c.List)
+		}
+	}
+	walk(v.List)
+	return found
+}
+
+// The margin on the far side — the one facing the container edge rather than
+// the text — is space the float holds too: it moves the float inwards and the
+// content gives up that much more. The shift is the half an indent cannot show,
+// since a float sitting at the edge indents the text by exactly as much as one
+// held 20pt off it.
+func TestAFarSideMarginMovesTheFloatAndTheText(t *testing.T) {
+	cb := floatBuilder(t)
+	vl := buildHTML(t, cb, `<div><div style="float:left;width:60pt;height:40pt;margin-left:20pt"></div><p>`+floatProse+`</p></div>`)
+
+	indents := lineIndents(vl)
+	if len(indents) == 0 {
+		t.Fatal("no lines")
+	}
+	// The float, the default gutter (nothing was declared on the text side) and
+	// the margin holding it off the edge.
+	if want := bag.MustSP("60pt") + floatGutter + bag.MustSP("20pt"); indents[0] != want {
+		t.Errorf("the first line is indented %s, want %s", indents[0], want)
+	}
+	box := floatBox(vl)
+	if box == nil {
+		t.Fatal("no float box")
+	}
+	if want := bag.MustSP("20pt"); box.ShiftX != want {
+		t.Errorf("the float sits at %s, want %s from the container edge", box.ShiftX, want)
+	}
+}
+
+// The mirror: a right float's far side is the right edge.
+func TestARightFloatsFarSideMarginMovesItInFromTheEdge(t *testing.T) {
+	cb := floatBuilder(t)
+	vl := buildHTML(t, cb, `<div><div style="float:right;width:60pt;height:40pt;margin-right:20pt"></div><p>`+floatProse+`</p></div>`)
+
+	widths := lineContentWidths(vl)
+	if len(widths) == 0 {
+		t.Fatal("no lines")
+	}
+	measure, width, margin := bag.MustSP(floatMeasure), bag.MustSP("60pt"), bag.MustSP("20pt")
+	if limit := measure - width - floatGutter - margin; widths[0] > limit {
+		t.Errorf("the first line holds %s of content, more than the %s beside the float", widths[0], limit)
+	}
+	box := floatBox(vl)
+	if box == nil {
+		t.Fatal("no float box")
+	}
+	if want := measure - width - margin; box.ShiftX != want {
+		t.Errorf("the float sits at %s, want %s — in from the right edge by its margin", box.ShiftX, want)
+	}
+}

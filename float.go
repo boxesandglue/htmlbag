@@ -43,6 +43,10 @@ import (
 //   - A float needs a declared width (see buildFloat).
 //   - A margin declared as zero gets the default gutter, because a margin is
 //     stamped on every element whether or not it was written.
+//   - A negative margin is not what CSS would do with it: on the text side it
+//     falls back to the gutter (the margin has to beat zero to be used), and on
+//     the far side it flows into the shift and the inset unfiltered, pulling the
+//     float outside its container rather than overlapping the text beside it.
 //   - Pagination runs through a band: the float box reserves no vertical space,
 //     so a float near the bottom of a page paints past the page edge and the
 //     lines it shortened continue on the next page beside nothing.
