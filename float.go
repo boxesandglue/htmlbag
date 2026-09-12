@@ -41,6 +41,8 @@ import (
 //     rather than beside it, so two floats never overlap but neither do they sit
 //     side by side as a browser would place them.
 //   - A float needs a declared width (see buildFloat).
+//   - A margin declared as zero gets the default gutter, because a margin is
+//     stamped on every element whether or not it was written.
 //   - Pagination runs through a band: the float box reserves no vertical space,
 //     so a float near the bottom of a page paints past the page edge and the
 //     lines it shortened continue on the next page beside nothing.
@@ -48,7 +50,47 @@ import (
 // floatGutter is the space between a float and the text beside it when the float
 // declares no margin of its own. CSS has no default here, but a picture butting
 // against the text reads as a mistake rather than as a layout.
+//
+// A declared margin replaces it. Zero cannot: margins are stamped on every
+// element whether or not they were written, so "margin: 0" and "no margin at
+// all" arrive here as the same thing, and the second is much the commoner.
 const floatGutter = 9 * bag.Factor
+
+// floatMargins is what a float holds clear around itself.
+type floatMargins struct{ left, right, top, bottom bag.ScaledPoint }
+
+// marginsOf reads the margins declared on the float. A replaced element that
+// arrives as a bare node carries none — there is no Text to read them from —
+// and falls back to the gutter.
+func marginsOf(itm any) floatMargins {
+	t, ok := itm.(*frontend.Text)
+	if !ok {
+		return floatMargins{}
+	}
+	sp := func(key frontend.SettingType) bag.ScaledPoint {
+		v, _ := t.Settings[key].(bag.ScaledPoint)
+		return v
+	}
+	return floatMargins{
+		left:   sp(frontend.SettingMarginLeft),
+		right:  sp(frontend.SettingMarginRight),
+		top:    sp(frontend.SettingMarginTop),
+		bottom: sp(frontend.SettingMarginBottom),
+	}
+}
+
+// gutter is the space between the float and the text: the margin on the side
+// the text is on, or the default where none was declared.
+func (m floatMargins) gutter(side string) bag.ScaledPoint {
+	declared := m.right
+	if side == "right" {
+		declared = m.left
+	}
+	if declared > 0 {
+		return declared
+	}
+	return floatGutter
+}
 
 // floatBand is the vertical extent a float still covers.
 type floatBand struct {
@@ -155,10 +197,29 @@ func (cb *CSSBuilder) buildFloat(itm any, wd bag.ScaledPoint) (*node.VList, erro
 	return nil, nil
 }
 
-func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint) *floatBand {
-	height := box.Height + box.Depth
+func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint, m floatMargins) *floatBand {
+	// The margin above the float is space the float itself takes: packed on top
+	// of the box, it pushes the float down the page and the band with it.
+	if m.top > 0 {
+		k := node.NewKern()
+		k.Kern = m.top
+		k.Attributes = node.H{"origin": "float-margin"}
+		// Built by hand rather than with Vpack: a kern reports its size as a
+		// width whichever way it is packed, so a vertical one has to be added to
+		// the height itself — as every other kern in this package is.
+		wrapper := node.NewVList()
+		wrapper.List = node.InsertAfter(k, k, box)
+		wrapper.Width = box.Width
+		wrapper.Height = box.Height + box.Depth + m.top
+		wrapper.Attributes = node.H{"origin": "float-box"}
+		box = wrapper
+	}
+	height := box.Height + box.Depth + m.bottom
+	width := box.Width
 	if side == "right" {
-		box.ShiftX = wd - box.Width
+		box.ShiftX = wd - width - m.right
+	} else {
+		box.ShiftX = m.left
 	}
 	// Zero height is what takes the box out of the vertical flow: the parent
 	// reserves nothing for it and the following content is held clear by the
@@ -170,7 +231,16 @@ func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint)
 	}
 	box.Attributes["origin"] = "float"
 	vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), box)
-	return &floatBand{side: side, inset: box.Width + floatGutter, remaining: height}
+	// What the content beside it has to give up: the float, the margin between
+	// the two, and the margin on the far side, which is space the float holds
+	// against the container edge rather than against the text.
+	inset := width + m.gutter(side)
+	if side == "right" {
+		inset += m.right
+	} else {
+		inset += m.left
+	}
+	return &floatBand{side: side, inset: inset, remaining: height}
 }
 
 // narrow marks a child as sitting in the band. The row count is left to the

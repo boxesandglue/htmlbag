@@ -262,7 +262,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					if band != nil {
 						skipBand("float")
 					}
-					band = openBand(vls, box, side, childBaseWidth)
+					band = openBand(vls, box, side, childBaseWidth, marginsOf(itm))
 					continue
 				}
 			}

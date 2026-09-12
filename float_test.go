@@ -539,3 +539,60 @@ func TestAPercentWidthFloatResolvesAgainstItsContainer(t *testing.T) {
 		}
 	}
 }
+
+// A float holds text clear of its margins, not just of its box. The gutter is
+// what a float with no margin of its own gets instead.
+func TestAFloatsSideMarginHoldsTheTextClear(t *testing.T) {
+	cb := floatBuilder(t)
+	vl := buildHTML(t, cb, `<div><div style="float:left;width:60pt;height:40pt;margin-right:20pt"></div><p>`+floatProse+`</p></div>`)
+	indents := lineIndents(vl)
+	if len(indents) == 0 {
+		t.Fatal("no lines")
+	}
+	if want := bag.MustSP("80pt"); indents[0] != want {
+		t.Errorf("the first line is indented %s, want %s — the float plus its margin", indents[0], want)
+	}
+}
+
+// The same on the other side, where the margin faces the text from the right.
+func TestARightFloatsSideMarginHoldsTheTextClear(t *testing.T) {
+	cb := floatBuilder(t)
+	vl := buildHTML(t, cb, `<div><div style="float:right;width:60pt;height:40pt;margin-left:20pt"></div><p>`+floatProse+`</p></div>`)
+	widths := lineContentWidths(vl)
+	if len(widths) == 0 {
+		t.Fatal("no lines")
+	}
+	if limit := bag.MustSP(floatMeasure) - bag.MustSP("80pt"); widths[0] > limit {
+		t.Errorf("the first line holds %s of content, more than the %s left beside the float and its margin", widths[0], limit)
+	}
+}
+
+// A margin below the float is part of what the text has to clear, so the band
+// is that much taller.
+func TestAFloatsBottomMarginExtendsTheBand(t *testing.T) {
+	narrowed := func(body string) int {
+		n := 0
+		for _, in := range lineIndents(buildHTML(t, floatBuilder(t), body)) {
+			if in > 0 {
+				n++
+			}
+		}
+		return n
+	}
+	plain := narrowed(`<div><div style="float:left;width:60pt;height:40pt"></div><p>` + floatProse + `</p></div>`)
+	withMargin := narrowed(`<div><div style="float:left;width:60pt;height:40pt;margin-bottom:30pt"></div><p>` + floatProse + `</p></div>`)
+	if withMargin <= plain {
+		t.Errorf("%d lines are narrowed with a 30pt bottom margin and %d without: the margin is not part of the band", withMargin, plain)
+	}
+}
+
+// A margin above the float pushes it down, and the container that holds it has
+// to grow by as much.
+func TestAFloatsTopMarginPushesItDown(t *testing.T) {
+	plain := buildHTML(t, floatBuilder(t), `<div><div style="float:left;width:60pt;height:200pt"></div><p>one short line</p></div>`)
+	pushed := buildHTML(t, floatBuilder(t), `<div><div style="float:left;width:60pt;height:200pt;margin-top:20pt"></div><p>one short line</p></div>`)
+	got, want := pushed.Height+pushed.Depth, (plain.Height+plain.Depth)+bag.MustSP("20pt")
+	if got != want {
+		t.Errorf("the container is %s tall, want %s — the float's own height plus the margin above it", got, want)
+	}
+}
