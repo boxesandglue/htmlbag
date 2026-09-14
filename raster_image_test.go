@@ -263,9 +263,9 @@ func TestRasterImageFormatterMaxWidthAspect(t *testing.T) {
 }
 
 // TestImgMaxWidthCSSAttachesSizer wires the whole chain: CSS
-// `max-width: 100%` reaches the img case as a "!max-width" attribute
-// (here via the style attribute) and must attach a deferred sizer that
-// caps a too-wide image at the container width, aspect preserved.
+// `max-width: 100%` (here via the style attribute) reaches the img case
+// as a computed style and must attach a deferred sizer that caps a
+// too-wide image at the container width, aspect preserved.
 func TestImgMaxWidthCSSAttachesSizer(t *testing.T) {
 	dir := t.TempDir()
 	imgPath := writePNGSized(t, dir, "wide.png", 800, 400)

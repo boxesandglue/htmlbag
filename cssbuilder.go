@@ -337,7 +337,7 @@ func (pd PageDimensions) pageAreaBottom() bag.ScaledPoint {
 
 // PageAreas returns the CSS page margin box areas (e.g. "@top-center")
 // for the current page type, or nil if no @page rule is active.
-func (pd PageDimensions) PageAreas() map[string]map[string]string {
+func (pd PageDimensions) PageAreas() map[string]StyleMap {
 	if pd.masterpage == nil {
 		return nil
 	}
@@ -418,7 +418,7 @@ func (cb *CSSBuilder) getPageType() *Page {
 // generic @page rule rather than replacing it. Scalar string fields
 // fall back to base when the pseudo leaves them empty; Attributes are
 // concatenated in cascade order (base first, pseudo second, so pseudo
-// wins in ResolveAttributes); PageArea / PageAreaContent maps are
+// wins in resolveDeclarations); PageArea / PageAreaContent maps are
 // unioned, with the pseudo's entry replacing the base's for any area
 // declared in both. Without this merge a pseudo that omits "size" or
 // "margin" propagates "" into bag.SP and aborts page setup with
@@ -441,13 +441,13 @@ func mergePageWithBase(pseudo, base Page) Page {
 		merged.MarginRight = base.MarginRight
 	}
 	if len(base.Attributes) > 0 {
-		combined := make([]html.Attribute, 0, len(base.Attributes)+len(pseudo.Attributes))
+		combined := make([]declaration, 0, len(base.Attributes)+len(pseudo.Attributes))
 		combined = append(combined, base.Attributes...)
 		combined = append(combined, pseudo.Attributes...)
 		merged.Attributes = combined
 	}
 	if len(base.PageArea) > 0 {
-		union := make(map[string]map[string]string, len(base.PageArea)+len(pseudo.PageArea))
+		union := make(map[string]StyleMap, len(base.PageArea)+len(pseudo.PageArea))
 		for k, v := range base.PageArea {
 			union[k] = v
 		}
@@ -487,8 +487,8 @@ type pageBoxMetrics struct {
 // The caller is expected to OutputAt(ml, ht-mt, vl) so the border-box outer
 // edge coincides with the margin edge (for margin:0 that is the sheet edge,
 // giving a full-height left bar). The returned metrics let the caller derive
-// the padded content area. res is the already-resolved @page attribute map.
-func (cb *CSSBuilder) renderPageBorderBox(res map[string]string, wd, ht, ml, mr, mt, mb bag.ScaledPoint) (*node.VList, pageBoxMetrics, error) {
+// the padded content area. res is the already-resolved @page style map.
+func (cb *CSSBuilder) renderPageBorderBox(res StyleMap, wd, ht, ml, mr, mt, mb bag.ScaledPoint) (*node.VList, pageBoxMetrics, error) {
 	styles := cb.stylesStack.PushStyles()
 	defer cb.stylesStack.PopStyles()
 	if err := StylesToStyles(styles, res, cb.frontend, cb.stylesStack.CurrentStyle().Fontsize); err != nil {
@@ -580,8 +580,7 @@ func (cb *CSSBuilder) InitPage() error {
 				return err
 			}
 		}
-		var res map[string]string
-		res, defaultPage.Attributes = ResolveAttributes(defaultPage.Attributes)
+		res := resolveDeclarations(defaultPage.Attributes)
 
 		vl, m, err := cb.renderPageBorderBox(res, wd, ht, ml, mr, mt, mb)
 		if err != nil {
@@ -696,7 +695,7 @@ func (cb *CSSBuilder) NewPage() error {
 		ht := cb.currentPageDimensions.Height
 		// Re-resolve this page master's @page attributes so border/padding
 		// (and background-image) apply per page, not only on page 1.
-		bgRes, _ := ResolveAttributes(pt.Attributes)
+		bgRes := resolveDeclarations(pt.Attributes)
 		vl, m, err := cb.renderPageBorderBox(bgRes, wd, ht, ml, mr, mt, mb)
 		if err != nil {
 			return err
@@ -720,18 +719,6 @@ func (cb *CSSBuilder) NewPage() error {
 	return nil
 }
 
-// stripCSSURL unwraps a CSS url() token to its bare path, dropping the
-// url(...) wrapper and any surrounding single or double quotes.
-func stripCSSURL(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "url(") && strings.HasSuffix(s, ")") {
-		s = s[len("url(") : len(s)-1]
-	}
-	s = strings.TrimSpace(s)
-	s = strings.Trim(s, `"'`)
-	return strings.TrimSpace(s)
-}
-
 // drawPageBackgroundImage paints a CSS `@page { background-image: url(...) }`
 // onto the current page, scaled to fill the whole sheet. The optional custom
 // property `-bag-background-page: N` selects the source page of a multi-page
@@ -740,28 +727,17 @@ func stripCSSURL(s string) string {
 // selectors (:first/:left/:right) yield per-page backgrounds without the
 // caller keeping its own page counter. A missing or unloadable file is logged
 // and skipped rather than aborting the whole render.
-func (cb *CSSBuilder) drawPageBackgroundImage(res map[string]string, wd, ht bag.ScaledPoint) error {
-	raw, ok := res["background-image"]
-	if !ok {
+func (cb *CSSBuilder) drawPageBackgroundImage(res StyleMap, wd, ht bag.ScaledPoint) error {
+	// The url() token carries the path the CSS parser already resolved against
+	// the declaring stylesheet (issue #3). Nothing to unwrap, nothing to look
+	// up a second time.
+	filename, ok := res["background-image"].uri()
+	if !ok || filename == "" || filename == "none" {
 		return nil
-	}
-	filename := stripCSSURL(raw)
-	if filename == "" || filename == "none" {
-		return nil
-	}
-	// The CSS parser resolves the path at parse time, relative to the declaring
-	// stylesheet (csshtml issue #3). This FindFile call is a fallback for
-	// values that arrive unresolved; already-absolute paths must not go
-	// through FileFinder a second time. FindFile honours both CSS.FileFinder
-	// (xts route) and the dirstack (glu/markdown route via PushDir(baseDir)).
-	if !filepath.IsAbs(filename) {
-		if resolved, ferr := cb.css.FindFile(filename); ferr == nil && resolved != "" {
-			filename = resolved
-		}
 	}
 	pageno := 1
 	if p, ok := res["-bag-background-page"]; ok {
-		if n, err := strconv.Atoi(strings.TrimSpace(p)); err == nil && n > 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(p.String())); err == nil && n > 0 {
 			pageno = n
 		}
 	}
@@ -2671,11 +2647,12 @@ func (inf *info) String() string {
 	return fmt.Sprintf("mt: %s mb: %s len(pb): %d vl: %v", inf.marginTop, inf.marginBottom, len(inf.pagebox), inf.vl)
 }
 
-func hasContents(areaAttributes map[string]string, contentTokens []ContentToken) bool {
+func hasContents(areaAttributes StyleMap, contentTokens []ContentToken) bool {
 	if len(contentTokens) > 0 {
 		return true
 	}
-	return areaAttributes["content"] != "none" && areaAttributes["content"] != "normal"
+	content := areaAttributes.Get("content")
+	return content != "none" && content != "normal"
 }
 
 type pageMarginBox struct {

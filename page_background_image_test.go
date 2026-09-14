@@ -12,21 +12,27 @@ import (
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
-// TestStripCSSURL covers the url() unwrapper: the wrapper, both quote
-// styles, surrounding whitespace, and bare/degenerate inputs.
-func TestStripCSSURL(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{`url(brief.pdf)`, "brief.pdf"},
-		{`url("brief.pdf")`, "brief.pdf"},
-		{`url('brief.pdf')`, "brief.pdf"},
-		{`  url(  "a b.pdf"  )  `, "a b.pdf"},
-		{`none`, "none"},
-		{``, ""},
-		{`brief.pdf`, "brief.pdf"},
+// TestStyleValueURI covers reading a url() value off the token stream: the
+// wrapper and both quote styles are the scanner's business, and anything that
+// is not a url() reports so rather than handing back its own text.
+func TestStyleValueURI(t *testing.T) {
+	cases := []struct {
+		in    string
+		want  string
+		isURL bool
+	}{
+		{`url(brief.pdf)`, "brief.pdf", true},
+		{`url("brief.pdf")`, "brief.pdf", true},
+		{`url('brief.pdf')`, "brief.pdf", true},
+		{`  url(  "a b.pdf"  )  `, "a b.pdf", true},
+		{`none`, "", false},
+		{``, "", false},
+		{`brief.pdf`, "", false},
 	}
 	for _, c := range cases {
-		if got := stripCSSURL(c.in); got != c.want {
-			t.Errorf("stripCSSURL(%q) = %q, want %q", c.in, got, c.want)
+		got, isURL := textValue(c.in).uri()
+		if got != c.want || isURL != c.isURL {
+			t.Errorf("uri(%q) = %q, %v; want %q, %v", c.in, got, isURL, c.want, c.isURL)
 		}
 	}
 }
@@ -144,17 +150,17 @@ func TestPageBackgroundImageStylesheetRelative(t *testing.T) {
 	if pt == nil {
 		t.Fatal("getPageType returned nil")
 	}
-	res, _ := ResolveAttributes(pt.Attributes)
-	want := "url(" + filepath.Join(sub, "briefbogen.pdf") + ")"
-	if got := res["background-image"]; got != want {
-		t.Errorf("background-image = %q, want %q (stylesheet relative)", got, want)
+	got, isURL := resolveDeclarations(pt.Attributes)["background-image"].uri()
+	want := filepath.Join(sub, "briefbogen.pdf")
+	if !isURL || got != want {
+		t.Errorf("background-image = %q (url=%v), want %q (stylesheet relative)", got, isURL, want)
 	}
 }
 
 // TestPageBackgroundImageCustomProperty proves the -bag-background-page
 // custom property survives CSS parsing and attribute resolution (unknown
 // @page properties flow through css.doPage's default case into
-// ResolveAttributes' default case as a raw value). This is what lets a
+// resolveDeclarations' default case as a raw value). This is what lets a
 // two-page letterhead PDF drive page 1 vs. page 2+ from a single file.
 func TestPageBackgroundImageCustomProperty(t *testing.T) {
 	fe, err := frontend.NewForWriter(&bytes.Buffer{})
@@ -173,14 +179,14 @@ func TestPageBackgroundImageCustomProperty(t *testing.T) {
 	if pt == nil {
 		t.Fatal("getPageType returned nil")
 	}
-	res, _ := ResolveAttributes(pt.Attributes)
+	res := resolveDeclarations(pt.Attributes)
 	// AddCSS puts the working directory on the dir stack, so the relative
 	// url() comes back resolved. The subject here is that the value survives
 	// at all, not what it resolves against, so only the target is pinned.
-	if got := res["background-image"]; !strings.HasPrefix(got, "url(") || !strings.HasSuffix(got, "brief.pdf)") {
-		t.Errorf("background-image = %q, want a url() pointing at brief.pdf", got)
+	if got, isURL := res["background-image"].uri(); !isURL || !strings.HasSuffix(got, "brief.pdf") {
+		t.Errorf("background-image = %q (url=%v), want a url() pointing at brief.pdf", got, isURL)
 	}
-	if got := res["-bag-background-page"]; got != "2" {
+	if got := res.Get("-bag-background-page"); got != "2" {
 		t.Errorf("-bag-background-page = %q, want 2", got)
 	}
 }
@@ -204,8 +210,8 @@ func pageOnePageProp(t *testing.T, css string) string {
 	if pt == nil {
 		t.Fatal("getPageType returned nil")
 	}
-	res, _ := ResolveAttributes(pt.Attributes)
-	return res["-bag-background-page"]
+	res := resolveDeclarations(pt.Attributes)
+	return res.Get("-bag-background-page")
 }
 
 // TestPageBackgroundPageCascade pins the paged-media cascade behaviour that

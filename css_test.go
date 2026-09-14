@@ -265,8 +265,8 @@ func TestApplyCSS_IDSelector(t *testing.T) {
 		t.Fatalf("ApplyCSS failed: %v", err)
 	}
 	p := doc.Find("#important")
-	if val, exists := p.Attr("!color"); !exists || val != "green" {
-		t.Errorf("#important !color = %q (exists=%v), want 'green'", val, exists)
+	if val := c.ComputedStyles(p.Nodes[0]).Get("color"); val != "green" {
+		t.Errorf("#important color = %q, want 'green'", val)
 	}
 }
 
@@ -339,14 +339,9 @@ func TestPageURLResolvedAtParseTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	pg := cp.Pages[""]
-	var bg string
-	for _, attr := range pg.Attributes {
-		if attr.Key == "!background-image" {
-			bg = attr.Val
-		}
-	}
-	if got, want := bg, "url("+filepath.Join(dir, "bg.pdf")+")"; got != want {
-		t.Errorf("background-image = %q, want %q", got, want)
+	bg, isURL := resolveDeclarations(pg.Attributes)["background-image"].uri()
+	if want := filepath.Join(dir, "bg.pdf"); !isURL || bg != want {
+		t.Errorf("background-image = %q (url=%v), want %q", bg, isURL, want)
 	}
 	content := pg.PageAreaContent["top-center"]
 	if len(content) != 1 {
@@ -380,14 +375,16 @@ func TestPageURLLeftAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"!background-image": "url(" + abs + ")",
-		"!-bag-a":           "url(#anchor)",
-		"!-bag-b":           "url(https://example.com/a.pdf)",
-		"!-bag-c":           "url(data:image/png;base64,AAAA)",
+		"background-image": abs,
+		"-bag-a":           "#anchor",
+		"-bag-b":           "https://example.com/a.pdf",
+		"-bag-c":           "data:image/png;base64,AAAA",
 	}
-	for _, attr := range cp.Pages[""].Attributes {
-		if w, ok := want[attr.Key]; ok && attr.Val != w {
-			t.Errorf("%s = %q, want %q", attr.Key, attr.Val, w)
+	res := resolveDeclarations(cp.Pages[""].Attributes)
+	for property, w := range want {
+		got, isURL := res[property].uri()
+		if !isURL || got != w {
+			t.Errorf("%s = %q (url=%v), want %q", property, got, isURL, w)
 		}
 	}
 
@@ -395,11 +392,8 @@ func TestPageURLLeftAlone(t *testing.T) {
 	if err := cpNoDir.AddCSSText(str); err != nil {
 		t.Fatal(err)
 	}
-	for _, attr := range cpNoDir.Pages["nodir"].Attributes {
-		if attr.Key == "!background-image" {
-			if got, want := attr.Val, "url(raw.pdf)"; got != want {
-				t.Errorf("empty dirstack: background-image = %q, want %q", got, want)
-			}
-		}
+	got, isURL := resolveDeclarations(cpNoDir.Pages["nodir"].Attributes)["background-image"].uri()
+	if want := "raw.pdf"; !isURL || got != want {
+		t.Errorf("empty dirstack: background-image = %q (url=%v), want %q", got, isURL, want)
 	}
 }

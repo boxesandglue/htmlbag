@@ -72,7 +72,7 @@ type HTMLItem struct {
 	Data       string
 	Dir        Mode
 	Attributes map[string]string
-	Styles     map[string]string
+	Styles     StyleMap
 	Children   []*HTMLItem
 }
 
@@ -96,8 +96,9 @@ func isCustomVoidElement(name string) bool {
 }
 
 // GetHTMLItemFromHTMLNode fills the firstItem with the contents of thisNode. Comments and
-// DocumentNodes are ignored.
-func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTMLItem) error {
+// DocumentNodes are ignored. The receiver supplies the cascade result recorded
+// by ApplyCSS, which must have run on the node's document first.
+func (c *CSS) GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTMLItem) error {
 	newDir := direction
 	for {
 		if thisNode == nil {
@@ -165,44 +166,34 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 				Attributes: map[string]string{},
 			}
 			firstItem.Children = append(firstItem.Children, itm)
-			attributes := thisNode.Attr
-			if len(attributes) > 0 {
-				itm.Styles, attributes = ResolveAttributes(attributes)
-				for _, attr := range attributes {
-					itm.Attributes[attr.Key] = attr.Val
-				}
-
-				for key, value := range itm.Styles {
-					if key == "white-space" {
-						switch value {
-						case "normal":
-							ws = frontend.WhiteSpaceNormal
-						case "nowrap":
-							ws = frontend.WhiteSpaceNowrap
-						case "pre":
-							ws = frontend.WhiteSpacePre
-						case "pre-wrap":
-							ws = frontend.WhiteSpacePreWrap
-						case "pre-line":
-							ws = frontend.WhiteSpacePreLine
-						}
-					}
-				}
+			itm.Styles = c.ComputedStyles(thisNode)
+			for _, attr := range thisNode.Attr {
+				itm.Attributes[attr.Key] = attr.Val
+			}
+			switch itm.Styles.Get("white-space") {
+			case "normal":
+				ws = frontend.WhiteSpaceNormal
+			case "nowrap":
+				ws = frontend.WhiteSpaceNowrap
+			case "pre":
+				ws = frontend.WhiteSpacePre
+			case "pre-wrap":
+				ws = frontend.WhiteSpacePreWrap
+			case "pre-line":
+				ws = frontend.WhiteSpacePreLine
 			}
 			// CSS `display` can override the tag-based block/inline
 			// classification above. Only the two basic keywords are
 			// honoured; `display: none` is consumed downstream via
 			// FormattingStyles.Hide, and exotic values (flex, grid,
 			// inline-block, ...) keep the tag default.
-			if disp, ok := itm.Styles["display"]; ok {
-				switch disp {
-				case "block":
-					newDir = ModeVertical
-					itm.Dir = ModeVertical
-				case "inline":
-					newDir = ModeHorizontal
-					itm.Dir = ModeHorizontal
-				}
+			switch itm.Styles.Get("display") {
+			case "block":
+				newDir = ModeVertical
+				itm.Dir = ModeVertical
+			case "inline":
+				newDir = ModeHorizontal
+				itm.Dir = ModeHorizontal
 			}
 			// Inline <svg> and <math> are opaque leaves for the HTML
 			// pipeline: their children (rect/path/g for SVG, mi/mn/mo
@@ -217,13 +208,10 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 				var buf bytes.Buffer
 				if eltname == "math" {
 					// MathML round-trips through encoding/xml downstream
-					// (see mathml.Parse), which rejects attribute names
-					// starting with `!` — and ApplyCSS injects
-					// exactly such names (`!font-family`, `!color`, …)
-					// onto every matched element. Render a cleaned copy
-					// of the subtree with those marker attrs stripped so
-					// the serialised MathML is valid XML.
-					cleaned := stripCSSMarkerAttrs(thisNode)
+					// (see mathml.Parse). Work on a copy so the namespace
+					// fixup below does not disturb the tree the styling
+					// pass still walks.
+					cleaned := cloneNode(thisNode)
 					// Normalise the root namespace to MathML. When the <math>
 					// originates from a host document in a foreign default
 					// namespace (e.g. xts feeds layout content whose default
@@ -256,17 +244,17 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 					// so subsequent siblings get incorrectly nested as
 					// children. Promote them back to the parent level.
 					whiteSpaceStack = append(whiteSpaceStack, ws)
-					GetHTMLItemFromHTMLNode(thisNode.FirstChild, direction, firstItem)
+					c.GetHTMLItemFromHTMLNode(thisNode.FirstChild, direction, firstItem)
 					whiteSpaceStack = whiteSpaceStack[:len(whiteSpaceStack)-1]
 				} else {
 					whiteSpaceStack = append(whiteSpaceStack, ws)
-					GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, itm)
+					c.GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, itm)
 					whiteSpaceStack = whiteSpaceStack[:len(whiteSpaceStack)-1]
 				}
 			}
 		case html.DocumentNode:
 			// just passthrough
-			if err := GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, firstItem); err != nil {
+			if err := c.GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, firstItem); err != nil {
 				return err
 			}
 		default:
@@ -278,29 +266,20 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 	return nil
 }
 
-// stripCSSMarkerAttrs returns a deep copy of n with all `!`-prefixed
-// attributes removed at every descendant. ApplyCSS injects
-// resolved-CSS attributes like `!font-family`, `!color`, `!font-size`
-// onto matched elements; these names are not valid XML attribute names,
-// so any subtree we serialise and feed back into an XML parser (currently:
-// inline MathML on its way into mathml.Parse) must shed them first. The
-// original tree is left untouched because the styling pass still needs
-// the markers downstream.
-func stripCSSMarkerAttrs(n *html.Node) *html.Node {
+// cloneNode returns a deep copy of n. Any subtree that is serialised and fed
+// back into an XML parser (currently: inline MathML on its way into
+// mathml.Parse) goes through a copy, so the attribute filtering below never
+// touches the tree the styling pass still walks.
+func cloneNode(n *html.Node) *html.Node {
 	clone := &html.Node{
 		Type:      n.Type,
 		DataAtom:  n.DataAtom,
 		Data:      n.Data,
 		Namespace: n.Namespace,
-	}
-	for _, a := range n.Attr {
-		if len(a.Key) > 0 && a.Key[0] == '!' {
-			continue
-		}
-		clone.Attr = append(clone.Attr, a)
+		Attr:      append([]html.Attribute(nil), n.Attr...),
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		cc := stripCSSMarkerAttrs(c)
+		cc := cloneNode(c)
 		cc.Parent = clone
 		if clone.LastChild == nil {
 			clone.FirstChild = cc
@@ -320,6 +299,6 @@ func stripCSSMarkerAttrs(n *html.Node) *html.Node {
 // Pass nil for anchorPages on a clean first pass.
 func HTMLNodeToText(cb *CSSBuilder, n *html.Node, ss StylesStack, df *frontend.Document, anchorPages map[string]int) (*frontend.Text, error) {
 	h := &HTMLItem{Dir: ModeVertical}
-	GetHTMLItemFromHTMLNode(n, ModeVertical, h)
+	cb.css.GetHTMLItemFromHTMLNode(n, ModeVertical, h)
 	return Output(cb, h, ss, df, anchorPages)
 }

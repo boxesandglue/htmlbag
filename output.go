@@ -2,7 +2,6 @@ package htmlbag
 
 import (
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -212,15 +211,11 @@ func (cb *CSSBuilder) BeforeShipout() error {
 				widthAuto: true,
 			}
 			pmb.hasContents = hasContents(attr, mp.PageAreaContent[areaName])
-			if wd, ok := attr["width"]; ok {
-				if wd != "auto" {
-					pmb.areaWidth = ParseRelativeSize(wd, dimensions.Width, dimensions.Width)
-				}
+			if wd := attr.Get("width"); wd != "" && wd != "auto" {
+				pmb.areaWidth = ParseRelativeSize(wd, dimensions.Width, dimensions.Width)
 			}
-			if ht, ok := attr["height"]; ok {
-				if ht != "auto" {
-					pmb.areaHeight = ParseRelativeSize(ht, dimensions.Height, dimensions.Height)
-				}
+			if ht := attr.Get("height"); ht != "" && ht != "auto" {
+				pmb.areaHeight = ParseRelativeSize(ht, dimensions.Height, dimensions.Height)
 			}
 
 			pageMarginBoxes[areaName] = pmb
@@ -325,17 +320,9 @@ func (cb *CSSBuilder) BeforeShipout() error {
 				cb.Counters["page"] = len(cb.frontend.Doc.Pages)
 
 				// Check for url() content (image in margin box).
+				// The url() token carries the path the CSS parser already
+				// resolved against the declaring stylesheet (issue #3).
 				if imgURL := firstContentURL(contentTokens); imgURL != "" {
-					// The CSS parser resolves the path at parse time (stylesheet
-					// relative); this is a fallback for values that arrive
-					// unresolved, so already-absolute paths must not go
-					// through FileFinder a second time. FindFile covers both
-					// the FileFinder (xts) and the dirstack (glu) route.
-					if !filepath.IsAbs(imgURL) {
-						if resolved, ferr := cb.css.FindFile(imgURL); ferr == nil && resolved != "" {
-							imgURL = resolved
-						}
-					}
 					boxHt := pmb.ht - styles.BorderTopWidth - styles.BorderBottomWidth
 					if pmb.areaHeight > 0 {
 						boxHt = pmb.areaHeight

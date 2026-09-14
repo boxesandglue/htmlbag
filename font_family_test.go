@@ -131,7 +131,7 @@ func TestOutputBodyHonorsCommaFontFamily(t *testing.T) {
 		Typ:        html.ElementNode,
 		Data:       "body",
 		Attributes: map[string]string{},
-		Styles:     map[string]string{"font-family": `"Helvetica Neue", Arial, sans-serif`},
+		Styles:     resolveCSSText(`font-family: "Helvetica Neue", Arial, sans-serif`),
 	}
 	if _, err := Output(cb, body, cb.stylesStack, fe, nil); err != nil {
 		t.Fatalf("Output(body): %v", err)
@@ -161,7 +161,7 @@ func TestOutputHtmlHonorsCommaFontFamily(t *testing.T) {
 		Typ:        html.ElementNode,
 		Data:       "html",
 		Attributes: map[string]string{},
-		Styles:     map[string]string{"font-family": "Georgia, serif"},
+		Styles:     resolveCSSText("font-family: Georgia, serif"),
 	}
 	if _, err := Output(cb, htmlItem, cb.stylesStack, fe, nil); err != nil {
 		t.Fatalf("Output(html): %v", err)
@@ -263,7 +263,7 @@ func TestStylesToStylesPopulatesFontFamilyStack(t *testing.T) {
 	mono := fe.FindFontFamily("monospace")
 
 	ih := &FormattingStyles{Fontsize: 10 * 65536}
-	if err := StylesToStyles(ih, map[string]string{"font-family": `monospace, sans-serif, serif`}, fe, ih.Fontsize); err != nil {
+	if err := StylesToStyles(ih, resolveCSSText(`font-family: monospace, sans-serif, serif`), fe, ih.Fontsize); err != nil {
 		t.Fatalf("StylesToStyles: %v", err)
 	}
 	if ih.fontfamily != mono {
@@ -282,7 +282,7 @@ func TestStylesToStylesPopulatesFontFamilyStack(t *testing.T) {
 	// Gate: single-family CSS must not emit the new setting so the
 	// downstream shape orchestrator stays on the single-shape path.
 	ih2 := &FormattingStyles{Fontsize: 10 * 65536}
-	if err := StylesToStyles(ih2, map[string]string{"font-family": `sans-serif`}, fe, ih2.Fontsize); err != nil {
+	if err := StylesToStyles(ih2, resolveCSSText(`font-family: sans-serif`), fe, ih2.Fontsize); err != nil {
 		t.Fatalf("StylesToStyles: %v", err)
 	}
 	settings := frontend.TypesettingSettings{}
@@ -356,7 +356,7 @@ func TestFontFamilyFullMissWarnsOnce(t *testing.T) {
 
 	for range 2 {
 		ih := &FormattingStyles{Fontsize: tenpt}
-		if err := StylesToStyles(ih, map[string]string{"font-family": `"Nonexistent Font"`}, fe, ih.Fontsize); err != nil {
+		if err := StylesToStyles(ih, resolveCSSText(`font-family: "Nonexistent Font"`), fe, ih.Fontsize); err != nil {
 			t.Fatalf("StylesToStyles: %v", err)
 		}
 		if ih.fontfamily != fe.FindFontFamily("serif") {

@@ -172,22 +172,21 @@ func TestFlattenNesting_Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Check that .card got color: blue
-	card := doc.Find(".card")
-	if val, exists := card.Attr("!color"); !exists || val != "blue" {
-		t.Errorf(".card !color = %q (exists=%v), want 'blue'", val, exists)
-	}
-
-	// Check that h2 got color: red
-	h2 := doc.Find(".card > h2")
-	if val, exists := h2.Attr("!color"); !exists || val != "red" {
-		t.Errorf(".card > h2 !color = %q (exists=%v), want 'red'", val, exists)
-	}
-
-	// Check that p got font-size: 10pt
-	p := doc.Find(".card > p")
-	if val, exists := p.Attr("!font-size"); !exists || val != "10pt" {
-		t.Errorf(".card > p !font-size = %q (exists=%v), want '10pt'", val, exists)
+	for _, tc := range []struct {
+		selector, property, want string
+	}{
+		{".card", "color", "blue"},
+		{".card > h2", "color", "red"},
+		{".card > p", "font-size", "10pt"},
+	} {
+		sel := doc.Find(tc.selector)
+		if len(sel.Nodes) == 0 {
+			t.Errorf("%s did not match anything", tc.selector)
+			continue
+		}
+		if got := c.ComputedStyles(sel.Nodes[0]).Get(tc.property); got != tc.want {
+			t.Errorf("%s %s = %q, want %q", tc.selector, tc.property, got, tc.want)
+		}
 	}
 }
 

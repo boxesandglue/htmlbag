@@ -284,9 +284,11 @@ func TestCSSQuoteString_PassesNonASCII(t *testing.T) {
 }
 
 // TestParseContentValue_ThinSpaceLeader is the integration-level guard
-// for the same bug: a leader pattern containing U+2009 must survive the
-// stringValue → re-tokenize round trip with its bytes intact, not as
-// the ASCII string "u2009".
+// for the same bug: a leader pattern containing U+2009 must survive
+// serialisation and re-tokenising with its bytes intact, not as the
+// ASCII string "u2009". The renderer reads the cascade's tokens directly
+// these days, but stringValue still produces the text view of every
+// computed value, and that text has to parse back to what it came from.
 func TestParseContentValue_ThinSpaceLeader(t *testing.T) {
 	in := "leader(\" . \")"
 	roundTripped := stringValue(tokenizeCSSString(in))
@@ -298,13 +300,11 @@ func TestParseContentValue_ThinSpaceLeader(t *testing.T) {
 	}
 }
 
-// TestParseContentValue_RoundTrip guards against future stringValue
-// changes that would break the ApplyCSS → attribute → ParseContentValue
-// path. stringValue serialises a tokenstream back to a string; the
-// scanner must re-recognise the relevant constructs as we expect.
-//
-// stringValue is unexported, so we reach for it directly via the package
-// internals.
+// TestParseContentValue_RoundTrip pins that stringValue's text view of a
+// value re-parses into the same thing. Nothing in the render path takes
+// that detour any more — the cascade hands the renderer tokens — but the
+// text view is what StyleMap.Strings() exposes and what ParseContentValue
+// callers outside the package hand in, so the two must agree.
 func TestParseContentValue_RoundTrip(t *testing.T) {
 	cases := []struct {
 		name string
@@ -354,8 +354,8 @@ func TestParseContentValue_RoundTrip(t *testing.T) {
 }
 
 // TestParseContentValue_Element covers element(name) (CSS GCPM running
-// elements), including the optional occurrence keyword and the
-// stringValue round trip that decomposes the Function token.
+// elements), including the optional occurrence keyword, direct and
+// through stringValue's text view.
 func TestParseContentValue_Element(t *testing.T) {
 	cases := []struct {
 		name string

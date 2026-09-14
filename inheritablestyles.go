@@ -331,13 +331,17 @@ func resolveCSSFontFamily(v string, df *frontend.Document) *frontend.FontFamily 
 
 // StylesToStyles updates the inheritable formattingStyles from the attributes
 // (of the current HTML element).
-func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *frontend.Document, curFontSize bag.ScaledPoint) error {
+func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Document, curFontSize bag.ScaledPoint) error {
 	// Resolve font size first, since some of the attributes depend on the
 	// current font size.
 	if v, ok := attributes["font-size"]; ok {
-		ih.Fontsize = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+		ih.Fontsize = ParseRelativeSize(v.String(), curFontSize, ih.DefaultFontSize)
 	}
-	for k, v := range attributes {
+	for k, sv := range attributes {
+		// Most properties are a keyword, a length or a color, which the CSS
+		// text carries faithfully. The few that have internal structure
+		// (content lists, url() references) reach for sv's tokens instead.
+		v := sv.String()
 		switch k {
 		case "font-size":
 			// already set
@@ -1533,23 +1537,23 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	switch item.Data {
 	case "html":
 		if fs, ok := item.Styles["font-size"]; ok {
-			rfs := ParseRelativeSize(fs, 0, 0)
+			rfs := ParseRelativeSize(fs.String(), 0, 0)
 			ss.SetDefaultFontSize(rfs)
 			cb.rootFontSize = rfs
 		}
 		if ffs, ok := item.Styles["font-family"]; ok {
-			ff := resolveCSSFontFamily(ffs, df)
+			ff := resolveCSSFontFamily(ffs.String(), df)
 			if ff == nil {
-				logFontFamilyFullMiss(df, ffs)
+				logFontFamilyFullMiss(df, ffs.String())
 				ff = df.FindFontFamily("serif")
 			}
 			ss.SetDefaultFontFamily(ff)
 		}
 	case "body":
 		if ffs, ok := item.Styles["font-family"]; ok {
-			ff := resolveCSSFontFamily(ffs, df)
+			ff := resolveCSSFontFamily(ffs.String(), df)
 			if ff == nil {
-				logFontFamilyFullMiss(df, ffs)
+				logFontFamilyFullMiss(df, ffs.String())
 				ff = df.FindFontFamily("serif")
 			}
 			ss.SetDefaultFontFamily(ff)
@@ -1573,7 +1577,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		// plain HTML width attribute (where a bare number means pixels)
 		if wd, ok := item.Attributes["data-width"]; ok {
 			newte.Settings[frontend.SettingColumnWidth] = wd
-		} else if wd, ok := item.Styles["width"]; ok {
+		} else if wd := item.Styles.Get("width"); wd != "" {
 			newte.Settings[frontend.SettingColumnWidth] = wd
 		} else if wd, ok := item.Attributes["width"]; ok {
 			if _, err := strconv.ParseFloat(wd, 64); err == nil {
@@ -1616,8 +1620,8 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		// the body. This codebase historically used ::before for both
 		// because ::marker was unimplemented; we keep that as a legacy
 		// path and let ::marker win when both are set.
-		resolveContent := func(raw string) string {
-			tokens := ParseContentValue(raw)
+		resolveContent := func(v StyleValue) string {
+			tokens := parseContentTokens(v.tokens())
 			attrLookup := func(name string) string {
 				return item.Attributes[name]
 			}
@@ -1661,10 +1665,11 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		// property; the spec treats ::marker as the dedicated marker
 		// pseudo, ::before remains supported for legacy stylesheets.
 		applyMarkerProps := func(prefix string) {
-			for sKey, sVal := range item.Styles {
+			for sKey, sValue := range item.Styles {
 				if !strings.HasPrefix(sKey, prefix) {
 					continue
 				}
+				sVal := sValue.String()
 				switch strings.TrimPrefix(sKey, prefix) {
 				case "color":
 					if c := df.GetColor(sVal); c != nil {
@@ -1839,7 +1844,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	// an anonymous run when the first flow child is block-level.
 	var beforeRun *frontend.Text
 	if !generatedContentExempt(item.Data) {
-		if beforeContent, ok := item.Styles["before::content"]; ok && beforeContent != "" {
+		if beforeContent, ok := item.Styles["before::content"]; ok && !beforeContent.isEmpty() {
 			beforeRun = frontend.NewText()
 			ApplySettings(beforeRun.Settings, blockStyles)
 			appendGeneratedContent(cb, beforeRun, beforeContent, blockStyles, item, ss, anchorPages)
@@ -2009,7 +2014,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	// the element had no children at all — both pseudos then share one
 	// run so they render on a single line.
 	if !generatedContentExempt(item.Data) {
-		if afterContent, ok := item.Styles["after::content"]; ok && afterContent != "" {
+		if afterContent, ok := item.Styles["after::content"]; ok && !afterContent.isEmpty() {
 			run := te
 			if run == nil {
 				if beforeRun != nil {
@@ -2096,8 +2101,8 @@ func generatedContentExempt(name string) bool {
 // build the fil³ glue. sty must be the pseudo-element's resolved style;
 // generated content inherits from its originating element. The styles
 // stack is only read (counter()/counters() walk it), nothing is pushed.
-func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue string, sty *FormattingStyles, item *HTMLItem, ss StylesStack, anchorPages map[string]int) {
-	tokens := ParseContentValue(contentValue)
+func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue StyleValue, sty *FormattingStyles, item *HTMLItem, ss StylesStack, anchorPages map[string]int) {
+	tokens := parseContentTokens(contentValue.tokens())
 	if len(tokens) == 0 {
 		return
 	}
@@ -2140,7 +2145,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 		// mirroring the styles.Hide check in the block path. Checked
 		// before anchor collection: a hidden element must not become
 		// a target-counter anchor either.
-		if item.Styles["display"] == "none" {
+		if item.Styles.Get("display") == "none" {
 			return nil
 		}
 		childSettings := make(frontend.TypesettingSettings, 8)
@@ -2172,7 +2177,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 		// renders the content value via appendGeneratedContent. Used
 		// for both pseudo elements; <li>::before goes through its own
 		// marker path elsewhere.
-		emitGeneratedContent := func(contentValue string) error {
+		emitGeneratedContent := func(contentValue StyleValue) error {
 			sty := ss.PushStyles()
 			if err := StylesToStyles(sty, item.Styles, df, currentFontsize); err != nil {
 				ss.PopStyles()
@@ -2189,7 +2194,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 		// content path handles ::before there with its own gutter
 		// positioning and would otherwise double-render.
 		if item.Data != "li" {
-			if beforeContent, ok := item.Styles["before::content"]; ok && beforeContent != "" {
+			if beforeContent, ok := item.Styles["before::content"]; ok && !beforeContent.isEmpty() {
 				if err := emitGeneratedContent(beforeContent); err != nil {
 					return err
 				}
@@ -2378,32 +2383,35 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					} else if sp, err := bag.SP(v); err == nil {
 						wd = sp
 					}
-				case "!width":
-					if pct, isPct := parseSVGPercentWidth(v); isPct {
-						widthPct = pct
-					} else {
-						wd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
-					}
-				case "!max-width":
-					// CSS max-width. Percent resolves against the
-					// container (deferred path), absolute lengths cap
-					// eagerly. Keyword values (none, max-content, …)
-					// mean "no cap" and must not reach
-					// ParseRelativeSize, which returns the font size
-					// for unparseable input.
-					if pct, isPct := parseSVGPercentWidth(v); isPct {
-						maxWidthPct = pct
-					} else if sp, err := bag.SP(v); err == nil {
-						maxWd = sp
-					} else if strings.HasSuffix(v, "em") || strings.HasSuffix(v, "rem") {
-						maxWd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
-					}
 				case "height":
 					if sp, err := bag.SP(v); err == nil {
 						ht = sp
 					}
 				case "src":
 					filename = v
+				}
+			}
+			// CSS beats the width/height content attributes: those are
+			// presentational hints, the lowest level of the cascade.
+			if v := item.Styles.Get("width"); v != "" {
+				if pct, isPct := parseSVGPercentWidth(v); isPct {
+					widthPct = pct
+				} else {
+					wd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
+				}
+			}
+			if v := item.Styles.Get("max-width"); v != "" {
+				// Percent resolves against the container (deferred path),
+				// absolute lengths cap eagerly. Keyword values (none,
+				// max-content, …) mean "no cap" and must not reach
+				// ParseRelativeSize, which returns the font size for
+				// unparseable input.
+				if pct, isPct := parseSVGPercentWidth(v); isPct {
+					maxWidthPct = pct
+				} else if sp, err := bag.SP(v); err == nil {
+					maxWd = sp
+				} else if strings.HasSuffix(v, "em") || strings.HasSuffix(v, "rem") {
+					maxWd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
 				}
 			}
 			imgDims := imageDims{wd: wd, widthPct: widthPct, ht: ht, maxWd: maxWd, maxPct: maxWidthPct}
@@ -2565,11 +2573,6 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					} else {
 						return fmt.Errorf("barcode: invalid width %q: %w", v, err)
 					}
-				case "!width":
-					cs := ss.CurrentStyle()
-					if !strings.HasSuffix(v, "%") {
-						wd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
-					}
 				case "height":
 					if sp, err := bag.SP(v); err == nil {
 						ht = sp
@@ -2579,6 +2582,10 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				case "eclevel":
 					eclevelStr = v
 				}
+			}
+			// CSS width beats the content attribute, as for <img>.
+			if v := item.Styles.Get("width"); v != "" && !strings.HasSuffix(v, "%") {
+				wd = ParseRelativeSize(v, ss.CurrentStyle().Fontsize, defaultFontsize)
 			}
 			if value == "" {
 				return fmt.Errorf("barcode: missing value attribute")
@@ -2602,7 +2609,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 		}
 
 		// Handle content-generated leaders on empty elements.
-		if contentVal, ok := item.Styles["content"]; ok && strings.HasPrefix(contentVal, "leader(") {
+		if fn, _, ok := item.Styles["content"].function(); ok && fn == "leader" {
 			leaderText := frontend.NewText()
 			sty := ss.PushStyles()
 			if err := StylesToStyles(sty, item.Styles, df, currentFontsize); err != nil {
@@ -2681,7 +2688,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 		// Skipped on <li> (marker path renders ::before through a
 		// different gutter mechanism).
 		if item.Data != "li" {
-			if afterContent, ok := item.Styles["after::content"]; ok && afterContent != "" {
+			if afterContent, ok := item.Styles["after::content"]; ok && !afterContent.isEmpty() {
 				if err := emitGeneratedContent(afterContent); err != nil {
 					return err
 				}

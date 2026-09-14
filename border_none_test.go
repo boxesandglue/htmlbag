@@ -6,12 +6,11 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"golang.org/x/net/html"
 )
 
 // stylesToBorderWidths runs one CSS declaration block through the style
 // resolver and returns the four resolved border widths.
-func stylesToBorderWidths(t *testing.T, decls map[string]string) [4]bag.ScaledPoint {
+func stylesToBorderWidths(t *testing.T, decls StyleMap) [4]bag.ScaledPoint {
 	t.Helper()
 	fe, err := frontend.NewForWriter(&bytes.Buffer{})
 	if err != nil {
@@ -29,11 +28,8 @@ func stylesToBorderWidths(t *testing.T, decls map[string]string) [4]bag.ScaledPo
 func TestBorderNoneZeroesWidth(t *testing.T) {
 	// The CSS parser expands the shorthand before the renderer sees it, so the
 	// test feeds the resolved longhands the same way the cascade does.
-	resolve := func(shorthand string) map[string]string {
-		styles, _ := ResolveAttributes([]html.Attribute{
-			{Key: "!border", Val: shorthand},
-		})
-		return styles
+	resolve := func(shorthand string) StyleMap {
+		return resolveCSSText("border: " + shorthand)
 	}
 
 	for _, shorthand := range []string{"none", "0", "hidden"} {
@@ -60,10 +56,7 @@ func TestBorderNoneZeroesWidth(t *testing.T) {
 	// A longhand after the shorthand still wins: only the sides left at
 	// style none lose their width.
 	t.Run("longhandOverridesShorthand", func(t *testing.T) {
-		styles := resolve("none")
-		styles["border-top-style"] = "solid"
-		styles["border-top-width"] = "2pt"
-		got := stylesToBorderWidths(t, styles)
+		got := stylesToBorderWidths(t, resolveCSSText("border: none; border-top-style: solid; border-top-width: 2pt"))
 		if want := bag.MustSP("2pt"); got[0] != want {
 			t.Errorf("top border is %s, want %s", got[0], want)
 		}

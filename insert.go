@@ -160,7 +160,7 @@ func isFloatElement(item *HTMLItem) bool {
 	if item == nil {
 		return false
 	}
-	switch item.Styles["float"] {
+	switch item.Styles.Get("float") {
 	case "top", "before", "bottom", "after":
 		return true
 	}
@@ -176,7 +176,7 @@ func floatClassFor(item *HTMLItem) InsertClass {
 	if item == nil {
 		return InsertFloatTop
 	}
-	switch item.Styles["float"] {
+	switch item.Styles.Get("float") {
 	case "bottom", "after":
 		return InsertFloatBottom
 	default:

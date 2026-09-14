@@ -1,7 +1,6 @@
 package htmlbag
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"regexp"
@@ -22,7 +21,6 @@ var (
 	dimen              = regexp.MustCompile(`^^[+\-]?(?:(?:0+|[1-9]\d*)(?:\.\d*)?|\.\d+)(px|mm|cm|in|pt|pc|ch|em|ex|lh|rem|0)$`)
 	zeroDimen          = regexp.MustCompile(`^0+(px|mm|cm|in|pt|pc|ch|em|ex|lh|rem)?`)
 	style              = regexp.MustCompile(`^none|hidden|dotted|dashed|solid|double|groove|ridge|inset|outset$`)
-	colorMatcher       = regexp.MustCompile(`^(?:rgba?|hsla?|cmyk|device-cmyk)\s*\(`)
 	toprightbottomleft = [...]string{"top", "right", "bottom", "left"}
 )
 
@@ -102,31 +100,19 @@ func stringValue(toks tokenstream) string {
 	return strings.Join(ret, " ")
 }
 
-// Recurse through the HTML tree and resolve the style attribute
-func resolveStyle(i int, sel *goquery.Selection) {
-	a, b := sel.Attr("style")
-	if b {
-		var tokens tokenstream
-
-		s := scanner.New(a)
-		for {
-			token := s.Next()
-			if token.Type == scanner.EOF || token.Type == scanner.Error {
-				break
+// resolveStyleAttribute recurses through the HTML tree and folds every inline
+// style="..." attribute into the cascade. It runs after the stylesheet rules,
+// so an inline declaration wins over any selector regardless of specificity.
+func (c *CSS) resolveStyleAttribute(i int, sel *goquery.Selection) {
+	if a, ok := sel.Attr("style"); ok {
+		decls := declarationsFromText(a)
+		for _, node := range sel.Nodes {
+			for _, d := range decls {
+				c.setDeclaration(node, d.property, d.value)
 			}
-			switch token.Type {
-			case scanner.Comment:
-				// ignore
-			default:
-				tokens = append(tokens, token)
-			}
-		}
-		block := consumeBlock(tokens, true)
-		for _, rule := range block.rules {
-			sel.SetAttr("!"+stringValue(rule.key), stringValue(rule.value))
 		}
 	}
-	sel.Children().Each(resolveStyle)
+	sel.Children().Each(c.resolveStyleAttribute)
 }
 
 func isDimension(str string) (bool, string) {
@@ -142,300 +128,6 @@ func isDimension(str string) (bool, string) {
 }
 func isBorderStyle(str string) (bool, string) {
 	return style.MatchString(str), str
-}
-
-// getFourValues fills all four values for top, bottom, left and right from one
-// to four values in margin/padding etc.
-func getFourValues(str string) map[string]string {
-	fields := strings.Fields(str)
-	fourValues := make(map[string]string)
-	switch len(fields) {
-	case 1:
-		fourValues["top"] = fields[0]
-		fourValues["right"] = fields[0]
-		fourValues["bottom"] = fields[0]
-		fourValues["left"] = fields[0]
-	case 2:
-		fourValues["top"] = fields[0]
-		fourValues["right"] = fields[1]
-		fourValues["bottom"] = fields[0]
-		fourValues["left"] = fields[1]
-	case 3:
-		fourValues["top"] = fields[0]
-		fourValues["right"] = fields[1]
-		fourValues["bottom"] = fields[2]
-		fourValues["left"] = fields[1]
-	case 4:
-		fourValues["top"] = fields[0]
-		fourValues["right"] = fields[1]
-		fourValues["bottom"] = fields[2]
-		fourValues["left"] = fields[3]
-	}
-
-	return fourValues
-}
-
-// parseBorderAttribute splits "1pt solid black" into three parts.
-func parseBorderAttribute(input string) (width string, style string, color string) {
-	s := bufio.NewScanner(strings.NewReader(input))
-	s.Split(bufio.ScanWords)
-
-	width = "1pt"
-	style = "none"
-	color = "currentcolor"
-	// 0 = width, 1 = style, 2 = color
-	for s.Scan() {
-		t := s.Text()
-		// looking for width
-		ok, wd := isDimension(t)
-		if ok {
-			width = wd
-			continue
-		}
-		// looking for style
-		if t := t; t == "none" || t == "hidden" || t == "dotted" || t == "dashed" || t == "solid" || t == "double" || t == "groove" || t == "ridge" || t == "inset" || t == "outset" {
-			style = t
-			continue
-		}
-		if strings.HasPrefix(t, "#") {
-			color = t
-			return
-		}
-		if colorMatcher.MatchString(t) {
-			color = t
-			for s.Scan() {
-				color += " " + s.Text()
-			}
-			return
-		}
-
-		color = t
-	}
-	return
-}
-
-// GetAttributes returns a map from all HTML attributes.
-func GetAttributes(attrs []html.Attribute) map[string]string {
-	resolved := make(map[string]string, len(attrs))
-	for _, attr := range attrs {
-		key := strings.TrimPrefix(attr.Key, "*")
-		key = strings.TrimPrefix(key, "!")
-		resolved[key] = attr.Val
-	}
-	return resolved
-}
-
-// ResolveAttributes returns the resolved styles and the attributes of the node.
-// The argument attrs is unchanged. This function transforms rules such as
-// "margin: 1cm;" into "margin-left: 1cm; margin-right: 1cm; ...". Attributes
-// without a ! prefix are not resolved, just copied to the newAttributes return
-// value. All other attributes are copied to the newAttributes prefixed with a *
-// and all the resolved attributes prefixed with an exclamation mark. The
-// resolved map contains only the resolved attributes and values without a prefix.
-func ResolveAttributes(attrs []html.Attribute) (resolved map[string]string, newAttributes []html.Attribute) {
-	resolved = make(map[string]string)
-	newAttributes = make([]html.Attribute, 0, len(attrs))
-	// attribute resolving must be in order of appearance.
-	// For example the following border-left-style has no effect:
-	//    border-left-style: dotted;
-	//    border-left: thick green;
-	// because the second line overrides the first line (style defaults to "none")
-	for _, attr := range attrs {
-		key := attr.Key
-		if !strings.HasPrefix(key, "!") {
-			newAttributes = append(newAttributes, attr)
-			continue
-		}
-		key = strings.TrimPrefix(key, "!")
-		newAttributes = append(newAttributes, html.Attribute{Key: "*" + key, Val: attr.Val})
-		switch key {
-		case "margin":
-			values := getFourValues(attr.Val)
-			for _, margin := range toprightbottomleft {
-				resolved["margin-"+margin] = values[margin]
-				newAttributes = append(newAttributes, html.Attribute{Key: "*margin-" + margin, Val: values[margin]})
-			}
-		case "list-style":
-			for _, part := range strings.Split(attr.Val, " ") {
-				switch part {
-				case "inside", "outside":
-					resolved["list-style-position"] = part
-					newAttributes = append(newAttributes, html.Attribute{Key: "*list-style-position", Val: part})
-				default:
-					if strings.HasPrefix(part, "url") {
-						resolved["list-style-image"] = part
-						newAttributes = append(newAttributes, html.Attribute{Key: "*list-style-image", Val: part})
-					} else {
-						resolved["list-style-type"] = part
-						newAttributes = append(newAttributes, html.Attribute{Key: "*list-style-type", Val: part})
-					}
-				}
-			}
-		case "padding":
-			values := getFourValues(attr.Val)
-			for _, padding := range toprightbottomleft {
-				resolved["padding-"+padding] = values[padding]
-				newAttributes = append(newAttributes, html.Attribute{Key: "*padding-" + padding, Val: values[padding]})
-			}
-		case "border":
-			wd, style, color := parseBorderAttribute(attr.Val)
-			for _, loc := range toprightbottomleft {
-				resolved["border-"+loc+"-style"] = style
-				resolved["border-"+loc+"-width"] = wd
-				resolved["border-"+loc+"-color"] = color
-				newAttributes = append(newAttributes,
-					html.Attribute{Key: "*border-" + loc + "-style", Val: style},
-					html.Attribute{Key: "*border-" + loc + "-width", Val: wd},
-					html.Attribute{Key: "*border-" + loc + "-color", Val: color},
-				)
-			}
-		case "border-radius":
-			for _, lr := range []string{"left", "right"} {
-				for _, tb := range []string{"top", "bottom"} {
-					resolved["border-"+tb+"-"+lr+"-radius"] = attr.Val
-					newAttributes = append(newAttributes,
-						html.Attribute{Key: "*border-" + tb + "-" + lr + "-radius", Val: attr.Val},
-					)
-				}
-			}
-		case "border-top", "border-right", "border-bottom", "border-left":
-			wd, sty, col := parseBorderAttribute(attr.Val)
-			resolved[key+"-width"], resolved[key+"-style"], resolved[key+"-color"] = wd, sty, col
-			newAttributes = append(newAttributes,
-				html.Attribute{Key: "*" + key + "-width", Val: wd},
-				html.Attribute{Key: "*" + key + "-style", Val: sty},
-				html.Attribute{Key: "*" + key + "-color", Val: col},
-			)
-
-		case "border-color":
-			values := getFourValues(attr.Val)
-			for _, loc := range toprightbottomleft {
-				resolved["border-"+loc+"-color"] = values[loc]
-				newAttributes = append(newAttributes,
-					html.Attribute{Key: "*border-" + loc + "-color", Val: values[loc]},
-				)
-			}
-		case "border-style":
-			values := getFourValues(attr.Val)
-			for _, loc := range toprightbottomleft {
-				resolved["border-"+loc+"-style"] = values[loc]
-				newAttributes = append(newAttributes,
-					html.Attribute{Key: "*border-" + loc + "-style", Val: values[loc]},
-				)
-			}
-		case "border-width":
-			values := getFourValues(attr.Val)
-			for _, loc := range toprightbottomleft {
-				resolved["border-"+loc+"-width"] = values[loc]
-				newAttributes = append(newAttributes,
-					html.Attribute{Key: "*border-" + loc + "-width", Val: values[loc]},
-				)
-			}
-			resolved[key] = attr.Val
-		case "font":
-			fontstyle := "normal"
-			fontweight := "normal"
-
-			/*
-				it must include values for:
-					<font-size>
-					<font-family>
-				it may optionally include values for:
-					<font-style>
-					<font-variant>
-					<font-weight>
-					<font-stretch>
-					<line-height>
-				* font-style, font-variant and font-weight must precede font-size
-				* font-variant may only specify the values defined in CSS 2.1, that is normal and small-caps
-				* font-stretch may only be a single keyword value.
-				* line-height must immediately follow font-size, preceded by "/", like this: "16px/3"
-				* font-family must be the last value specified.
-			*/
-			val := attr.Val
-			fields := strings.Fields(val)
-			l := len(fields)
-			for idx, field := range fields {
-				if idx > l-3 {
-					if dimen.MatchString(field) || strings.Contains(field, "%") {
-						resolved["font-size"] = field
-						newAttributes = append(newAttributes,
-							html.Attribute{Key: "*font-size", Val: field},
-						)
-
-					} else {
-						resolved["font-name"] = field
-						newAttributes = append(newAttributes,
-							html.Attribute{Key: "*font-name", Val: field},
-						)
-					}
-				}
-			}
-			resolved["font-style"] = fontstyle
-			resolved["font-weight"] = fontweight
-			newAttributes = append(newAttributes,
-				html.Attribute{Key: "*font-style", Val: fontstyle},
-				html.Attribute{Key: "*font-weight", Val: fontweight},
-			)
-
-		// font-stretch: ultra-condensed; extra-condensed; condensed;
-		// semi-condensed; normal; semi-expanded; expanded; extra-expanded;
-		// ultra-expanded;
-		case "text-decoration":
-			for _, part := range strings.Split(attr.Val, " ") {
-				if part == "none" || part == "underline" || part == "overline" || part == "line-through" {
-					resolved["text-decoration-line"] = part
-					newAttributes = append(newAttributes,
-						html.Attribute{Key: "*text-decoration-line", Val: part},
-					)
-
-				} else if part == "solid" || part == "double" || part == "dotted" || part == "dashed" || part == "wavy" {
-					resolved["text-decoration-style"] = part
-					newAttributes = append(newAttributes,
-						html.Attribute{Key: "*text-decoration-style", Val: part},
-					)
-				}
-			}
-
-		case "background":
-			// background-clip, background-color, background-image,
-			// background-origin, background-position, background-repeat,
-			// background-size, and background-attachment.
-			// stringValue() round-trips function-valued tokens with spaces
-			// in between (e.g. "cmyk( 100% , 0% , 0% , 0% )"), so a naive
-			// space-split would shatter the value into useless fragments.
-			// Treat a leading color-function call as the whole color value.
-			if trimmed := strings.TrimSpace(attr.Val); colorMatcher.MatchString(trimmed) {
-				resolved["background-color"] = trimmed
-				newAttributes = append(newAttributes,
-					html.Attribute{Key: "*background-color", Val: trimmed},
-				)
-			} else {
-				for _, part := range strings.Split(attr.Val, " ") {
-					resolved["background-color"] = part
-					newAttributes = append(newAttributes,
-						html.Attribute{Key: "*background-color", Val: part},
-					)
-				}
-			}
-		default:
-			resolved[key] = attr.Val
-			newAttributes = append(newAttributes, attr)
-		}
-	}
-
-	// Default the style only when nothing has set it. This block used to run
-	// unconditionally, overwriting a style parsed from the shorthand above or
-	// declared through the text-decoration-style longhand.
-	if str, ok := resolved["text-decoration-line"]; ok && str != "none" {
-		if _, set := resolved["text-decoration-style"]; !set {
-			resolved["text-decoration-style"] = "solid"
-			newAttributes = append(newAttributes,
-				html.Attribute{Key: "*text-decoration-style", Val: "solid"},
-			)
-		}
-	}
-	return
 }
 
 // validateSelectors parses every selector of the block's rule blocks and
@@ -455,9 +147,15 @@ func validateSelectors(block sBlock) error {
 	return nil
 }
 
-// ApplyCSS resolves CSS rules in the DOM. Each CSS rule is added to the
-// selection as an attribute (prefixed with a !). Pseudo elements are prefixed
-// with ::.
+// ApplyCSS resolves the CSS rules against the DOM and records the cascade
+// result for every matched element on the CSS object, where ComputedStyles
+// reads it back. Pseudo-element declarations keep a "name::" prefix on the
+// property, e.g. "before::content". The DOM itself is left untouched; the
+// values never leave their parsed token form.
+//
+// One CSS object holds the result of one ApplyCSS run: the next call replaces
+// it. Read the styles of a document (or walk it) before applying CSS to
+// another one.
 func (c *CSS) ApplyCSS(doc *goquery.Document) (*goquery.Document, error) {
 	type selRule struct {
 		selector cascadia.Sel
@@ -490,6 +188,7 @@ func (c *CSS) ApplyCSS(doc *goquery.Document) (*goquery.Document, error) {
 	}
 	// now sorted by specificity
 	sort.Ints(keys)
+	c.computed = make(map[*html.Node][]declaration)
 	root := doc.Get(0)
 	for _, k := range keys {
 		for _, r := range rules[k] {
@@ -499,24 +198,35 @@ func (c *CSS) ApplyCSS(doc *goquery.Document) (*goquery.Document, error) {
 					if pe := r.selector.PseudoElement(); pe != "" {
 						prefix = pe + "::"
 					}
-					// remove attributes with the same name, since the new ones
-					// must override the old ones.
-					key := "!" + prefix + stringValue(singlerule.key)
-					newAttributes := make([]html.Attribute, 0, len(node.Attr))
-					for _, attr := range node.Attr {
-						if attr.Key != key {
-							newAttributes = append(newAttributes, attr)
-						}
-					}
-					newAttributes = append(newAttributes, html.Attribute{Key: key, Val: stringValue(singlerule.value)})
-					node.Attr = newAttributes
+					c.setDeclaration(node, prefix+stringValue(singlerule.key), singlerule.value)
 				}
 			}
 		}
 	}
 
-	doc.Each(resolveStyle)
+	doc.Each(c.resolveStyleAttribute)
 	return doc, nil
+}
+
+// setDeclaration records one cascaded declaration for a node. A property that
+// is already present is dropped and re-appended, so the last writer both wins
+// and ends up last in the order that shorthand expansion walks.
+func (c *CSS) setDeclaration(n *html.Node, property string, value tokenstream) {
+	decls := c.computed[n]
+	for i, d := range decls {
+		if d.property == property {
+			decls = append(decls[:i], decls[i+1:]...)
+			break
+		}
+	}
+	c.computed[n] = append(decls, declaration{property: property, value: value})
+}
+
+// ComputedStyles returns the computed CSS declarations of a node, with every
+// shorthand expanded into its longhands. Valid until the next ApplyCSS call;
+// an element no rule matched yields an empty map.
+func (c *CSS) ComputedStyles(n *html.Node) StyleMap {
+	return resolveDeclarations(c.computed[n])
 }
 
 // PapersizeWidthHeight converts the spec to the width and height. The parameter

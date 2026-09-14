@@ -37,7 +37,7 @@ func isPositionedElement(item *HTMLItem) bool {
 	if item == nil {
 		return false
 	}
-	switch item.Styles["position"] {
+	switch item.Styles.Get("position") {
 	case "absolute":
 		return true
 	}
@@ -46,24 +46,18 @@ func isPositionedElement(item *HTMLItem) bool {
 
 // runningElementName extracts the name from a `position: running(name)`
 // declaration (CSS GCPM running elements). Returns "" when the element
-// has no such declaration. The raw style value is inspected (not
-// FormattingStyles.position) so the identifier keeps its original case;
-// it must match the ident used in `content: element(name)` exactly.
-// After the stringValue round trip the value arrives as
-// "running( name )", so spaces around the name are tolerated.
+// has no such declaration. The name comes straight off the function's
+// argument token, so the identifier keeps its original case; it must
+// match the ident used in `content: element(name)` exactly.
 func runningElementName(item *HTMLItem) string {
 	if item == nil {
 		return ""
 	}
-	v := strings.TrimSpace(item.Styles["position"])
-	if !strings.HasPrefix(strings.ToLower(v), "running(") {
+	fn, args, ok := item.Styles["position"].function()
+	if !ok || !strings.EqualFold(fn, "running") {
 		return ""
 	}
-	inner := v[len("running("):]
-	if idx := strings.IndexByte(inner, ')'); idx >= 0 {
-		inner = inner[:idx]
-	}
-	return strings.TrimSpace(inner)
+	return stringValue(args)
 }
 
 // captureRunningElement formats nothing and paints nothing: it stores the

@@ -88,40 +88,18 @@ type ContentToken struct {
 
 // ParseContentValue tokenises a raw CSS content-property value string
 // and returns the structured ContentToken slice. Convenience wrapper for
-// callers that already have the value as a string (e.g. an HTML attribute
-// like `!before::content` produced by ApplyCSS).
+// callers that only have the value as text; the renderer reads the tokens
+// the cascade already produced and calls parseContentTokens directly.
 func ParseContentValue(value string) []ContentToken {
 	return parseContentTokens(tokenizeCSSString(value))
 }
 
 // parseContentTokens converts a CSS tokenstream (the value side of a
 // content property) into structured ContentToken values.
-//
-// The function accepts BOTH the direct Function-token form (e.g. when
-// reading content directly from @page rules) AND the round-tripped
-// "Ident ( ... )" form. The round trip happens when ApplyCSS stringifies
-// a content value into an HTML attribute and a later caller has to
-// retokenise it — the original Function token decomposes into a bare
-// Ident plus a Delim "(" with whitespace in between.
 func parseContentTokens(ts tokenstream) []ContentToken {
 	var tokens []ContentToken
 	for i := 0; i < len(ts); i++ {
 		tok := ts[i]
-		// Round-trip recovery: a bare Ident immediately followed (across
-		// optional whitespace) by Delim "(" is the same as a Function
-		// token. Rewrite tok in place so the regular Function branch
-		// below handles it.
-		if tok.Type == scanner.Ident {
-			j := i + 1
-			for j < len(ts) && ts[j].Type == scanner.S {
-				j++
-			}
-			if j < len(ts) && ts[j].Type == scanner.Delim && ts[j].Value == "(" {
-				name := tok.Value
-				tok = &scanner.Token{Type: scanner.Function, Value: name}
-				i = j // skip past the "("
-			}
-		}
 		switch tok.Type {
 		case scanner.String:
 			tokens = append(tokens, ContentToken{Type: ContentString, Value: tok.Value})
@@ -366,15 +344,18 @@ func parseTargetReference(ts tokenstream, i int) (id, attr string, newIdx int) {
 
 // Page defines a page.
 type Page struct {
-	PageArea        map[string]map[string]string // key value pairs for the page areas
-	PageAreaContent map[string][]ContentToken    // parsed content tokens per area
-	Attributes      []html.Attribute
-	Papersize       string
-	MarginLeft      string
-	MarginRight     string
-	MarginTop       string
-	MarginBottom    string
-	pageareaRules   map[string][]qrule
+	PageArea        map[string]StyleMap       // computed styles per page area
+	PageAreaContent map[string][]ContentToken // parsed content tokens per area
+	// Attributes holds the page's own declarations in cascade order, ready
+	// for resolveDeclarations. Kept unresolved so a later stylesheet can add
+	// to the list before the shorthands are expanded.
+	Attributes    []declaration
+	Papersize     string
+	MarginLeft    string
+	MarginRight   string
+	MarginTop     string
+	MarginBottom  string
+	pageareaRules map[string][]qrule
 }
 
 // CSS is the main structure that contains cascading style sheet information.
@@ -386,6 +367,10 @@ type CSS struct {
 	FontFaces  []FontFace
 	dirstack   []string
 	stylesheet []sBlock
+	// computed holds the cascade result per element, filled by ApplyCSS and
+	// read by the renderer. The declarations stay in cascade order because
+	// shorthand expansion depends on it.
+	computed map[*html.Node][]declaration
 }
 
 // PushDir adds a directory to the dir stack. When a file is opened, all new
@@ -893,11 +878,11 @@ func (c *CSS) doPage(block *sBlock) {
 		case "size":
 			pg.Papersize = v.value.String()
 		case "margin":
-			fv := getFourValues(v.value.String())
-			pg.MarginTop = fv["top"]
-			pg.MarginBottom = fv["bottom"]
-			pg.MarginLeft = fv["left"]
-			pg.MarginRight = fv["right"]
+			fv := fourValues(v.value)
+			pg.MarginTop = fv["top"].String()
+			pg.MarginBottom = fv["bottom"].String()
+			pg.MarginLeft = fv["left"].String()
+			pg.MarginRight = fv["right"].String()
 		// The margin longhands are valid page-context properties (CSS Paged
 		// Media 3 §7.2). Without these cases they fell into the generic
 		// attribute list, where nothing consumes them for the page geometry —
@@ -916,8 +901,7 @@ func (c *CSS) doPage(block *sBlock) {
 			// still on the dirstack; downstream consumers run after PopDir
 			// and would resolve against the document instead (issue #3).
 			c.resolveURITokens(v.value)
-			a := html.Attribute{Key: "!" + v.key.String(), Val: stringValue(v.value)}
-			pg.Attributes = append(pg.Attributes, a)
+			pg.Attributes = append(pg.Attributes, declaration{property: v.key.String(), value: v.value})
 		}
 	}
 	for _, rule := range block.childAtRules {
@@ -927,15 +911,14 @@ func (c *CSS) doPage(block *sBlock) {
 		pg.pageareaRules[rule.name] = rule.rules
 	}
 	if pg.PageArea == nil {
-		pg.PageArea = make(map[string]map[string]string)
+		pg.PageArea = make(map[string]StyleMap)
 	}
 	for k, v := range pg.pageareaRules {
-		attrs := make([]html.Attribute, 0, len(v))
+		decls := make([]declaration, 0, len(v))
 		for _, r := range v {
-			attrs = append(attrs, html.Attribute{Key: "!" + r.key.String(), Val: stringValue(r.value)})
+			decls = append(decls, declaration{property: r.key.String(), value: r.value})
 		}
-		a, _ := ResolveAttributes(attrs)
-		pg.PageArea[strings.TrimPrefix(k, "@")] = a
+		pg.PageArea[strings.TrimPrefix(k, "@")] = resolveDeclarations(decls)
 	}
 
 	if pg.PageAreaContent == nil {
