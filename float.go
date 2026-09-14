@@ -47,6 +47,8 @@ import (
 //     falls back to the gutter (the margin has to beat zero to be used), and on
 //     the far side it flows into the shift and the inset unfiltered, pulling the
 //     float outside its container rather than overlapping the text beside it.
+//     Below the float it shortens the band, down to nothing at all, but never
+//     past the float box, which the container holds whatever the margin says.
 //   - Pagination runs through a band: the float box reserves no vertical space,
 //     so a float near the bottom of a page paints past the page edge and the
 //     lines it shortened continue on the next page beside nothing.
@@ -121,7 +123,13 @@ func (m floatMargins) gutter(side string) bag.ScaledPoint {
 type floatBand struct {
 	side      string          // "left" or "right"
 	inset     bag.ScaledPoint // what content has to give up to clear the float
-	remaining bag.ScaledPoint // float height not yet passed
+	remaining bag.ScaledPoint // band height not yet passed
+	// boxRemaining is the float box's own extent not yet passed. It is the band
+	// itself until a negative bottom margin shortens the band below the box: the
+	// text then runs full width again sooner, but the container still has to hold
+	// the box, since this engine does not paint out-of-flow content over the
+	// following flow.
+	boxRemaining bag.ScaledPoint
 	// inherited marks a band that belongs to an ancestor: the float is painted
 	// and extended by whoever opened it, and this container only narrows the
 	// children the band still covers.
@@ -247,7 +255,14 @@ func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint,
 		}
 		box = wrapper
 	}
-	height := box.Height + box.Depth + m.bottom
+	boxHeight := box.Height + box.Depth
+	// A negative bottom margin pulls the text up beside the float: the band ends
+	// that much sooner, and a margin deeper than the float ends it at once. It
+	// does not pull the float up with it, so what the container still has to hold
+	// is tracked apart from the band (see floatBand.boxRemaining). A band shorter
+	// than nothing is simply spent: every reader of remaining tests it against
+	// zero, and clamping it here would be a branch nothing can observe.
+	height := boxHeight + m.bottom
 	width := box.Width
 	if side == "right" {
 		box.ShiftX = wd - width - m.right
@@ -273,7 +288,7 @@ func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint,
 	} else {
 		inset += m.left
 	}
-	return &floatBand{side: side, inset: inset, remaining: height}
+	return &floatBand{side: side, inset: inset, remaining: height, boxRemaining: boxHeight}
 }
 
 // narrow marks a child as sitting in the band. The row count is left to the
@@ -295,9 +310,22 @@ func clearBandStamp(itm any) {
 	}
 }
 
+// gap is what still has to be left below the content beside the float: the band
+// the text clears, or the float box itself where a negative bottom margin made
+// the band the shorter of the two.
+func (b *floatBand) gap() bag.ScaledPoint {
+	if b.boxRemaining > b.remaining {
+		return b.boxRemaining
+	}
+	return b.remaining
+}
+
 func (b *floatBand) consume(height bag.ScaledPoint) bool {
 	b.remaining -= height
-	return b.remaining > 0
+	b.boxRemaining -= height
+	// The band outlives its text side: a float whose band a negative margin cut
+	// short is still a box the container has to make room for.
+	return b.gap() > 0
 }
 
 // floatIndentFor turns a band into the linebreaker's per-row inset, consuming

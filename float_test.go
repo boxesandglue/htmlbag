@@ -740,3 +740,47 @@ func TestAFloatsTopMarginKeepsTheBoxsAttributes(t *testing.T) {
 		}
 	}
 }
+
+// A negative bottom margin shortens the band, and shortening the band is all it
+// does. The float box itself is still held inside the container: this engine
+// does not paint out-of-flow content over the following flow, and a float
+// hanging out of its container has nothing sensible to do at a page break.
+func TestANegativeBottomMarginKeepsTheFloatInTheContainer(t *testing.T) {
+	const tall = `float:left;width:60pt;height:200pt`
+	height := func(style string) bag.ScaledPoint {
+		vl := buildHTML(t, floatBuilder(t), `<div><div style="`+style+`"></div><p>one short line</p></div>`)
+		return vl.Height + vl.Depth
+	}
+	// Nothing beside the float is anywhere near as tall, so the container is
+	// exactly the float.
+	want := height(tall)
+	for _, margin := range []string{"-100pt", "-300pt"} {
+		if got := height(tall + ";margin-bottom:" + margin); got != want {
+			t.Errorf("with margin-bottom:%s the container is %s tall, want %s: the float hangs %s out of the bottom of it",
+				margin, got, want, want-got)
+		}
+	}
+}
+
+// The other half: the band really is shorter, so the text runs full width again
+// beside the float rather than below it.
+func TestANegativeBottomMarginShortensTheBand(t *testing.T) {
+	narrowed := func(style string) int {
+		n := 0
+		for _, in := range lineIndents(buildHTML(t, floatBuilder(t),
+			`<div><div style="`+style+`"></div><p>`+floatProse+`</p></div>`)) {
+			if in > 0 {
+				n++
+			}
+		}
+		return n
+	}
+	const base = `float:left;width:60pt;height:40pt`
+	full := narrowed(base)
+	if full == 0 {
+		t.Fatal("no lines are narrowed without a margin")
+	}
+	if short := narrowed(base + ";margin-bottom:-20pt"); short >= full {
+		t.Errorf("%d lines are narrowed with a -20pt bottom margin and %d without: the margin does not shorten the band", short, full)
+	}
+}

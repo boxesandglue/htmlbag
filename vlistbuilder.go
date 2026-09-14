@@ -235,12 +235,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// skipBand moves the cursor past whatever is left of the live band, so
 		// that what comes next starts below the float rather than beside it.
 		skipBand := func(origin string) {
-			if band.remaining > 0 {
+			if gap := band.gap(); gap > 0 {
 				k := node.NewKern()
-				k.Kern = band.remaining
+				k.Kern = gap
 				k.Attributes = node.H{"origin": origin}
 				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
-				vls.Height += band.remaining
+				vls.Height += gap
 			}
 			band = nil
 		}
@@ -559,12 +559,14 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// an overhanging float has nothing sensible to do at a page break.
 		// An inherited band is the ancestor's to extend: it painted the float and
 		// it is still counting this container's height against the band.
-		if band != nil && !band.inherited && band.remaining > 0 {
-			k := node.NewKern()
-			k.Kern = band.remaining
-			k.Attributes = node.H{"origin": "float"}
-			vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
-			vls.Height += band.remaining
+		if band != nil && !band.inherited {
+			if gap := band.gap(); gap > 0 {
+				k := node.NewKern()
+				k.Kern = gap
+				k.Attributes = node.H{"origin": "float"}
+				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
+				vls.Height += gap
+			}
 		}
 
 		// Handle final margin-bottom after last element.
