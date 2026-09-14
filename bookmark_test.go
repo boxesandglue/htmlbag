@@ -31,8 +31,8 @@ func renderForOutline(t *testing.T, css, html string, configure func(*CSSBuilder
 		configure(cb)
 	}
 	if css != "" {
-		if err := cb.ParseCSSString(css); err != nil {
-			t.Fatalf("ParseCSSString: %v", err)
+		if err := cb.AddCSS(css); err != nil {
+			t.Fatalf("AddCSS: %v", err)
 		}
 	}
 	if err := cb.InitPage(); err != nil {

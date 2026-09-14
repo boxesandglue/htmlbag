@@ -70,8 +70,8 @@ func TestBoxModelTraceEndToEnd(t *testing.T) {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
 	cb.TraceBoxModel = true
-	if err = cb.ParseCSSString(`.boxed { border: 1pt solid black; padding: 3pt; }`); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err = cb.AddCSS(`.boxed { border: 1pt solid black; padding: 3pt; }`); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 	if err = cb.InitPage(); err != nil {
 		t.Fatalf("InitPage: %v", err)

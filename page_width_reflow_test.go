@@ -27,8 +27,8 @@ func renderHTMLPagesCB(t *testing.T, css, html string) ([]*document.Page, *CSSBu
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
-	if err := cb.ParseCSSString(css); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err := cb.AddCSS(css); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 	te, err := cb.HTMLToText(html)
 	if err != nil {

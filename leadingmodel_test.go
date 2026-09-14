@@ -25,7 +25,7 @@ func leadingProbe(t *testing.T, css string) (lines []*node.HList, lineskips int)
 		t.Fatal(err)
 	}
 	if css != "" {
-		if err = cb.ParseCSSString(css); err != nil {
+		if err = cb.AddCSS(css); err != nil {
 			t.Fatal(err)
 		}
 	}

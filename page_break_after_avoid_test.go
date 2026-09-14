@@ -61,8 +61,8 @@ body { font-family: sans; font-size: 11pt; }
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
-	if err := cb.ParseCSSString(css); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err := cb.AddCSS(css); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 	if err := cb.InitPage(); err != nil {
 		t.Fatalf("InitPage: %v", err)

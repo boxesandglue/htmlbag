@@ -297,7 +297,7 @@ func TestFloatInATableCellIsIgnoredRatherThanFatal(t *testing.T) {
 // strips -bag-bookmark for a container's children.
 func TestBookmarkOnAFloatIsNotFatal(t *testing.T) {
 	cb := floatBuilder(t)
-	if err := cb.ParseCSSString(`.mark { -bag-bookmark: 2; }`); err != nil {
+	if err := cb.AddCSS(`.mark { -bag-bookmark: 2; }`); err != nil {
 		t.Fatal(err)
 	}
 	body := `<div><p class="mark" style="float:left;width:60pt">marked</p><p>` + floatProse + `</p></div>`

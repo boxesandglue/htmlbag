@@ -75,8 +75,8 @@ func TestPageBackgroundImagePerPage(t *testing.T) {
 	}
 	css := `@page        { size: 200pt 200pt; margin: 10pt; background-image: url(bg2.png); }
 	        @page :first { background-image: url(bg1.png); }`
-	if err := cb.ParseCSSString(css); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err := cb.AddCSS(css); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 
 	// Page 1 is drawn by InitPage.
@@ -166,16 +166,19 @@ func TestPageBackgroundImageCustomProperty(t *testing.T) {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
 	css := `@page { size: a4; background-image: url(brief.pdf); -bag-background-page: 2; }`
-	if err := cb.ParseCSSString(css); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err := cb.AddCSS(css); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 	pt := cb.getPageType()
 	if pt == nil {
 		t.Fatal("getPageType returned nil")
 	}
 	res, _ := ResolveAttributes(pt.Attributes)
-	if got := res["background-image"]; got != "url(brief.pdf)" {
-		t.Errorf("background-image = %q, want url(brief.pdf)", got)
+	// AddCSS puts the working directory on the dir stack, so the relative
+	// url() comes back resolved. The subject here is that the value survives
+	// at all, not what it resolves against, so only the target is pinned.
+	if got := res["background-image"]; !strings.HasPrefix(got, "url(") || !strings.HasSuffix(got, "brief.pdf)") {
+		t.Errorf("background-image = %q, want a url() pointing at brief.pdf", got)
 	}
 	if got := res["-bag-background-page"]; got != "2" {
 		t.Errorf("-bag-background-page = %q, want 2", got)
@@ -194,8 +197,8 @@ func pageOnePageProp(t *testing.T, css string) string {
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
-	if err := cb.ParseCSSString(css); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err := cb.AddCSS(css); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 	pt := cb.getPageType() // fresh doc: 0 pages placed, so :first applies
 	if pt == nil {

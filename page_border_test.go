@@ -68,8 +68,8 @@ func TestPageBorderPerPage(t *testing.T) {
 	// content to x=25mm (5mm border + 20mm padding), y=10mm (padding-top).
 	css := `@page { size: a4; margin: 0; border-left: 5mm solid #39b004;
 	         padding: 10mm 10mm 35mm 20mm; }`
-	if err := cb.ParseCSSString(css); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err := cb.AddCSS(css); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 
 	wantLeft := bag.MustSP("25mm") // 0 margin + 5mm border + 20mm padding
@@ -133,8 +133,8 @@ func TestPageWithoutBorderUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
-	if err := cb.ParseCSSString(`@page { size: a4; margin: 2cm; }`); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err := cb.AddCSS(`@page { size: a4; margin: 2cm; }`); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 	if err := cb.InitPage(); err != nil {
 		t.Fatalf("InitPage: %v", err)

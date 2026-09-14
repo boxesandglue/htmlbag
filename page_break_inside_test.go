@@ -11,7 +11,7 @@ import (
 
 // TestPageBreakInsideRoundTripsToVListAttribute parses a stylesheet with
 // .avoid-me { page-break-inside: avoid }, runs a matching <div> through
-// the same pipeline a real document would (ParseCSSString → HTMLToText →
+// the same pipeline a real document would (AddCSS → HTMLToText →
 // CreateVlist), and asserts that the materialized VList carries
 // Attributes["pageBreakInside"] = "avoid". This is the load-bearing
 // contract: the paginator (avoidBreakInside) reads the attribute, so if
@@ -31,8 +31,8 @@ func TestPageBreakInsideRoundTripsToVListAttribute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
-	if err := cb.ParseCSSString(`.avoid-me { page-break-inside: avoid }`); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err := cb.AddCSS(`.avoid-me { page-break-inside: avoid }`); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 	const html = `<html><body><div class="avoid-me">single inline line</div></body></html>`
 	te, err := cb.HTMLToText(html)

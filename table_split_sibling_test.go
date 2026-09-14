@@ -12,7 +12,7 @@ import (
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
-// renderHTMLPages runs html through the full pipeline (ParseCSSString →
+// renderHTMLPages runs html through the full pipeline (AddCSS →
 // HTMLToText → OutputPagesFromText) and returns the finished pages.
 func renderHTMLPages(t *testing.T, css, html string) []*document.Page {
 	t.Helper()
@@ -27,8 +27,8 @@ func renderHTMLPages(t *testing.T, css, html string) []*document.Page {
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
-	if err := cb.ParseCSSString(css); err != nil {
-		t.Fatalf("ParseCSSString: %v", err)
+	if err := cb.AddCSS(css); err != nil {
+		t.Fatalf("AddCSS: %v", err)
 	}
 	te, err := cb.HTMLToText(html)
 	if err != nil {
