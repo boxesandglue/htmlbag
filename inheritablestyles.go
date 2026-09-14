@@ -88,6 +88,12 @@ const (
 
 const attrFloat = "float"
 
+// attrFloatMargins carries a floated replaced element's own margins, for the
+// same reason attrFloat carries its side: it never becomes a frontend.Text, and
+// the anonymous inline run it arrives in has margins of its own (zeros), so
+// reading them from there gives a picture no more space than its own box.
+const attrFloatMargins = "float-margins"
+
 // isCSSHeightExempt reports whether an element's CSS height is the business
 // of a dedicated layout path (table layout, replaced elements) rather than
 // the settingCSSHeight flow-space mechanism.
@@ -2495,6 +2501,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					setDeferredFormatter(vl, newRasterImageFormatter(imgNode, intrinsicWd, intrinsicHt, imgDims))
 					if cs.floatSide != "" {
 						vl.Attributes[attrFloat] = cs.floatSide
+						vl.Attributes[attrFloatMargins] = cs.floatMargins()
 					}
 					te.Items = append(te.Items, vl)
 					ss.PopStyles()
@@ -2539,6 +2546,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 						imgNode.Attributes = node.H{}
 					}
 					imgNode.Attributes[attrFloat] = cs.floatSide
+					imgNode.Attributes[attrFloatMargins] = cs.floatMargins()
 				}
 				te.Items = append(te.Items, imgNode)
 			}
