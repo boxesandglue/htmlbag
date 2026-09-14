@@ -6,7 +6,6 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/lang"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // runStylePass renders an HTML fragment through the same path used by the
@@ -20,7 +19,7 @@ func runStylePass(t *testing.T, html string) (*frontend.Document, *frontend.Text
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cssParser := csshtml.NewCSSParserWithDefaults()
+	cssParser := NewCSSParserWithDefaults()
 	cb, err := New(fe, cssParser)
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)

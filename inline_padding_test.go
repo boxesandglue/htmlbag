@@ -7,7 +7,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // TestInlinePaddingSymmetry guards the contract that Mknodes inserts BOTH a
@@ -28,7 +27,7 @@ func TestInlinePaddingSymmetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cssParser := csshtml.NewCSSParserWithDefaults()
+	cssParser := NewCSSParserWithDefaults()
 	cb, err := New(fe, cssParser)
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
@@ -109,7 +108,7 @@ func TestBlockPaddingLeftNotDoubled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cssParser := csshtml.NewCSSParserWithDefaults()
+	cssParser := NewCSSParserWithDefaults()
 	cb, err := New(fe, cssParser)
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)

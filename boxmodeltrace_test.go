@@ -8,7 +8,6 @@ import (
 	pdf "github.com/boxesandglue/baseline-pdf"
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // TestBoxModelOverlayRule checks the generated PDF code of the overlay
@@ -66,7 +65,7 @@ func TestBoxModelTraceEndToEnd(t *testing.T) {
 	if err = LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}

@@ -8,7 +8,6 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 	"golang.org/x/net/html"
 )
 
@@ -121,7 +120,7 @@ func TestOutputBodyHonorsCommaFontFamily(t *testing.T) {
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -153,7 +152,7 @@ func TestOutputHtmlHonorsCommaFontFamily(t *testing.T) {
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}

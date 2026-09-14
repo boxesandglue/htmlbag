@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // collectStrings flattens any string content nested inside a frontend.Text
@@ -35,7 +34,7 @@ func renderToText(t *testing.T, html string) *frontend.Text {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cssParser := csshtml.NewCSSParserWithDefaults()
+	cssParser := NewCSSParserWithDefaults()
 	cb, err := New(fe, cssParser)
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)

@@ -8,7 +8,6 @@ import (
 	"unicode"
 
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 	"golang.org/x/net/html"
 )
 
@@ -168,7 +167,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 			firstItem.Children = append(firstItem.Children, itm)
 			attributes := thisNode.Attr
 			if len(attributes) > 0 {
-				itm.Styles, attributes = csshtml.ResolveAttributes(attributes)
+				itm.Styles, attributes = ResolveAttributes(attributes)
 				for _, attr := range attributes {
 					itm.Attributes[attr.Key] = attr.Val
 				}
@@ -219,7 +218,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 				if eltname == "math" {
 					// MathML round-trips through encoding/xml downstream
 					// (see mathml.Parse), which rejects attribute names
-					// starting with `!` — and csshtml.ApplyCSS injects
+					// starting with `!` — and ApplyCSS injects
 					// exactly such names (`!font-family`, `!color`, …)
 					// onto every matched element. Render a cleaned copy
 					// of the subtree with those marker attrs stripped so
@@ -280,7 +279,7 @@ func GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTM
 }
 
 // stripCSSMarkerAttrs returns a deep copy of n with all `!`-prefixed
-// attributes removed at every descendant. csshtml.ApplyCSS injects
+// attributes removed at every descendant. ApplyCSS injects
 // resolved-CSS attributes like `!font-family`, `!color`, `!font-size`
 // onto matched elements; these names are not valid XML attribute names,
 // so any subtree we serialise and feed back into an XML parser (currently:

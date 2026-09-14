@@ -6,7 +6,6 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // TestPreEmitsPCodeHierarchy guards the PDF/UA-1 contract for fenced code
@@ -86,7 +85,7 @@ func renderForStructTree(t *testing.T, html string) *document.StructureElement {
 	if l, err := frontend.GetLanguage("en"); err == nil {
 		fe.Doc.DefaultLanguage = l
 	}
-	cssParser := csshtml.NewCSSParserWithDefaults()
+	cssParser := NewCSSParserWithDefaults()
 	cb, err := New(fe, cssParser)
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)

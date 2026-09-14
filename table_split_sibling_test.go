@@ -10,7 +10,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // renderHTMLPages runs html through the full pipeline (ParseCSSString →
@@ -24,7 +23,7 @@ func renderHTMLPages(t *testing.T, css, html string) []*document.Page {
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}

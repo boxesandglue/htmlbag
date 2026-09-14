@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // renderHTMLToPDF drives the full HTML → PDF pipeline (the same one glu
@@ -20,7 +19,7 @@ func renderHTMLToPDF(t *testing.T, html string) string {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}

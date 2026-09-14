@@ -8,7 +8,6 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // loadHTMLBagWithMath builds a CSSBuilder with the default included fonts
@@ -32,7 +31,7 @@ func loadHTMLBagWithMath(t *testing.T) *CSSBuilder {
 	if err := mathFam.AddMember(&frontend.FontSource{Location: mathPath, Name: "Latin Modern Math"}, 400, frontend.FontStyleNormal); err != nil {
 		t.Fatalf("AddMember math: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}

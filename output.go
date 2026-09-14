@@ -10,7 +10,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 	"github.com/boxesandglue/svgreader"
 )
 
@@ -60,22 +59,22 @@ var pageMarginBoxFallbackFontSize = bag.MustSP("12pt")
 // counters maps counter names (e.g. "page", "pages") to their current values
 // — used for page-margin-box content and similar flat-scope lookups.
 // target-* tokens are not resolved on this flat path; they collapse to "?".
-func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) string {
+func evaluateContent(tokens []ContentToken, counters map[string]int) string {
 	var sb strings.Builder
 	for _, tok := range tokens {
 		switch tok.Type {
-		case csshtml.ContentString:
+		case ContentString:
 			sb.WriteString(tok.Value)
-		case csshtml.ContentCounter:
+		case ContentCounter:
 			if v, ok := counters[tok.Value]; ok {
 				sb.WriteString(strconv.Itoa(v))
 			}
-		case csshtml.ContentTargetCounter, csshtml.ContentTargetCounters, csshtml.ContentTargetText:
+		case ContentTargetCounter, ContentTargetCounters, ContentTargetText:
 			sb.WriteString("?")
-		case csshtml.ContentAttr:
+		case ContentAttr:
 			// Flat path has no element scope (used for page-margin boxes);
 			// attr() resolves to the empty string here.
-		case csshtml.ContentElement:
+		case ContentElement:
 			// Running element placement is handled as a formatted VList
 			// in BeforeShipout; it contributes no text here.
 		}
@@ -86,7 +85,7 @@ func evaluateContent(tokens []csshtml.ContentToken, counters map[string]int) str
 // resolveTargetID picks the explicit TargetID when set, otherwise falls
 // back to the attrLookup (typically attr(href) on an <a>). The leading
 // "#" is stripped for href values that point at fragments.
-func resolveTargetID(tok csshtml.ContentToken, attrLookup func(string) string) string {
+func resolveTargetID(tok ContentToken, attrLookup func(string) string) string {
 	if tok.TargetID != "" {
 		return tok.TargetID
 	}
@@ -104,15 +103,15 @@ func resolveTargetID(tok csshtml.ContentToken, attrLookup func(string) string) s
 // previous render pass) plus attrLookup (current element's attribute
 // resolver) feed target-counter() / target-text() and friends; pass nil
 // for any of them when not in element scope.
-func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anchorPages map[string]int, anchorTexts map[string]string, anchorCounters map[string]map[string][]int, attrLookup func(string) string) string {
+func evaluateContentWithStack(tokens []ContentToken, ss StylesStack, anchorPages map[string]int, anchorTexts map[string]string, anchorCounters map[string]map[string][]int, attrLookup func(string) string) string {
 	var sb strings.Builder
 	for _, tok := range tokens {
 		switch tok.Type {
-		case csshtml.ContentString:
+		case ContentString:
 			sb.WriteString(tok.Value)
-		case csshtml.ContentCounter:
+		case ContentCounter:
 			sb.WriteString(strconv.Itoa(ss.CounterValue(tok.Value)))
-		case csshtml.ContentCounters:
+		case ContentCounters:
 			vals := ss.CounterValues(tok.Value)
 			for i, v := range vals {
 				if i > 0 {
@@ -120,7 +119,7 @@ func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anc
 				}
 				sb.WriteString(strconv.Itoa(v))
 			}
-		case csshtml.ContentTargetCounter:
+		case ContentTargetCounter:
 			// The "page" counter comes from anchorPages (assigned at
 			// shipout); every other counter from the per-anchor snapshot
 			// taken during the walk. Both resolve on pass 2+ via the aux
@@ -139,7 +138,7 @@ func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anc
 				}
 			}
 			sb.WriteString("?")
-		case csshtml.ContentTargetCounters:
+		case ContentTargetCounters:
 			// Like ContentCounters, but against the anchor's snapshotted
 			// chain instead of the live stack. "page" has no chain (it is
 			// not a stack counter) and stays "?".
@@ -155,7 +154,7 @@ func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anc
 				}
 			}
 			sb.WriteString("?")
-		case csshtml.ContentTargetText:
+		case ContentTargetText:
 			// v1 covers the default `content` (the anchor's text). The
 			// CSS GCPM spec also defines `before`, `after`, and
 			// `first-letter` — those need pseudo-element snapshots and
@@ -169,7 +168,7 @@ func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anc
 				}
 			}
 			sb.WriteString("?")
-		case csshtml.ContentAttr:
+		case ContentAttr:
 			if attrLookup != nil {
 				sb.WriteString(attrLookup(tok.Value))
 			}
@@ -179,9 +178,9 @@ func evaluateContentWithStack(tokens []csshtml.ContentToken, ss StylesStack, anc
 }
 
 // firstContentURL returns the URL from the first ContentURL token, or "".
-func firstContentURL(tokens []csshtml.ContentToken) string {
+func firstContentURL(tokens []ContentToken) string {
 	for _, tok := range tokens {
-		if tok.Type == csshtml.ContentURL {
+		if tok.Type == ContentURL {
 			return tok.Value
 		}
 	}
@@ -190,9 +189,9 @@ func firstContentURL(tokens []csshtml.ContentToken) string {
 
 // firstContentElement returns the running element name from the first
 // ContentElement token (CSS GCPM `content: element(name)`), or "".
-func firstContentElement(tokens []csshtml.ContentToken) string {
+func firstContentElement(tokens []ContentToken) string {
 	for _, tok := range tokens {
-		if tok.Type == csshtml.ContentElement {
+		if tok.Type == ContentElement {
 			return tok.Value
 		}
 	}
@@ -327,7 +326,7 @@ func (cb *CSSBuilder) BeforeShipout() error {
 
 				// Check for url() content (image in margin box).
 				if imgURL := firstContentURL(contentTokens); imgURL != "" {
-					// csshtml resolves the path at parse time (stylesheet
+					// The CSS parser resolves the path at parse time (stylesheet
 					// relative); this is a fallback for values that arrive
 					// unresolved, so already-absolute paths must not go
 					// through FileFinder a second time. FindFile covers both

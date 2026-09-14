@@ -9,7 +9,6 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // renderMathForStructTree runs the full htmlbag pipeline on html with PDF/UA
@@ -41,7 +40,7 @@ func renderMathForStructTree(t *testing.T, html string, format document.Format) 
 	if err := mathFam.AddMember(&frontend.FontSource{Location: mathPath, Name: "Latin Modern Math"}, 400, frontend.FontStyleNormal); err != nil {
 		t.Fatalf("AddMember math: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}

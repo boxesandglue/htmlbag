@@ -16,7 +16,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/boxesandglue/frontend/pdfdraw"
-	"github.com/boxesandglue/csshtml"
 	"golang.org/x/net/html"
 )
 
@@ -104,7 +103,7 @@ type CSSBuilder struct {
 	pagebox               []node.Node
 	currentPageDimensions PageDimensions
 	frontend              *frontend.Document
-	css                   *csshtml.CSS
+	css                   *CSS
 	stylesStack           StylesStack
 	structureRoot         *document.StructureElement
 	structureCurrent      *document.StructureElement
@@ -266,7 +265,7 @@ type CSSBuilder struct {
 }
 
 // New creates an instance of the CSSBuilder.
-func New(fd *frontend.Document, c *csshtml.CSS) (*CSSBuilder, error) {
+func New(fd *frontend.Document, c *CSS) (*CSSBuilder, error) {
 	cb := CSSBuilder{
 		css:                     c,
 		frontend:                fd,
@@ -326,7 +325,7 @@ type PageDimensions struct {
 	PageAreaTop   bag.ScaledPoint
 	ContentWidth  bag.ScaledPoint
 	ContentHeight bag.ScaledPoint
-	masterpage    *csshtml.Page
+	masterpage    *Page
 }
 
 // pageAreaBottom returns the offset of the content area's bottom edge from
@@ -346,7 +345,7 @@ func (pd PageDimensions) PageAreas() map[string]map[string]string {
 }
 
 // CSS returns the underlying CSS parser.
-func (cb *CSSBuilder) CSS() *csshtml.CSS {
+func (cb *CSSBuilder) CSS() *CSS {
 	return cb.css
 }
 
@@ -386,9 +385,9 @@ func (cb *CSSBuilder) recordAnchorSnapshot(id string, ss StylesStack) {
 	cb.anchorSnapshots[id] = snap
 }
 
-func (cb *CSSBuilder) getPageType() *csshtml.Page {
+func (cb *CSSBuilder) getPageType() *Page {
 	base, hasBase := cb.css.Pages[""]
-	pick := func(pseudo csshtml.Page) *csshtml.Page {
+	pick := func(pseudo Page) *Page {
 		if !hasBase {
 			return &pseudo
 		}
@@ -424,7 +423,7 @@ func (cb *CSSBuilder) getPageType() *csshtml.Page {
 // declared in both. Without this merge a pseudo that omits "size" or
 // "margin" propagates "" into bag.SP and aborts page setup with
 // ErrConversion.
-func mergePageWithBase(pseudo, base csshtml.Page) csshtml.Page {
+func mergePageWithBase(pseudo, base Page) Page {
 	merged := pseudo
 	if merged.Papersize == "" {
 		merged.Papersize = base.Papersize
@@ -458,7 +457,7 @@ func mergePageWithBase(pseudo, base csshtml.Page) csshtml.Page {
 		merged.PageArea = union
 	}
 	if len(base.PageAreaContent) > 0 {
-		union := make(map[string][]csshtml.ContentToken, len(base.PageAreaContent)+len(pseudo.PageAreaContent))
+		union := make(map[string][]ContentToken, len(base.PageAreaContent)+len(pseudo.PageAreaContent))
 		for k, v := range base.PageAreaContent {
 			union[k] = v
 		}
@@ -545,7 +544,7 @@ func (cb *CSSBuilder) InitPage() error {
 	}
 	var err error
 	if defaultPage := cb.getPageType(); defaultPage != nil {
-		wdStr, htStr := csshtml.PapersizeWidthHeight(defaultPage.Papersize)
+		wdStr, htStr := PapersizeWidthHeight(defaultPage.Papersize)
 		var wd, ht, mt, mb, ml, mr bag.ScaledPoint
 		if wd, err = bag.SP(wdStr); err != nil {
 			return err
@@ -582,7 +581,7 @@ func (cb *CSSBuilder) InitPage() error {
 			}
 		}
 		var res map[string]string
-		res, defaultPage.Attributes = csshtml.ResolveAttributes(defaultPage.Attributes)
+		res, defaultPage.Attributes = ResolveAttributes(defaultPage.Attributes)
 
 		vl, m, err := cb.renderPageBorderBox(res, wd, ht, ml, mr, mt, mb)
 		if err != nil {
@@ -706,7 +705,7 @@ func (cb *CSSBuilder) NewPage() error {
 		ht := cb.currentPageDimensions.Height
 		// Re-resolve this page master's @page attributes so border/padding
 		// (and background-image) apply per page, not only on page 1.
-		bgRes, _ := csshtml.ResolveAttributes(pt.Attributes)
+		bgRes, _ := ResolveAttributes(pt.Attributes)
 		vl, m, err := cb.renderPageBorderBox(bgRes, wd, ht, ml, mr, mt, mb)
 		if err != nil {
 			return err
@@ -759,7 +758,7 @@ func (cb *CSSBuilder) drawPageBackgroundImage(res map[string]string, wd, ht bag.
 	if filename == "" || filename == "none" {
 		return nil
 	}
-	// csshtml resolves the path at parse time, relative to the declaring
+	// The CSS parser resolves the path at parse time, relative to the declaring
 	// stylesheet (csshtml issue #3). This FindFile call is a fallback for
 	// values that arrive unresolved; already-absolute paths must not go
 	// through FileFinder a second time. FindFile honours both CSS.FileFinder
@@ -2681,7 +2680,7 @@ func (inf *info) String() string {
 	return fmt.Sprintf("mt: %s mb: %s len(pb): %d vl: %v", inf.marginTop, inf.marginBottom, len(inf.pagebox), inf.vl)
 }
 
-func hasContents(areaAttributes map[string]string, contentTokens []csshtml.ContentToken) bool {
+func hasContents(areaAttributes map[string]string, contentTokens []ContentToken) bool {
 	if len(contentTokens) > 0 {
 		return true
 	}

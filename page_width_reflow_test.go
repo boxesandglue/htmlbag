@@ -10,7 +10,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // renderHTMLPagesCB runs html through the full pipeline like renderHTMLPages
@@ -24,7 +23,7 @@ func renderHTMLPagesCB(t *testing.T, css, html string) ([]*document.Page, *CSSBu
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -85,7 +84,7 @@ func requireWidth(t *testing.T, what string, got, want bag.ScaledPoint) {
 // A4 (210mm) with 20mm margins => 170mm content width; the :first page
 // carries a tall letterhead and a 60mm right margin => 130mm content width.
 // Deliberately written with margin longhands — the literal repro from
-// seite-2-problem.md Teil B — which csshtml.doPage folds into the page
+// seite-2-problem.md Teil B — which doPage folds into the page
 // geometry since 2026-07-15.
 const reflowNarrowFirstCSS = `
 @page { size: a4; margin: 20mm; }

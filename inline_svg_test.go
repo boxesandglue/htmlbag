@@ -8,7 +8,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // findInlineSVGVList walks a *frontend.Text tree and returns the first
@@ -48,7 +47,7 @@ func TestInlineSVGEagerWidth(t *testing.T) {
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -81,7 +80,7 @@ func TestInlineSVGPercentWidthAttachesFormatter(t *testing.T) {
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -111,7 +110,7 @@ func TestInlineSVGMaterializesAgainstContainerWidth(t *testing.T) {
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -175,7 +174,7 @@ func TestInlineSVGOpaqueLeaf(t *testing.T) {
 	const html = `<html><body><svg width="50%" viewBox="0 0 10 10"><rect x="1" y="2" width="3" height="4"/></svg></body></html>`
 	// Parse via the public entry to populate the HTMLItem tree.
 	fe, _ := frontend.NewForWriter(&bytes.Buffer{})
-	cb, _ := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, _ := New(fe, NewCSSParserWithDefaults())
 	if _, err := cb.HTMLToText(html); err != nil {
 		t.Fatalf("HTMLToText: %v", err)
 	}

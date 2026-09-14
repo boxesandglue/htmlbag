@@ -2,14 +2,12 @@ package htmlbag
 
 import (
 	"testing"
-
-	"github.com/boxesandglue/csshtml"
 )
 
 // TestEvaluateTargetCounter_URLForm covers the path where the anchor id
 // is spelled out as url(#id) in the CSS content value.
 func TestEvaluateTargetCounter_URLForm(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`"see page " target-counter(url(#chap1), page)`)
+	tokens := ParseContentValue(`"see page " target-counter(url(#chap1), page)`)
 	if len(tokens) != 2 {
 		t.Fatalf("got %d tokens, want 2: %#v", len(tokens), tokens)
 	}
@@ -23,7 +21,7 @@ func TestEvaluateTargetCounter_URLForm(t *testing.T) {
 // TestEvaluateTargetCounter_AttrForm covers attr(href) lookup, which is
 // the load-bearing case for `.toc a::after` TOC styling.
 func TestEvaluateTargetCounter_AttrForm(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-counter(attr(href), page)`)
+	tokens := ParseContentValue(`target-counter(attr(href), page)`)
 	attrs := map[string]string{"href": "#chap2"}
 	attrLookup := func(name string) string { return attrs[name] }
 	anchorPages := map[string]int{"chap2": 7}
@@ -38,7 +36,7 @@ func TestEvaluateTargetCounter_AttrForm(t *testing.T) {
 // "?" rather than panicking or emitting an empty string. This lets the
 // first pass complete and write the anchor map for the second pass.
 func TestEvaluateTargetCounter_UnresolvedRendersQuestionMark(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`"p. " target-counter(url(#missing), page)`)
+	tokens := ParseContentValue(`"p. " target-counter(url(#missing), page)`)
 	got := evaluateContentWithStack(tokens, StylesStack{}, nil, nil, nil, nil)
 	if want := "p. ?"; got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -49,7 +47,7 @@ func TestEvaluateTargetCounter_UnresolvedRendersQuestionMark(t *testing.T) {
 // the attribute value, matching how anchors are stored in cb.Anchors
 // (without the fragment marker).
 func TestEvaluateTargetCounter_HrefWithoutHash(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-counter(attr(href), page)`)
+	tokens := ParseContentValue(`target-counter(attr(href), page)`)
 	attrs := map[string]string{"href": "#alpha"}
 	attrLookup := func(name string) string { return attrs[name] }
 	got := evaluateContentWithStack(
@@ -69,7 +67,7 @@ func TestEvaluateTargetCounter_HrefWithoutHash(t *testing.T) {
 // than "page" resolves against the anchor's counter snapshot; the
 // innermost value (last element of the root-first chain) wins.
 func TestEvaluateTargetCounter_NamedCounterFromSnapshot(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`"section " target-counter(url(#x), section)`)
+	tokens := ParseContentValue(`"section " target-counter(url(#x), section)`)
 	anchorCounters := map[string]map[string][]int{
 		"x": {"section": {2, 4}},
 	}
@@ -83,7 +81,7 @@ func TestEvaluateTargetCounter_NamedCounterFromSnapshot(t *testing.T) {
 // Pass-1 contract for named counters: no snapshot for the anchor →
 // "?", even when the page number is known.
 func TestEvaluateTargetCounter_NamedCounterWithoutSnapshot(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-counter(url(#x), section)`)
+	tokens := ParseContentValue(`target-counter(url(#x), section)`)
 	got := evaluateContentWithStack(tokens, StylesStack{}, map[string]int{"x": 3}, nil, nil, nil)
 	if want := "?"; got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -94,7 +92,7 @@ func TestEvaluateTargetCounter_NamedCounterWithoutSnapshot(t *testing.T) {
 // whole root-first chain joined with the separator, mirroring how
 // counters() renders nested numbering like "2.1.1".
 func TestEvaluateTargetCounters_JoinsChain(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-counters(url(#x), section, ".")`)
+	tokens := ParseContentValue(`target-counters(url(#x), section, ".")`)
 	anchorCounters := map[string]map[string][]int{
 		"x": {"section": {2, 1, 1}},
 	}
@@ -107,7 +105,7 @@ func TestEvaluateTargetCounters_JoinsChain(t *testing.T) {
 // TestEvaluateTargetCounters_AttrForm: the attr(href) resolver feeds
 // target-counters() just like target-counter().
 func TestEvaluateTargetCounters_AttrForm(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-counters(attr(href), item, "-")`)
+	tokens := ParseContentValue(`target-counters(attr(href), item, "-")`)
 	attrs := map[string]string{"href": "#deep"}
 	attrLookup := func(name string) string { return attrs[name] }
 	anchorCounters := map[string]map[string][]int{
@@ -122,7 +120,7 @@ func TestEvaluateTargetCounters_AttrForm(t *testing.T) {
 // TestEvaluateTargetCounters_UnresolvedRendersQuestionMark: no snapshot
 // (pass 1, or an id that never resolves) → "?", not empty or panic.
 func TestEvaluateTargetCounters_UnresolvedRendersQuestionMark(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-counters(url(#missing), section, ".")`)
+	tokens := ParseContentValue(`target-counters(url(#missing), section, ".")`)
 	got := evaluateContentWithStack(tokens, StylesStack{}, nil, nil, nil, nil)
 	if got != "?" {
 		t.Errorf("got %q, want ?", got)
@@ -132,7 +130,7 @@ func TestEvaluateTargetCounters_UnresolvedRendersQuestionMark(t *testing.T) {
 // TestEvaluateTargetText_ResolvedFromMap is the v2 target-text path:
 // the anchorTexts map carries the captured text, evaluator emits it.
 func TestEvaluateTargetText_ResolvedFromMap(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-text(url(#chap1))`)
+	tokens := ParseContentValue(`target-text(url(#chap1))`)
 	got := evaluateContentWithStack(
 		tokens,
 		StylesStack{},
@@ -150,7 +148,7 @@ func TestEvaluateTargetText_ResolvedFromMap(t *testing.T) {
 // target-text — the same path used by `.toc a::before { content:
 // target-text(attr(href)) }` to pull heading titles into a TOC.
 func TestEvaluateTargetText_AttrForm(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-text(attr(href))`)
+	tokens := ParseContentValue(`target-text(attr(href))`)
 	attrs := map[string]string{"href": "#chap2"}
 	attrLookup := func(name string) string { return attrs[name] }
 	got := evaluateContentWithStack(
@@ -169,7 +167,7 @@ func TestEvaluateTargetText_AttrForm(t *testing.T) {
 // TestEvaluateTargetText_UnresolvedRendersQuestionMark keeps the
 // Pass-1 contract — nil anchorTexts → "?", not empty or panic.
 func TestEvaluateTargetText_UnresolvedRendersQuestionMark(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-text(url(#missing))`)
+	tokens := ParseContentValue(`target-text(url(#missing))`)
 	got := evaluateContentWithStack(tokens, StylesStack{}, nil, nil, nil, nil)
 	if got != "?" {
 		t.Errorf("got %q, want ?", got)
@@ -180,7 +178,7 @@ func TestEvaluateTargetText_UnresolvedRendersQuestionMark(t *testing.T) {
 // the v1 limit: target-text(..., before) / after / first-letter would
 // need pseudo-element snapshots that we don't take.
 func TestEvaluateTargetText_NonContentTypeRendersQuestionMark(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`target-text(url(#x), before)`)
+	tokens := ParseContentValue(`target-text(url(#x), before)`)
 	got := evaluateContentWithStack(
 		tokens,
 		StylesStack{},
@@ -200,7 +198,7 @@ func TestEvaluateTargetText_NonContentTypeRendersQuestionMark(t *testing.T) {
 // inter-token whitespace; any spacing has to come from the literal
 // strings themselves.
 func TestEvaluateAttr_ResolvesFromAttrLookup(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`attr(vnumber) ". "`)
+	tokens := ParseContentValue(`attr(vnumber) ". "`)
 	attrs := map[string]string{"vnumber": "42"}
 	attrLookup := func(name string) string { return attrs[name] }
 	got := evaluateContentWithStack(tokens, StylesStack{}, nil, nil, nil, attrLookup)
@@ -213,7 +211,7 @@ func TestEvaluateAttr_ResolvesFromAttrLookup(t *testing.T) {
 // resolves to the empty string rather than rendering "?" or panicking,
 // matching how browsers handle attr() against absent attributes.
 func TestEvaluateAttr_MissingAttributeIsEmpty(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`"[" attr(missing) "]"`)
+	tokens := ParseContentValue(`"[" attr(missing) "]"`)
 	attrLookup := func(string) string { return "" }
 	got := evaluateContentWithStack(tokens, StylesStack{}, nil, nil, nil, attrLookup)
 	if want := "[]"; got != want {
@@ -225,7 +223,7 @@ func TestEvaluateAttr_MissingAttributeIsEmpty(t *testing.T) {
 // (passes a nil attrLookup), attr() must collapse to empty without
 // crashing. Page-margin boxes hit this path.
 func TestEvaluateAttr_NoLookupIsEmpty(t *testing.T) {
-	tokens := csshtml.ParseContentValue(`"x=" attr(foo)`)
+	tokens := ParseContentValue(`"x=" attr(foo)`)
 	got := evaluateContentWithStack(tokens, StylesStack{}, nil, nil, nil, nil)
 	if want := "x="; got != want {
 		t.Errorf("got %q, want %q", got, want)

@@ -10,7 +10,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // TestStripCSSURL covers the url() unwrapper: the wrapper, both quote
@@ -67,7 +66,7 @@ func TestPageBackgroundImagePerPage(t *testing.T) {
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -116,7 +115,7 @@ func TestPageBackgroundImagePerPage(t *testing.T) {
 // TestPageBackgroundImageStylesheetRelative: a relative url() in an @page
 // rule of an external stylesheet must resolve against the stylesheet's
 // directory, not the document directory (csshtml issue #3). ReadCSSFile
-// pushes the stylesheet's directory around parsing; csshtml resolves the
+// pushes the stylesheet's directory around parsing; doPage resolves the
 // path inside that window, so the stored page attribute is already absolute.
 func TestPageBackgroundImageStylesheetRelative(t *testing.T) {
 	dir := t.TempDir()
@@ -134,7 +133,7 @@ func TestPageBackgroundImageStylesheetRelative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -145,7 +144,7 @@ func TestPageBackgroundImageStylesheetRelative(t *testing.T) {
 	if pt == nil {
 		t.Fatal("getPageType returned nil")
 	}
-	res, _ := csshtml.ResolveAttributes(pt.Attributes)
+	res, _ := ResolveAttributes(pt.Attributes)
 	want := "url(" + filepath.Join(sub, "briefbogen.pdf") + ")"
 	if got := res["background-image"]; got != want {
 		t.Errorf("background-image = %q, want %q (stylesheet relative)", got, want)
@@ -162,7 +161,7 @@ func TestPageBackgroundImageCustomProperty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -174,7 +173,7 @@ func TestPageBackgroundImageCustomProperty(t *testing.T) {
 	if pt == nil {
 		t.Fatal("getPageType returned nil")
 	}
-	res, _ := csshtml.ResolveAttributes(pt.Attributes)
+	res, _ := ResolveAttributes(pt.Attributes)
 	if got := res["background-image"]; got != "url(brief.pdf)" {
 		t.Errorf("background-image = %q, want url(brief.pdf)", got)
 	}
@@ -191,7 +190,7 @@ func pageOnePageProp(t *testing.T, css string) string {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -202,7 +201,7 @@ func pageOnePageProp(t *testing.T, css string) string {
 	if pt == nil {
 		t.Fatal("getPageType returned nil")
 	}
-	res, _ := csshtml.ResolveAttributes(pt.Attributes)
+	res, _ := ResolveAttributes(pt.Attributes)
 	return res["-bag-background-page"]
 }
 

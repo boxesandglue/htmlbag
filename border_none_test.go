@@ -6,7 +6,6 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 	"golang.org/x/net/html"
 )
 
@@ -28,10 +27,10 @@ func stylesToBorderWidths(t *testing.T, decls map[string]string) [4]bag.ScaledPo
 // CSS 2.1 §8.5.3: a border-style of none or hidden forces the used border
 // width to zero, whatever width the shorthand implied.
 func TestBorderNoneZeroesWidth(t *testing.T) {
-	// csshtml expands the shorthand before htmlbag sees it, so the test
-	// feeds the resolved longhands the same way the cascade does.
+	// The CSS parser expands the shorthand before the renderer sees it, so the
+	// test feeds the resolved longhands the same way the cascade does.
 	resolve := func(shorthand string) map[string]string {
-		styles, _ := csshtml.ResolveAttributes([]html.Attribute{
+		styles, _ := ResolveAttributes([]html.Attribute{
 			{Key: "!border", Val: shorthand},
 		})
 		return styles

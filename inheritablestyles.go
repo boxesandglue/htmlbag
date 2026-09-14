@@ -17,7 +17,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/boxesandglue/frontend/math/mathml"
-	"github.com/boxesandglue/csshtml"
 	"github.com/boxesandglue/svgreader"
 	"golang.org/x/net/html"
 )
@@ -610,7 +609,7 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "text-decoration-line":
 			// All three lines are drawn the same way, at different offsets, so
 			// there is no reason for overline and line-through to be dropped.
-			// CSS allows several at once ("underline overline"); csshtml keeps
+			// CSS allows several at once ("underline overline"); the parser keeps
 			// only the last one it sees, so this maps one line at a time.
 			switch v {
 			case "underline":
@@ -634,7 +633,7 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 		case "initial-letter":
 			// CSS Inline Layout 3 dropcaps. v1 reads the size (number of
 			// lines the initial spans); the optional sink argument and
-			// raised caps are not supported. csshtml has no
+			// raised caps are not supported. The selector matcher has no
 			// ::first-letter pseudo-element matching yet, so the
 			// property is accepted on the block element itself.
 			fields := strings.Fields(v)
@@ -703,7 +702,7 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 							base = ih.lineheight
 						} else {
 							// line-height: normal — same 1.2 the UA default
-							// stylesheet (csshtml.CSSdefaults) declares.
+							// stylesheet (CSSdefaults) declares.
 							base = bag.MultiplyFloat(ih.Fontsize, 1.2)
 						}
 					}
@@ -774,7 +773,7 @@ func StylesToStyles(ih *FormattingStyles, attributes map[string]string, df *fron
 	// CSS 2.1 §8.5.3: `border-style: none` (and `hidden`) forces the used
 	// border width to zero. This has to run after the whole declaration
 	// block is in, not inside the loop: the shorthand `border: none`
-	// arrives from csshtml as the longhand pair (style none, width 1pt),
+	// arrives from the cascade as the longhand pair (style none, width 1pt),
 	// and the map the loop walks has no defined order, so the width may
 	// well be seen last. Without this, `border: none` — the usual way to
 	// take borders off table cells — draws a 1pt line.
@@ -1359,7 +1358,7 @@ func (ss *StylesStack) PushStyles() *FormattingStyles {
 		// The stack root carries the CSS-conforming defaults for content
 		// that never passes a body element (HTML fragments, e.g. xts
 		// paragraphs). Full documents get the same defaults from the UA
-		// stylesheet's body rule (csshtml.CSSdefaults); keep both in sync.
+		// stylesheet's body rule (CSSdefaults); keep both in sync.
 		is = &FormattingStyles{Halign: frontend.HAlignStart, leadingModel: "half"}
 	} else {
 		is = (*ss)[len(*ss)-1].Clone()
@@ -1618,7 +1617,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		// because ::marker was unimplemented; we keep that as a legacy
 		// path and let ::marker win when both are set.
 		resolveContent := func(raw string) string {
-			tokens := csshtml.ParseContentValue(raw)
+			tokens := ParseContentValue(raw)
 			attrLookup := func(name string) string {
 				return item.Attributes[name]
 			}
@@ -2098,7 +2097,7 @@ func generatedContentExempt(name string) bool {
 // generated content inherits from its originating element. The styles
 // stack is only read (counter()/counters() walk it), nothing is pushed.
 func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue string, sty *FormattingStyles, item *HTMLItem, ss StylesStack, anchorPages map[string]int) {
-	tokens := csshtml.ParseContentValue(contentValue)
+	tokens := ParseContentValue(contentValue)
 	if len(tokens) == 0 {
 		return
 	}
@@ -2115,9 +2114,9 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue stri
 		te.Items = append(te.Items, txt)
 	}
 	var buf strings.Builder
-	single := make([]csshtml.ContentToken, 1)
+	single := make([]ContentToken, 1)
 	for _, tok := range tokens {
-		if tok.Type == csshtml.ContentLeader {
+		if tok.Type == ContentLeader {
 			flushString(buf.String())
 			buf.Reset()
 			leaderTxt := frontend.NewText()

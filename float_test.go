@@ -8,7 +8,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 const floatMeasure = "200pt"
@@ -22,7 +21,7 @@ func floatBuilder(t *testing.T) *CSSBuilder {
 	if err = LoadIncludedFonts(fe); err != nil {
 		t.Fatal(err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}

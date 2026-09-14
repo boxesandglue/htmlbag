@@ -8,7 +8,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // collectGlyphs walks a node list recursively (descending into HList/VList
@@ -39,7 +38,7 @@ func vlistText(t *testing.T, html string) string {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}

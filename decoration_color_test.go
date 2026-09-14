@@ -7,7 +7,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 	"golang.org/x/net/html"
 )
 
@@ -118,11 +117,11 @@ func TestExplicitDecorationColourWins(t *testing.T) {
 	}
 }
 
-// The real path: authors write the `text-decoration` shorthand, and csshtml
-// expands it before htmlbag sees it. This pins that the longhand the capture
+// The real path: authors write the `text-decoration` shorthand, and the CSS
+// parser expands it before the renderer sees it. This pins that the longhand the capture
 // keys on is what actually arrives.
 func TestDecorationColourThroughTheShorthand(t *testing.T) {
-	styles, _ := csshtml.ResolveAttributes([]html.Attribute{
+	styles, _ := ResolveAttributes([]html.Attribute{
 		{Key: "!text-decoration", Val: "underline"},
 		{Key: "!color", Val: "rgb(0,0,255)"},
 	})

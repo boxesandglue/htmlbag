@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // TestAvoidBreakAfterKeepsHeadingWithSplittableCard guards the orphan-heading
@@ -58,7 +57,7 @@ body { font-family: sans; font-size: 11pt; }
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}

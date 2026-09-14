@@ -49,7 +49,7 @@ func isPositionedElement(item *HTMLItem) bool {
 // has no such declaration. The raw style value is inspected (not
 // FormattingStyles.position) so the identifier keeps its original case;
 // it must match the ident used in `content: element(name)` exactly.
-// After csshtml's stringValue round trip the value arrives as
+// After the stringValue round trip the value arrives as
 // "running( name )", so spaces around the name are tolerated.
 func runningElementName(item *HTMLItem) string {
 	if item == nil {

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // renderForAnchors drives the same render pipeline glu uses, up to and
@@ -19,7 +18,7 @@ func renderForAnchors(t *testing.T, html string) *CSSBuilder {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cssParser := csshtml.NewCSSParserWithDefaults()
+	cssParser := NewCSSParserWithDefaults()
 	cb, err := New(fe, cssParser)
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
@@ -282,7 +281,7 @@ func TestSetAnchorPages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}

@@ -7,7 +7,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // leadingProbe renders one paragraph and returns its line HLists plus the
@@ -21,7 +20,7 @@ func leadingProbe(t *testing.T, css string) (lines []*node.HList, lineskips int)
 	if err = LoadIncludedFonts(fe); err != nil {
 		t.Fatal(err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,6 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // Probe tests for the three HTML constructions where a deferred-sized
@@ -38,7 +37,7 @@ func renderProbe(t *testing.T, html string, containerWidth bag.ScaledPoint) *nod
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -147,7 +146,7 @@ func TestProbe3_SVGInTableCell(t *testing.T) {
 	if err := LoadIncludedFonts(fe); err != nil {
 		t.Fatalf("LoadIncludedFonts: %v", err)
 	}
-	cb, err := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, err := New(fe, NewCSSParserWithDefaults())
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)
 	}
@@ -221,7 +220,7 @@ func renderProbeRich(t *testing.T, html string, containerWidth bag.ScaledPoint) 
 		// re-render to capture the tree for the failure message
 		fe, _ := frontend.NewForWriter(&bytes.Buffer{})
 		LoadIncludedFonts(fe)
-		cb, _ := New(fe, csshtml.NewCSSParserWithDefaults())
+		cb, _ := New(fe, NewCSSParserWithDefaults())
 		te, _ := cb.HTMLToText(html)
 		if vl, err := cb.CreateVlist(te, containerWidth); err == nil {
 			var sb strings.Builder
@@ -270,7 +269,7 @@ func TestProbe3Multi(t *testing.T) {
 	containerWidth := bag.MustSP("400pt")
 	fe, _ := frontend.NewForWriter(&bytes.Buffer{})
 	LoadIncludedFonts(fe)
-	cb, _ := New(fe, csshtml.NewCSSParserWithDefaults())
+	cb, _ := New(fe, NewCSSParserWithDefaults())
 	te, err := cb.HTMLToText(html)
 	if err != nil {
 		t.Fatalf("HTMLToText: %v", err)

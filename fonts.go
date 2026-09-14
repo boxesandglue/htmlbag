@@ -5,7 +5,6 @@ package htmlbag
 import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 	"github.com/boxesandglue/htmlbag/fonts/camingocodebold"
 	"github.com/boxesandglue/htmlbag/fonts/camingocodebolditalic"
 	"github.com/boxesandglue/htmlbag/fonts/camingocodeitalic"
@@ -74,7 +73,7 @@ func LoadIncludedFonts(fe *frontend.Document) error {
 
 // AddFontFamiliesFromCSS adds entries to the font families of the frontend
 // document.
-func AddFontFamiliesFromCSS(cs *csshtml.CSS, fe *frontend.Document) error {
+func AddFontFamiliesFromCSS(cs *CSS, fe *frontend.Document) error {
 	for _, v := range cs.FontFaces {
 		var fontfamily *frontend.FontFamily
 		if ff := fe.FindFontFamily(v.Family); ff == nil {
@@ -99,7 +98,7 @@ func AddFontFamiliesFromCSS(cs *csshtml.CSS, fe *frontend.Document) error {
 			fs.FontFeatures = v.Features
 			fs.VariationSettings = v.VariationSettings
 		}
-		// CSS size-adjust (csshtml stores 1 - percentage/100, the same
+		// CSS size-adjust (the parser stores 1 - percentage/100, the same
 		// encoding FontSource expects); applied at shape time via
 		// frontend.shapeFontFor.
 		fs.SizeAdjust = v.SizeAdjust

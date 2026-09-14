@@ -7,7 +7,6 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
 // runStylePassWithBuilder is runStylePass plus access to the CSSBuilder,
@@ -19,7 +18,7 @@ func runStylePassWithBuilder(t *testing.T, html string) (*CSSBuilder, *frontend.
 	if err != nil {
 		t.Fatalf("frontend.NewForWriter: %v", err)
 	}
-	cssParser := csshtml.NewCSSParserWithDefaults()
+	cssParser := NewCSSParserWithDefaults()
 	cb, err := New(fe, cssParser)
 	if err != nil {
 		t.Fatalf("htmlbag.New: %v", err)

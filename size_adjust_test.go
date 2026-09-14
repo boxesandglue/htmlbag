@@ -6,11 +6,10 @@ import (
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/frontend"
-	"github.com/boxesandglue/csshtml"
 )
 
-// TestFontFaceSizeAdjustPropagation guards the @font-face handoff: csshtml
-// parses size-adjust (stored as 1 - percentage/100), but the value only has
+// TestFontFaceSizeAdjustPropagation guards the @font-face handoff: the parser
+// reads size-adjust (stored as 1 - percentage/100), but the value only has
 // an effect when AddFontFamiliesFromCSS copies it onto the FontSource, where
 // frontend.shapeFontFor scales the font size at shape time. The weight-range
 // form exercises the per-weight instance path (instanceAt) as well.
@@ -19,7 +18,7 @@ func TestFontFaceSizeAdjustPropagation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cp := csshtml.NewCSSParser()
+	cp := NewCSSParser()
 	if err := cp.AddCSSText(`@font-face {
 		font-family: "VF";
 		font-weight: 200 900;
