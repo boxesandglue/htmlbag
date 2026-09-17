@@ -365,6 +365,8 @@ type CSS struct {
 	Pages      map[string]Page
 	FileFinder func(string) (string, error)
 	FontFaces  []FontFace
+	// Colors holds the named colors from @-bag-color rules, in source order.
+	Colors     []ColorDefinition
 	dirstack   []string
 	stylesheet []sBlock
 	// computed holds the cascade result per element, filled by ApplyCSS and
@@ -948,6 +950,10 @@ func (c *CSS) processAtRules(stylesheet sBlock) error {
 			}
 		case "page":
 			c.doPage(atrule)
+		case "-bag-color":
+			if err := c.doColor(atrule); err != nil {
+				return err
+			}
 		default:
 			fmt.Println("unknown at rule", atrule)
 		}

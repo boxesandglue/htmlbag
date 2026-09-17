@@ -542,6 +542,9 @@ func (cb *CSSBuilder) InitPage() error {
 	if err := AddFontFamiliesFromCSS(cb.css, cb.frontend); err != nil {
 		return err
 	}
+	if err := AddColorsFromCSS(cb.css, cb.frontend); err != nil {
+		return err
+	}
 	var err error
 	if defaultPage := cb.getPageType(); defaultPage != nil {
 		wdStr, htStr := PapersizeWidthHeight(defaultPage.Papersize)
@@ -2609,6 +2612,11 @@ func (cb *CSSBuilder) HTMLToText(html string) (*frontend.Text, error) {
 	// for repeat (weight, style) keys, so the InitPage call later in the
 	// pipeline re-registering the same set is harmless.
 	if err := AddFontFamiliesFromCSS(cb.css, cb.frontend); err != nil {
+		return nil, err
+	}
+	// The same goes for @-bag-color: the names must be defined before the
+	// color properties of this chunk are resolved.
+	if err := AddColorsFromCSS(cb.css, cb.frontend); err != nil {
 		return nil, err
 	}
 
