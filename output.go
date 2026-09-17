@@ -200,9 +200,24 @@ func firstContentElement(tokens []ContentToken) string {
 // BeforeShipout should be called when placing a CSS page in the PDF. It adds
 // page margin boxes to the current page.
 func (cb *CSSBuilder) BeforeShipout() error {
+	return cb.outputMarginBoxes(cb.currentPageDimensions)
+}
+
+// OutputMarginBoxes renders the margin boxes (@top-left, @bottom-center, ...)
+// of the @page rule pg onto the document's current page, using the sheet
+// size and margins from pd. It is meant for callers that manage pages
+// themselves instead of letting the CSSBuilder paginate, for example xts
+// with its grid pages. Width, Height and the four Margin fields of pd must
+// be set; the content area fields are not needed. The page counter is
+// taken from the number of pages in the document.
+func (cb *CSSBuilder) OutputMarginBoxes(pd PageDimensions, pg *Page) error {
+	pd.masterpage = pg
+	return cb.outputMarginBoxes(pd)
+}
+
+func (cb *CSSBuilder) outputMarginBoxes(dimensions PageDimensions) error {
 	var err error
 	df := cb.frontend
-	dimensions := cb.currentPageDimensions
 	mp := dimensions.masterpage
 	if mp != nil {
 		pageMarginBoxes := make(map[string]*pageMarginBox)

@@ -397,3 +397,56 @@ func TestPageURLLeftAlone(t *testing.T) {
 		t.Errorf("empty dirstack: background-image = %q (url=%v), want %q", got, isURL, want)
 	}
 }
+
+// TestNamedPage: a page manager that selects pages by name (xts master
+// pages) gets the named @page rule with the generic @page rule folded in,
+// the generic rule alone for unknown or empty names, and nothing when no
+// @page rule exists.
+func TestNamedPage(t *testing.T) {
+	str := `
+	@page {
+		margin: 2cm;
+		@top-left { content: "base" }
+		@bottom-center { content: counter(page) }
+	}
+	@page chapter {
+		margin-top: 4cm;
+		@top-left { content: "chapter" }
+	}`
+	cp := NewCSSParser()
+	if err := cp.AddCSSText(str); err != nil {
+		t.Fatal(err)
+	}
+	pg, ok := cp.NamedPage("chapter")
+	if !ok {
+		t.Fatal("NamedPage(chapter) not found")
+	}
+	if got, want := pg.MarginTop, "4cm"; got != want {
+		t.Errorf("chapter MarginTop = %q, want %q", got, want)
+	}
+	if got, want := pg.MarginLeft, "2cm"; got != want {
+		t.Errorf("chapter MarginLeft = %q, want %q (from the generic rule)", got, want)
+	}
+	if got, want := pg.PageAreaContent["top-left"][0].Value, "chapter"; got != want {
+		t.Errorf("chapter top-left content = %q, want %q", got, want)
+	}
+	if _, ok := pg.PageArea["bottom-center"]; !ok {
+		t.Errorf("chapter is missing the bottom-center box of the generic rule")
+	}
+	for _, name := range []string{"", "unknown"} {
+		pg, ok := cp.NamedPage(name)
+		if !ok {
+			t.Fatalf("NamedPage(%q) not found", name)
+		}
+		if got, want := pg.MarginTop, "2cm"; got != want {
+			t.Errorf("NamedPage(%q) MarginTop = %q, want %q", name, got, want)
+		}
+		if got, want := pg.PageAreaContent["top-left"][0].Value, "base"; got != want {
+			t.Errorf("NamedPage(%q) top-left content = %q, want %q", name, got, want)
+		}
+	}
+	empty := NewCSSParser()
+	if _, ok := empty.NamedPage("chapter"); ok {
+		t.Errorf("NamedPage on a stylesheet without @page must report false")
+	}
+}

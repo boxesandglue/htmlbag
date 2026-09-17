@@ -358,6 +358,31 @@ type Page struct {
 	pageareaRules map[string][]qrule
 }
 
+// NamedPage returns the @page rule for the given page name, with the
+// generic @page rule folded in as the base (CSS Paged Media 3 §3.2, the
+// same cascade getPageType applies to :first/:left/:right). An empty name
+// or an unknown name yields the generic @page rule alone. The boolean is
+// false when neither rule exists.
+//
+// This is the entry point for callers that select pages themselves, such
+// as xts: a master page named "default" picks up `@page default { }`.
+func (c *CSS) NamedPage(name string) (*Page, bool) {
+	base, hasBase := c.Pages[""]
+	if name != "" {
+		if named, ok := c.Pages[name]; ok {
+			if !hasBase {
+				return &named, true
+			}
+			merged := mergePageWithBase(named, base)
+			return &merged, true
+		}
+	}
+	if hasBase {
+		return &base, true
+	}
+	return nil, false
+}
+
 // CSS is the main structure that contains cascading style sheet information.
 // Multiple stylesheets can be added to the CSS structure and then applied to
 // HTML.
