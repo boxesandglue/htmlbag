@@ -9,8 +9,11 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/node"
 )
 
+// The tests measure how the table width is shared between the columns, so
+// the border spacing of the separated model is switched off.
 const cellWidthCSS = `@page { size: a4; margin: 2cm }
 body { font-family: serif; font-size: 11pt }
+table { border-collapse: collapse }
 td, th { padding: 0 }`
 
 // firstRowCellWidths returns the calculated widths of the cells in the first

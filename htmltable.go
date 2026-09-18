@@ -303,6 +303,9 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 // in the separated model the border stays with the wrapper that draws the
 // table's background and padding (see tableBorderInWrapper).
 func applyTableBorderModel(tbl *frontend.Table, settings frontend.TypesettingSettings) {
+	// Without a value from the style sheet the CSS initial value applies,
+	// not the frontend's zero value.
+	tbl.BorderModel = frontend.BorderModelSeparate
 	if bm, ok := settings[frontend.SettingBorderCollapse].(frontend.BorderModel); ok {
 		tbl.BorderModel = bm
 	}
@@ -327,8 +330,8 @@ func applyTableBorderModel(tbl *frontend.Table, settings frontend.TypesettingSet
 // collapsing model the border is part of the edge cells, so the wrapper must
 // not draw it a second time.
 func tableBorderInWrapper(settings frontend.TypesettingSettings) bool {
-	bm, _ := settings[frontend.SettingBorderCollapse].(frontend.BorderModel)
-	return bm == frontend.BorderModelSeparate
+	bm, ok := settings[frontend.SettingBorderCollapse].(frontend.BorderModel)
+	return !ok || bm == frontend.BorderModelSeparate
 }
 
 func (cb *CSSBuilder) buildColgroup(te *frontend.Text, tbl *frontend.Table) {

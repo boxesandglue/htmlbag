@@ -550,7 +550,7 @@ big             { font-size: 1.17em }
 small, sub, sup { font-size: .83em }
 sub             { vertical-align: sub }
 sup             { vertical-align: super }
-table           { border-spacing: 2pt; }
+table           { border-collapse: separate; border-spacing: 2pt; }
 thead, tbody,
 tfoot           { vertical-align: middle }
 td, th, tr      { vertical-align: inherit }

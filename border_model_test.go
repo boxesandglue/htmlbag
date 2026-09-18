@@ -74,11 +74,29 @@ func TestBorderModelSeparate(t *testing.T) {
 	}
 }
 
-// TestBorderModelCollapseDefault checks that a table without a declaration
-// uses the collapsing model: no spacing, and the border between the two
-// columns is drawn once, half by each cell.
-func TestBorderModelCollapseDefault(t *testing.T) {
+// TestBorderModelSeparateDefault checks that a table without a declaration
+// uses the separated model with the UA spacing of 2pt, as in CSS.
+func TestBorderModelSeparateDefault(t *testing.T) {
 	rows := tableRows(renderHTMLPages(t, borderModelCSS, borderModelHTML))
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	for i, row := range rows {
+		if got := spacingKerns(row); got != 3 {
+			t.Errorf("row %d: got %d spacing kerns, want 3 (UA border-spacing)", i, got)
+		}
+		if row.Depth != bag.MustSP("2pt") {
+			t.Errorf("row %d: depth %s, want the UA spacing of 2pt", i, row.Depth)
+		}
+	}
+}
+
+// TestBorderModelCollapse checks that border-collapse: collapse removes the
+// spacing: the border between the two columns is drawn once, half by each
+// cell.
+func TestBorderModelCollapse(t *testing.T) {
+	css := borderModelCSS + "\ntable.t { border-collapse: collapse }"
+	rows := tableRows(renderHTMLPages(t, css, borderModelHTML))
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
 	}
@@ -96,7 +114,7 @@ func TestBorderModelCollapseDefault(t *testing.T) {
 // table's own border merges into the edge cells and is not drawn a second
 // time by a wrapper around the table.
 func TestBorderModelCollapseTableBorder(t *testing.T) {
-	css := borderModelCSS + "\ntable.t { border: 4pt solid red }"
+	css := borderModelCSS + "\ntable.t { border: 4pt solid red; border-collapse: collapse }"
 	pages := renderHTMLPages(t, css, borderModelHTML)
 	rows := tableRows(pages)
 	if len(rows) != 2 {
@@ -113,7 +131,7 @@ func TestBorderModelCollapseTableBorder(t *testing.T) {
 		t.Error("the table is wrapped in a border box although the collapsing model draws the border in the cells")
 	}
 	// The separated model keeps the wrapper.
-	css = borderModelCSS + "\ntable.t { border: 4pt solid red; border-collapse: separate }"
+	css = borderModelCSS + "\ntable.t { border: 4pt solid red }"
 	if !hasHTMLBorderRule(renderHTMLPages(t, css, borderModelHTML)) {
 		t.Error("separated model: the table border should be drawn by the wrapper")
 	}

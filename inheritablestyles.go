@@ -817,7 +817,8 @@ type FormattingStyles struct {
 	BorderBottomWidth bag.ScaledPoint
 	// borderModel and the spacing are the table properties border-collapse
 	// and border-spacing. Both inherit, so a nested table follows its outer
-	// one unless it says otherwise.
+	// one unless it says otherwise. The initial value is separate, as in
+	// CSS; the stack root and the UA stylesheet set it.
 	borderModel             frontend.BorderModel
 	borderSpacingH          bag.ScaledPoint
 	borderSpacingV          bag.ScaledPoint
@@ -1388,7 +1389,7 @@ func (ss *StylesStack) PushStyles() *FormattingStyles {
 		// that never passes a body element (HTML fragments, e.g. xts
 		// paragraphs). Full documents get the same defaults from the UA
 		// stylesheet's body rule (CSSdefaults); keep both in sync.
-		is = &FormattingStyles{Halign: frontend.HAlignStart, leadingModel: "half"}
+		is = &FormattingStyles{Halign: frontend.HAlignStart, leadingModel: "half", borderModel: frontend.BorderModelSeparate}
 	} else {
 		is = (*ss)[len(*ss)-1].Clone()
 	}
