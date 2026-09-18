@@ -77,6 +77,9 @@ type ContentToken struct {
 	Type      ContentTokenType
 	Value     string // string literal, counter name, or target-text content-type
 	Separator string // counters() / target-counters() separator
+	// Style is the counter style of counter(), counters() and the target-*
+	// counters: "lower-roman", "upper-alpha", ... Empty means decimal.
+	Style string
 	// TargetID is the literal anchor id (with leading "#" stripped) for
 	// target-* tokens, when the reference is url(#id) or "#id".
 	TargetID string
@@ -107,25 +110,31 @@ func parseContentTokens(ts tokenstream) []ContentToken {
 			tokens = append(tokens, ContentToken{Type: ContentURL, Value: tok.Value})
 		case scanner.Function:
 			if tok.Value == "counter" {
-				// next non-whitespace token should be the counter name (Ident)
+				// counter(name, style?): the name, then an optional
+				// counter style, both idents.
 				i++
 				for i < len(ts) && ts[i].Type == scanner.S {
 					i++
 				}
 				if i < len(ts) && ts[i].Type == scanner.Ident {
-					tokens = append(tokens, ContentToken{Type: ContentCounter, Value: ts[i].Value})
+					name := ts[i].Value
+					i++
+					style, newI := parseCounterStyleArg(ts, i)
+					i = newI
+					tokens = append(tokens, ContentToken{Type: ContentCounter, Value: name, Style: style})
 				}
 				// skip until closing )
 				for i < len(ts) && !(ts[i].Type == scanner.Delim && ts[i].Value == ")") {
 					i++
 				}
 			} else if tok.Value == "counters" {
-				// counters(name, "sep") — name first, then a string separator
+				// counters(name, "sep", style?) — name first, then a string
+				// separator, then an optional counter style
 				i++
 				for i < len(ts) && ts[i].Type == scanner.S {
 					i++
 				}
-				var name, sep string
+				var name, sep, style string
 				if i < len(ts) && ts[i].Type == scanner.Ident {
 					name = ts[i].Value
 					i++
@@ -136,9 +145,11 @@ func parseContentTokens(ts tokenstream) []ContentToken {
 				}
 				if i < len(ts) && ts[i].Type == scanner.String {
 					sep = ts[i].Value
+					i++
+					style, i = parseCounterStyleArg(ts, i)
 				}
 				if name != "" {
-					tokens = append(tokens, ContentToken{Type: ContentCounters, Value: name, Separator: sep})
+					tokens = append(tokens, ContentToken{Type: ContentCounters, Value: name, Separator: sep, Style: style})
 				}
 				// skip until closing )
 				for i < len(ts) && !(ts[i].Type == scanner.Delim && ts[i].Value == ")") {
@@ -166,15 +177,17 @@ func parseContentTokens(ts tokenstream) []ContentToken {
 				for i < len(ts) && (ts[i].Type == scanner.S || (ts[i].Type == scanner.Delim && ts[i].Value == ",")) {
 					i++
 				}
-				var counterName string
+				var counterName, style string
 				if i < len(ts) && ts[i].Type == scanner.Ident {
 					counterName = ts[i].Value
 					i++
+					style, i = parseCounterStyleArg(ts, i)
 				}
 				if counterName != "" && (id != "" || attr != "") {
 					tokens = append(tokens, ContentToken{
 						Type:       ContentTargetCounter,
 						Value:      counterName,
+						Style:      style,
 						TargetID:   id,
 						TargetAttr: attr,
 					})
@@ -191,7 +204,7 @@ func parseContentTokens(ts tokenstream) []ContentToken {
 				for i < len(ts) && (ts[i].Type == scanner.S || (ts[i].Type == scanner.Delim && ts[i].Value == ",")) {
 					i++
 				}
-				var counterName, sep string
+				var counterName, sep, style string
 				if i < len(ts) && ts[i].Type == scanner.Ident {
 					counterName = ts[i].Value
 					i++
@@ -201,12 +214,15 @@ func parseContentTokens(ts tokenstream) []ContentToken {
 				}
 				if i < len(ts) && ts[i].Type == scanner.String {
 					sep = ts[i].Value
+					i++
+					style, i = parseCounterStyleArg(ts, i)
 				}
 				if counterName != "" && (id != "" || attr != "") {
 					tokens = append(tokens, ContentToken{
 						Type:       ContentTargetCounters,
 						Value:      counterName,
 						Separator:  sep,
+						Style:      style,
 						TargetID:   id,
 						TargetAttr: attr,
 					})
@@ -282,6 +298,28 @@ func parseContentTokens(ts tokenstream) []ContentToken {
 // stripped) or the attribute name, plus the new token index positioned
 // just past whatever was consumed. Returns empty strings if no recognised
 // reference form was found.
+// parseCounterStyleArg reads the optional trailing counter style argument of
+// counter() and friends, ", lower-roman" say, starting at ts[i] which is the
+// token after the previous argument. It returns the style name (empty when
+// there is none) and the index of the first token it did not consume.
+func parseCounterStyleArg(ts []*scanner.Token, i int) (string, int) {
+	j := i
+	for j < len(ts) && ts[j].Type == scanner.S {
+		j++
+	}
+	if j >= len(ts) || ts[j].Type != scanner.Delim || ts[j].Value != "," {
+		return "", i
+	}
+	j++
+	for j < len(ts) && ts[j].Type == scanner.S {
+		j++
+	}
+	if j < len(ts) && ts[j].Type == scanner.Ident {
+		return ts[j].Value, j + 1
+	}
+	return "", i
+}
+
 func parseTargetReference(ts tokenstream, i int) (id, attr string, newIdx int) {
 	for i < len(ts) && ts[i].Type == scanner.S {
 		i++

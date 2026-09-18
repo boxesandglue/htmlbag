@@ -40,6 +40,16 @@ func TestParseContentValue_CounterAndCounters(t *testing.T) {
 			},
 		},
 		{
+			name: "counter() with style",
+			in:   `counter(chapter, upper-roman)`,
+			want: []ContentToken{{Type: ContentCounter, Value: "chapter", Style: "upper-roman"}},
+		},
+		{
+			name: "counters() with separator and style",
+			in:   `counters(sec, ".", lower-alpha)`,
+			want: []ContentToken{{Type: ContentCounters, Value: "sec", Separator: ".", Style: "lower-alpha"}},
+		},
+		{
 			name: "leader()",
 			in:   `leader(".")`,
 			want: []ContentToken{{Type: ContentLeader, Value: "."}},

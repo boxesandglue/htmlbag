@@ -2,7 +2,6 @@ package htmlbag
 
 import (
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
@@ -66,7 +65,7 @@ func evaluateContent(tokens []ContentToken, counters map[string]int) string {
 			sb.WriteString(tok.Value)
 		case ContentCounter:
 			if v, ok := counters[tok.Value]; ok {
-				sb.WriteString(strconv.Itoa(v))
+				sb.WriteString(formatCounterStyle(v, tok.Style))
 			}
 		case ContentTargetCounter, ContentTargetCounters, ContentTargetText:
 			sb.WriteString("?")
@@ -109,14 +108,14 @@ func evaluateContentWithStack(tokens []ContentToken, ss StylesStack, anchorPages
 		case ContentString:
 			sb.WriteString(tok.Value)
 		case ContentCounter:
-			sb.WriteString(strconv.Itoa(ss.CounterValue(tok.Value)))
+			sb.WriteString(formatCounterStyle(ss.CounterValue(tok.Value), tok.Style))
 		case ContentCounters:
 			vals := ss.CounterValues(tok.Value)
 			for i, v := range vals {
 				if i > 0 {
 					sb.WriteString(tok.Separator)
 				}
-				sb.WriteString(strconv.Itoa(v))
+				sb.WriteString(formatCounterStyle(v, tok.Style))
 			}
 		case ContentTargetCounter:
 			// The "page" counter comes from anchorPages (assigned at
@@ -126,13 +125,13 @@ func evaluateContentWithStack(tokens []ContentToken, ss StylesStack, anchorPages
 			if id := resolveTargetID(tok, attrLookup); id != "" {
 				if tok.Value == "page" {
 					if p, ok := anchorPages[id]; ok && p > 0 {
-						sb.WriteString(strconv.Itoa(p))
+						sb.WriteString(formatCounterStyle(p, tok.Style))
 						break
 					}
 				} else if chain, ok := anchorCounters[id][tok.Value]; ok && len(chain) > 0 {
 					// target-counter() wants the innermost value: the
 					// last element of the root-first chain.
-					sb.WriteString(strconv.Itoa(chain[len(chain)-1]))
+					sb.WriteString(formatCounterStyle(chain[len(chain)-1], tok.Style))
 					break
 				}
 			}
@@ -147,7 +146,7 @@ func evaluateContentWithStack(tokens []ContentToken, ss StylesStack, anchorPages
 						if i > 0 {
 							sb.WriteString(tok.Separator)
 						}
-						sb.WriteString(strconv.Itoa(v))
+						sb.WriteString(formatCounterStyle(v, tok.Style))
 					}
 					break
 				}

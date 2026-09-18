@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -113,5 +114,68 @@ func TestApplyCounters_IncrementWithoutResetCreatesParentScopeCounter(t *testing
 	pushWithCounters(ss, nil, map[string]int{"foo": 1}) // second <li>
 	if got := ss.CounterValue("foo"); got != 2 {
 		t.Errorf("second child: CounterValue(foo) = %d; want 2 (implicit reset at parent must outlive each child)", got)
+	}
+}
+
+// TestFormatCounterStyle covers the predefined counter styles shared by list
+// markers and counter().
+func TestFormatCounterStyle(t *testing.T) {
+	cases := []struct {
+		n     int
+		style string
+		want  string
+	}{
+		{7, "decimal", "7"},
+		{7, "", "7"},
+		{7, "decimal-leading-zero", "07"},
+		{12, "decimal-leading-zero", "12"},
+		{1, "lower-alpha", "a"},
+		{26, "lower-alpha", "z"},
+		{27, "lower-alpha", "aa"},
+		{28, "upper-latin", "AB"},
+		{0, "lower-alpha", "0"},
+		{4, "lower-roman", "iv"},
+		{1994, "upper-roman", "MCMXCIV"},
+		{4000, "upper-roman", "4000"},
+		{3, "lower-greek", "γ"},
+		{5, "disc", "•"},
+		{5, "none", ""},
+		{5, "no-such-style", "5"},
+	}
+	for _, tc := range cases {
+		if got := formatCounterStyle(tc.n, tc.style); got != tc.want {
+			t.Errorf("formatCounterStyle(%d, %q) = %q; want %q", tc.n, tc.style, got, tc.want)
+		}
+	}
+}
+
+// TestListStyleTypeMarkers renders ordered lists in the styles the manual
+// lists and checks the markers that reach the page.
+func TestListStyleTypeMarkers(t *testing.T) {
+	cases := []struct {
+		style string
+		want  []string
+	}{
+		{"lower-roman", []string{"i.", "ii.", "iii.", "iv."}},
+		{"upper-roman", []string{"I.", "II.", "III.", "IV."}},
+		{"lower-alpha", []string{"a.", "b.", "c.", "d."}},
+		{"upper-alpha", []string{"A.", "B.", "C.", "D."}},
+		{"decimal-leading-zero", []string{"01.", "02.", "03.", "04."}},
+		{"decimal", []string{"1.", "2.", "3.", "4."}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.style, func(t *testing.T) {
+			css := listSplitCSS + "\nol { list-style-type: " + tc.style + " }"
+			pages := renderHTMLPages(t, css, buildListHTML("ol", 4))
+			if len(pages) == 0 {
+				t.Fatal("no pages")
+			}
+			txt := pageText(pages[0])
+			for _, w := range tc.want {
+				if !strings.Contains(txt, w) {
+					t.Errorf("marker %q missing from page text %q", w, truncate(txt, 120))
+				}
+			}
+		})
 	}
 }

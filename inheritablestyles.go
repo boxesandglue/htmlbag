@@ -1635,19 +1635,17 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			marker = strings.TrimPrefix(styles.ListStyleType, `"`)
 			marker = strings.TrimSuffix(marker, `"`)
 		} else {
-			switch styles.ListStyleType {
-			case "disc":
-				marker = "•"
-			case "circle":
-				marker = "◦"
-			case "none":
-				marker = ""
-			case "square":
-				marker = "□"
-			case "decimal":
-				marker = fmt.Sprintf("%d.", styles.OlCounter)
-			default:
-				marker = "•"
+			// The same formatter that counter() uses, so lower-roman,
+			// upper-alpha and the rest look the same as markers and as
+			// generated content. An ordered style takes the "." suffix
+			// of a list number; a bullet stands alone.
+			styleType := styles.ListStyleType
+			if styleType == "" {
+				styleType = "disc"
+			}
+			marker = formatCounterStyle(styles.OlCounter, styleType)
+			if counterStyleIsNumeric(styleType) {
+				marker += "."
 			}
 		}
 		markerSettings := make(frontend.TypesettingSettings, len(newte.Settings))
