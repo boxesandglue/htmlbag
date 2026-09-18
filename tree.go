@@ -78,7 +78,7 @@ func stringValue(toks tokenstream) string {
 			switch tok.Value {
 			case ";":
 				// ignore
-			case ",", ")":
+			case ",", ")", "/":
 				ret = append(ret, tok.Value)
 			case "-":
 				negative = true

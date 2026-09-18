@@ -1,6 +1,7 @@
 package htmlbag
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -119,5 +120,54 @@ func TestBorderShorthandIsOrderIndependent(t *testing.T) {
 				t.Errorf(`borderShorthand(%s) got "%s %s %s", want "2pt solid #fff"`, in, wd, sty, col)
 			}
 		})
+	}
+}
+
+func TestFontShorthand(t *testing.T) {
+	testCases := []struct {
+		input string
+		want  map[string]string
+	}{
+		{`font: italic bold 10pt/12pt "Minion Pro", serif`, map[string]string{
+			"font-style": "italic", "font-weight": "bold", "font-size": "10pt", "line-height": "12pt",
+		}},
+		{`font: 10pt / 12pt serif`, map[string]string{
+			"font-size": "10pt", "line-height": "12pt", "font-family": "serif",
+		}},
+		{`font: 12pt serif`, map[string]string{
+			"font-style": "normal", "font-weight": "normal", "font-size": "12pt", "line-height": "normal", "font-family": "serif",
+		}},
+		{`font: 700 small serif`, map[string]string{
+			"font-weight": "700", "font-size": "small", "font-family": "serif",
+		}},
+		{`font: 120% sans-serif`, map[string]string{
+			"font-size": "120%", "font-family": "sans-serif",
+		}},
+		// No family: the declaration is invalid and sets nothing.
+		{`font: bold 12pt`, map[string]string{"font-size": "", "font-weight": ""}},
+	}
+	for _, tc := range testCases {
+		res := resolveCSSText(tc.input)
+		for k, want := range tc.want {
+			if got := res.Get(k); got != want {
+				t.Errorf("%s: %s = %q, want %q", tc.input, k, got, want)
+			}
+		}
+	}
+	res := resolveCSSText(`font: italic bold 10pt/12pt "Minion Pro", serif`)
+	if fam := res.Get("font-family"); !strings.Contains(fam, "Minion Pro") || !strings.Contains(fam, "serif") {
+		t.Errorf("font-family = %q, want both families", fam)
+	}
+}
+
+func TestTextDecorationShorthand(t *testing.T) {
+	res := resolveCSSText(`text-decoration: underline dotted red`)
+	for k, want := range map[string]string{"text-decoration-line": "underline", "text-decoration-style": "dotted", "text-decoration-color": "red"} {
+		if got := res.Get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+	if got := resolveCSSText(`text-decoration: underline`).Get("text-decoration-color"); got != "" {
+		t.Errorf("text-decoration-color = %q, want unset", got)
 	}
 }

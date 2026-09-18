@@ -1,6 +1,7 @@
 package htmlbag
 
 import (
+	"strconv"
 	"strings"
 
 	scanner "github.com/speedata/css"
@@ -270,23 +271,50 @@ func resolveDeclarations(decls []declaration) StyleMap {
 		case "font":
 			// The shorthand must carry <font-size> and <font-family>; style,
 			// variant, weight and stretch precede the size, line-height
-			// follows it after a slash, and the family is last. Only the last
-			// two slots are read here -- the rest is reset to its initial
-			// value, as the shorthand demands.
-			parts := componentValues(decl.value)
+			// follows it after a slash, and the family is last. The size is
+			// the anchor: everything before it is a keyword, everything after
+			// it is the family. Style, weight and line-height reset to their
+			// initial value when omitted, as the shorthand demands. CSS allows
+			// whitespace around the slash, so `10pt / 12pt` is glued into one
+			// component first.
+			parts := componentValues(glueSlash(decl.value))
+			sizeIdx := -1
 			for idx, part := range parts {
-				if idx <= len(parts)-3 {
-					continue
+				if isFontSizeValue(part) {
+					sizeIdx = idx
+					break
 				}
-				field := part.String()
-				if dimen.MatchString(field) || strings.Contains(field, "%") {
-					set("font-size", part)
-				} else {
-					set("font-name", part)
-				}
+			}
+			if sizeIdx < 0 || sizeIdx == len(parts)-1 {
+				// Without a size or a family the shorthand is invalid and
+				// the declaration is dropped, as CSS demands.
+				break
 			}
 			set("font-style", textValue("normal"))
 			set("font-weight", textValue("normal"))
+			set("line-height", textValue("normal"))
+			for _, part := range parts[:sizeIdx] {
+				switch txt := part.String(); txt {
+				case "italic", "oblique":
+					set("font-style", part)
+				case "bold", "bolder", "lighter":
+					set("font-weight", part)
+				default:
+					if _, err := strconv.Atoi(txt); err == nil {
+						set("font-weight", part)
+					}
+				}
+			}
+			size, lh, hasLineHeight := splitSlash(parts[sizeIdx])
+			set("font-size", size)
+			if hasLineHeight {
+				set("line-height", lh)
+			}
+			family := make([]string, 0, len(parts)-sizeIdx-1)
+			for _, part := range parts[sizeIdx+1:] {
+				family = append(family, part.String())
+			}
+			set("font-family", textValue(strings.Join(family, " ")))
 		case "text-decoration":
 			for _, part := range componentValues(decl.value) {
 				switch part.String() {
@@ -294,6 +322,8 @@ func resolveDeclarations(decls []declaration) StyleMap {
 					set("text-decoration-line", part)
 				case "solid", "double", "dotted", "dashed", "wavy":
 					set("text-decoration-style", part)
+				default:
+					set("text-decoration-color", part)
 				}
 			}
 		case "background":
@@ -319,4 +349,51 @@ func resolveDeclarations(decls []declaration) StyleMap {
 		}
 	}
 	return resolved
+}
+
+// isFontSizeValue reports whether v can stand in the size slot of the `font`
+// shorthand: a length, a percentage or one of the absolute or relative size
+// keywords, each optionally followed by a slash and the line-height. A bare
+// number is a weight, not a size.
+func isFontSizeValue(v StyleValue) bool {
+	size, _, _ := splitSlash(v)
+	s := size.String()
+	switch s {
+	case "xx-small", "x-small", "small", "medium", "large", "x-large", "xx-large", "xxx-large", "smaller", "larger":
+		return true
+	}
+	if _, err := strconv.Atoi(s); err == nil {
+		return false
+	}
+	return dimen.MatchString(s) || strings.HasSuffix(s, "%")
+}
+
+// splitSlash splits a `size/line-height` component at the slash delimiter. The
+// third result is false when the component has no slash, size is then v itself.
+func splitSlash(v StyleValue) (size, lineHeight StyleValue, ok bool) {
+	for i, tok := range v.toks {
+		if tok.Type == scanner.Delim && tok.Value == "/" {
+			return tokenValue(v.toks[:i]), tokenValue(v.toks[i+1:]), true
+		}
+	}
+	return v, StyleValue{}, false
+}
+
+// glueSlash drops the whitespace tokens next to a "/" delimiter, so that
+// `10pt / 12pt` forms one component like `10pt/12pt` does.
+func glueSlash(toks tokenstream) tokenstream {
+	out := make(tokenstream, 0, len(toks))
+	for i, tok := range toks {
+		if tok.Type == scanner.S {
+			if i > 0 && isSlash(toks[i-1]) || i+1 < len(toks) && isSlash(toks[i+1]) {
+				continue
+			}
+		}
+		out = append(out, tok)
+	}
+	return out
+}
+
+func isSlash(tok *scanner.Token) bool {
+	return tok.Type == scanner.Delim && tok.Value == "/"
 }
