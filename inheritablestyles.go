@@ -453,7 +453,15 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 		case "border-bottom-color":
 			ih.BorderBottomColor = df.GetColor(v)
 		case "border-spacing":
-			// ignore
+			// One length for both directions, or horizontal then vertical.
+			parts := strings.Fields(v)
+			if len(parts) >= 1 {
+				ih.borderSpacingH = ParseRelativeSize(parts[0], curFontSize, ih.DefaultFontSize)
+				ih.borderSpacingV = ih.borderSpacingH
+			}
+			if len(parts) >= 2 {
+				ih.borderSpacingV = ParseRelativeSize(parts[1], curFontSize, ih.DefaultFontSize)
+			}
 		case "color":
 			ih.color = df.GetColor(v)
 		case "content":
@@ -594,7 +602,12 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 		case "text-align":
 			ih.Halign = ParseHorizontalAlign(v, ih)
 		case "border-collapse":
-			// handled by table builder
+			switch v {
+			case "separate":
+				ih.borderModel = frontend.BorderModelSeparate
+			case "collapse":
+				ih.borderModel = frontend.BorderModelCollapse
+			}
 		case "text-decoration-style":
 			switch v {
 			case "solid":
@@ -798,10 +811,16 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 
 // FormattingStyles are HTML formatting styles.
 type FormattingStyles struct {
-	BackgroundColor         *color.Color
-	BorderLeftWidth         bag.ScaledPoint
-	BorderRightWidth        bag.ScaledPoint
-	BorderBottomWidth       bag.ScaledPoint
+	BackgroundColor   *color.Color
+	BorderLeftWidth   bag.ScaledPoint
+	BorderRightWidth  bag.ScaledPoint
+	BorderBottomWidth bag.ScaledPoint
+	// borderModel and the spacing are the table properties border-collapse
+	// and border-spacing. Both inherit, so a nested table follows its outer
+	// one unless it says otherwise.
+	borderModel             frontend.BorderModel
+	borderSpacingH          bag.ScaledPoint
+	borderSpacingV          bag.ScaledPoint
 	BorderTopWidth          bag.ScaledPoint
 	BorderTopLeftRadius     bag.ScaledPoint
 	BorderTopRightRadius    bag.ScaledPoint
@@ -951,6 +970,9 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 	}
 	newis := &FormattingStyles{
 		BackgroundColor:    is.BackgroundColor,
+		borderModel:        is.borderModel,
+		borderSpacingH:     is.borderSpacingH,
+		borderSpacingV:     is.borderSpacingV,
 		color:              is.color,
 		DefaultFontSize:    is.DefaultFontSize,
 		DefaultFontFamily:  is.DefaultFontFamily,
@@ -1124,6 +1146,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		settings[frontend.SettingFontWeight] = ih.Fontweight
 	}
 	settings[frontend.SettingBackgroundColor] = ih.BackgroundColor
+	settings[frontend.SettingBorderCollapse] = ih.borderModel
+	settings[frontend.SettingBorderSpacingHorizontal] = ih.borderSpacingH
+	settings[frontend.SettingBorderSpacingVertical] = ih.borderSpacingV
 	settings[frontend.SettingBorderTopWidth] = ih.BorderTopWidth
 	settings[frontend.SettingBorderLeftWidth] = ih.BorderLeftWidth
 	settings[frontend.SettingBorderRightWidth] = ih.BorderRightWidth

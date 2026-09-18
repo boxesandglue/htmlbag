@@ -331,6 +331,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// that the page builder cannot split — causing tail
 					// rows to be silently dropped.
 					tableHv := settingsToHTMLValues(t.Settings)
+					if !tableBorderInWrapper(t.Settings) {
+						// Collapsing model: the edge cells draw the
+						// table's border.
+						tableHv.BorderTopWidth, tableHv.BorderRightWidth = 0, 0
+						tableHv.BorderBottomWidth, tableHv.BorderLeftWidth = 0, 0
+					}
 					hasTableBorderOrBg := tableHv.hasBorder() || tableHv.BackgroundColor != nil
 					hasTheadOrTfoot := false
 					if hasTableBorderOrBg {

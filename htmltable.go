@@ -71,6 +71,7 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	}
 	tbl := &frontend.Table{}
 	tbl.MaxWidth = wd
+	applyTableBorderModel(tbl, te.Settings)
 	if sWd, ok := te.Settings[frontend.SettingWidth]; ok {
 		if wdStr, ok := sWd.(string); ok {
 			if strings.HasSuffix(wdStr, "%") {
@@ -294,6 +295,40 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	vl.Attributes["_tableTeWidth"] = wd
 
 	return vl, nil
+}
+
+// applyTableBorderModel hands border-collapse and border-spacing to the
+// table. In the collapsing model the table's own border goes with them, so
+// that it merges into the cells on the edge instead of being drawn twice;
+// in the separated model the border stays with the wrapper that draws the
+// table's background and padding (see tableBorderInWrapper).
+func applyTableBorderModel(tbl *frontend.Table, settings frontend.TypesettingSettings) {
+	if bm, ok := settings[frontend.SettingBorderCollapse].(frontend.BorderModel); ok {
+		tbl.BorderModel = bm
+	}
+	if sp, ok := settings[frontend.SettingBorderSpacingHorizontal].(bag.ScaledPoint); ok {
+		tbl.BorderSpacingHorizontal = sp
+	}
+	if sp, ok := settings[frontend.SettingBorderSpacingVertical].(bag.ScaledPoint); ok {
+		tbl.BorderSpacingVertical = sp
+	}
+	if tbl.BorderModel == frontend.BorderModelSeparate {
+		return
+	}
+	hv := SettingsToValues(settings)
+	tbl.BorderTopWidth, tbl.BorderTopColor = hv.BorderTopWidth, hv.BorderTopColor
+	tbl.BorderRightWidth, tbl.BorderRightColor = hv.BorderRightWidth, hv.BorderRightColor
+	tbl.BorderBottomWidth, tbl.BorderBottomColor = hv.BorderBottomWidth, hv.BorderBottomColor
+	tbl.BorderLeftWidth, tbl.BorderLeftColor = hv.BorderLeftWidth, hv.BorderLeftColor
+}
+
+// tableBorderInWrapper reports whether the table's own border is drawn by the
+// wrapper around the table VList. That is the separated model; in the
+// collapsing model the border is part of the edge cells, so the wrapper must
+// not draw it a second time.
+func tableBorderInWrapper(settings frontend.TypesettingSettings) bool {
+	bm, _ := settings[frontend.SettingBorderCollapse].(frontend.BorderModel)
+	return bm == frontend.BorderModelSeparate
 }
 
 func (cb *CSSBuilder) buildColgroup(te *frontend.Text, tbl *frontend.Table) {
