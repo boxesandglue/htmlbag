@@ -391,6 +391,14 @@ func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
 	// so the value has no consumer here.
 	delete(te.Settings, settingLangTag)
 	tr := &frontend.TableRow{}
+	// CSS `height` on the row: a lower bound for the row height (CSS 2.1
+	// §17.5.3). Output() stamps the resolved length as settingCSSHeight;
+	// take it and drop the sentinel before the settings are copied to
+	// the cell contents.
+	if h, ok := te.Settings[settingCSSHeight].(bag.ScaledPoint); ok {
+		tr.MinHeight = h
+	}
+	delete(te.Settings, settingCSSHeight)
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
 		case *frontend.Text:
@@ -413,6 +421,11 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 	delete(te.Settings, settingLangTag)
 	td := &frontend.TableCell{}
 	td.IsHeader = isHeader
+	// CSS `height` on the cell, same lower-bound semantics as on the row.
+	if h, ok := te.Settings[settingCSSHeight].(bag.ScaledPoint); ok {
+		td.MinHeight = h
+	}
+	delete(te.Settings, settingCSSHeight)
 
 	// Extract colspan and rowspan
 	settings := te.Settings

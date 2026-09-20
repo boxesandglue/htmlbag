@@ -96,6 +96,16 @@ const attrFloatMargins = "float-margins"
 // isCSSHeightExempt reports whether an element's CSS height is the business
 // of a dedicated layout path (table layout, replaced elements) rather than
 // the settingCSSHeight flow-space mechanism.
+// isTableRowOrCell reports whether tag is a table row or cell, the table
+// parts whose CSS `height` acts as the minimum height of the row.
+func isTableRowOrCell(tag string) bool {
+	switch tag {
+	case "tr", "td", "th":
+		return true
+	}
+	return false
+}
+
 func isCSSHeightExempt(tag string) bool {
 	switch tag {
 	case "table", "thead", "tbody", "tfoot", "tr", "td", "th", "col", "colgroup", "caption", "img":
@@ -2092,6 +2102,12 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		if len(newte.Items) == 0 {
 			newte.Settings[frontend.SettingBox] = true
 		}
+		newte.Settings[settingCSSHeight] = elementCSSHeight
+	} else if elementCSSHeight > 0 && isTableRowOrCell(item.Data) {
+		// CSS 2.1 §17.5.3: `height` on a row or cell is a lower bound for
+		// the row. The sentinel is only carried here; buildTR and buildTD
+		// move it onto the frontend row/cell and delete it, so it never
+		// reaches the settings switch in frontend.FormatParagraph.
 		newte.Settings[settingCSSHeight] = elementCSSHeight
 	}
 	// CSS initial-letter: carve the paragraph's first letter out as a

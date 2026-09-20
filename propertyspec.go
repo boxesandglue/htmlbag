@@ -88,7 +88,7 @@ var Properties = []PropertySpec{
 	{Name: "padding-top", Aliases: []string{"padding-right", "padding-bottom", "padding-left"}, Values: "Length", Example: "padding-left: 10pt;", Group: GroupBox},
 	{Name: "padding-inline-start", Values: "Length", Example: "padding-inline-start: 2em;", Note: "Maps to `padding-left` for `ltr` and to `padding-right` for `rtl`", Group: GroupBox},
 	{Name: "width", Values: "Length or percentage, on blocks, images and table cells", Example: "width: 100%;", Group: GroupBox},
-	{Name: "height", Values: "Length, on blocks and images", Example: "height: 4cm;", Group: GroupBox},
+	{Name: "height", Values: "Length, on blocks, images, table rows and table cells", Example: "height: 4cm;", Note: "A minimum: content taller than the height is never clipped, a table row grows to fit its cells", Group: GroupBox},
 	{Name: "max-width", Values: "Length or percentage, on images", Example: "max-width: 100%;", Group: GroupBox},
 	{Name: "background-color", Values: "Color value, painted on block elements, inline elements and table cells", Example: "background-color: #ffffcc;", Group: GroupBox},
 	{Name: "background", Values: "Shorthand, only the color is read", Example: "background: #ffffcc;", Group: GroupBox},
