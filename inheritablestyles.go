@@ -1189,8 +1189,10 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	settings[frontend.SettingHAlign] = ih.Halign
 	settings[frontend.SettingHangingPunctuation] = ih.hangingPunctuation
 	settings[frontend.SettingItalicCorrection] = ih.italicCorrection
-	settings[frontend.SettingIndentLeft] = ih.indent
-	settings[frontend.SettingIndentLeftRows] = ih.indentRows
+	// text-indent is logical: it indents the line-start edge, which the
+	// frontend picks once it knows the paragraph direction.
+	settings[frontend.SettingIndentStart] = ih.indent
+	settings[frontend.SettingIndentStartRows] = ih.indentRows
 	if ih.lineheightFactor != 0 {
 		settings[frontend.SettingLeading] = bag.ScaledPoint(float64(ih.Fontsize) * ih.lineheightFactor)
 	} else {
