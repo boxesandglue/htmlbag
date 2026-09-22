@@ -391,6 +391,9 @@ func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
 	// so the value has no consumer here.
 	delete(te.Settings, settingLangTag)
 	tr := &frontend.TableRow{}
+	if v, ok := te.Settings[frontend.SettingElementID]; ok {
+		tr.ID, _ = v.(string)
+	}
 	// CSS `height` on the row: a lower bound for the row height (CSS 2.1
 	// §17.5.3). Output() stamps the resolved length as settingCSSHeight;
 	// take it and drop the sentinel before the settings are copied to
@@ -429,6 +432,10 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 
 	// Extract colspan and rowspan
 	settings := te.Settings
+
+	if v, ok := settings[frontend.SettingElementID]; ok {
+		td.ID, _ = v.(string)
+	}
 
 	// CSS `width` on the cell. The table layout treats it as a lower
 	// bound for the column (CSS 2.1 §17.5.2.2), so `width: 50%` on both
