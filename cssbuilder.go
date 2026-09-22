@@ -385,6 +385,19 @@ func (cb *CSSBuilder) recordAnchorSnapshot(id string, ss StylesStack) {
 	cb.anchorSnapshots[id] = snap
 }
 
+// pageIsRight reports whether the page being laid out is a right (recto)
+// page: the first page is, and the parity alternates from there. An open page
+// is already in the document's page list; before the first one exists, the
+// page about to be made is page one. Counting the list alone made every even
+// page a right one from page two on.
+func (cb *CSSBuilder) pageIsRight() bool {
+	n := len(cb.frontend.Doc.Pages)
+	if cb.frontend.Doc.CurrentPage == nil {
+		n++
+	}
+	return n%2 == 1
+}
+
 func (cb *CSSBuilder) getPageType() *Page {
 	base, hasBase := cb.css.Pages[""]
 	pick := func(pseudo Page) *Page {
@@ -397,7 +410,7 @@ func (cb *CSSBuilder) getPageType() *Page {
 	if first, ok := cb.css.Pages[":first"]; ok && len(cb.frontend.Doc.Pages) == 0 {
 		return pick(first)
 	}
-	isRight := len(cb.frontend.Doc.Pages)%2 == 0
+	isRight := cb.pageIsRight()
 	if right, ok := cb.css.Pages[":right"]; ok && isRight {
 		return pick(right)
 	}
@@ -1279,7 +1292,29 @@ func stampGroupItemIndices(wrapper *frontend.Text, vl *node.VList) {
 			child.Attributes = node.H{}
 		}
 		child.Attributes["_groupItemIdx"] = idx
+		if built, ok := narrowingFloatParity(child); ok {
+			child.Attributes["_floatParity"] = built
+		}
 	}
+}
+
+// narrowingFloatParity reports the page parity an item's inside/outside float
+// was resolved against, if the item holds one that narrows the text beside it.
+// Every float in one build pass assumed the same page, so the first one found
+// speaks for the item.
+func narrowingFloatParity(vl *node.VList) (bool, bool) {
+	if narrows, _ := vl.Attributes[attrFloatNarrows].(bool); narrows {
+		built, _ := vl.Attributes[attrFloatBuiltRight].(bool)
+		return built, true
+	}
+	for n := vl.List; n != nil; n = n.Next() {
+		if child, ok := n.(*node.VList); ok {
+			if built, ok := narrowingFloatParity(child); ok {
+				return built, true
+			}
+		}
+	}
+	return false, false
 }
 
 // dropLeadingMarginKern removes a leading collapsed-margin kern from a
@@ -1410,21 +1445,29 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		return nil
 	}
 
-	// widthRestartIdx reports whether pagination must hand control back to
-	// OutputPagesFromText: the current page's content width differs from the
-	// width the vlist was built at, and n is the (not yet placed) node of a
-	// whole body item. Margin kerns in between are placed normally — they
-	// are width-independent and the rebuilt chain drops its leading kern.
-	widthRestartIdx := func(n node.Node) (int, bool) {
-		if pd.ContentWidth == builtWidth {
-			return 0, false
-		}
+	// restartIdx reports whether pagination must hand control back to
+	// OutputPagesFromText, n being the (not yet placed) node of a whole body
+	// item: the current page's content width differs from the width the
+	// vlist was built at, or the item narrows text beside an inside/outside
+	// float that was resolved for a page of the other parity. Margin kerns
+	// in between are placed normally: they are width-independent and the
+	// rebuilt chain drops its leading kern.
+	restartIdx := func(n node.Node) (int, bool) {
 		nvl, ok := n.(*node.VList)
 		if !ok || nvl.Attributes == nil {
 			return 0, false
 		}
 		idx, ok := nvl.Attributes["_groupItemIdx"].(int)
-		return idx, ok
+		if !ok {
+			return 0, false
+		}
+		if pd.ContentWidth != builtWidth {
+			return idx, true
+		}
+		if built, ok := nvl.Attributes["_floatParity"].(bool); ok && built != cb.pageIsRight() {
+			return idx, true
+		}
+		return 0, false
 	}
 
 	// collectReflowCarry gathers the attributes listed in reflowCarryKeys
@@ -1470,7 +1513,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		// A page break in a previous iteration (or inside a split path)
 		// switched to a different content width: restart at the next whole
 		// item so OutputPagesFromText re-breaks it at the new width.
-		if idx, ok := widthRestartIdx(cur); ok {
+		if idx, ok := restartIdx(cur); ok {
 			return idx, collectReflowCarry(cur), nil
 		}
 
@@ -1672,7 +1715,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 				// The fresh page may use a different content width; if cur
 				// is a whole item, re-break it (and everything after) there
 				// instead of placing old-width lines.
-				if idx, ok := widthRestartIdx(cur); ok {
+				if idx, ok := restartIdx(cur); ok {
 					return idx, collectReflowCarry(cur), nil
 				}
 			}
@@ -1687,7 +1730,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 			}
 			// Same width check as above: cur has not been buffered yet, so
 			// a whole item can still be re-broken at the new width.
-			if idx, ok := widthRestartIdx(cur); ok {
+			if idx, ok := restartIdx(cur); ok {
 				return idx, collectReflowCarry(cur), nil
 			}
 		}

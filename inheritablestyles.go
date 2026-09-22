@@ -602,11 +602,13 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 		case "float":
 			// Only the values text flows beside; the paged-media ones
 			// (top/before/bottom/after) are handled by isFloatElement.
-			if v == "left" || v == "right" {
+			// inside and outside are resolved against the page the float
+			// lands on (see resolveFloatSide).
+			if v == "left" || v == "right" || v == "inside" || v == "outside" {
 				ih.floatSide = v
 			}
 		case "clear":
-			if v == "left" || v == "right" || v == "both" {
+			if v == "left" || v == "right" || v == "both" || v == "inside" || v == "outside" {
 				ih.clear = v
 			}
 		case "text-align":

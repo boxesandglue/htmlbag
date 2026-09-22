@@ -206,11 +206,22 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 
 		// Track previous element's margin-bottom for margin collapsing
 		var prevMarginBottom bag.ScaledPoint
+		// floatSpentMargin is the part of the pending collapsed margin a
+		// float has already laid out below the previous child (see the
+		// float branch); the next in-flow child adds only the rest.
+		var floatSpentMargin bag.ScaledPoint
 
 		// The band a float left behind, if the container is inside one. See
 		// float.go: the float itself is painted and leaves the vertical flow;
 		// the band is what keeps the content after it clear.
 		var band *floatBand
+		// hanger is the band of a float with no footprint in the text (a
+		// margin note pulled out of the block by a negative margin). It
+		// narrows nothing, so it lives beside a text-narrowing band: a note
+		// and a figure written one after the other both start level with the
+		// paragraph they precede, as they would in a browser. All the hanger
+		// does is keep the container tall enough to hold its box.
+		var hanger *floatBand
 
 		if inheritedInset > 0 {
 			if hasBorderOrBg {
@@ -232,22 +243,27 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			}
 		}
 
-		// skipBand moves the cursor past whatever is left of the live band, so
+		// skipBand moves the cursor past whatever is left of a live band, so
 		// that what comes next starts below the float rather than beside it.
-		skipBand := func(origin string) {
-			if gap := band.gap(); gap > 0 {
+		// The caller drops its reference to the band.
+		skipBand := func(b *floatBand, origin string) {
+			if gap := b.gap(); gap > 0 {
 				k := node.NewKern()
 				k.Kern = gap
 				k.Attributes = node.H{"origin": origin}
 				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
 				vls.Height += gap
 			}
-			band = nil
 		}
 
 		for i, itm := range te.Items {
-			if band != nil && clearsBand(itm, band.side) {
-				skipBand("clear")
+			if band != nil && clearsBand(itm, band) {
+				skipBand(band, "clear")
+				band = nil
+			}
+			if hanger != nil && clearsBand(itm, hanger) {
+				skipBand(hanger, "clear")
+				hanger = nil
 			}
 			if side, float, isFloat := floatSideOf(itm); isFloat {
 				box, err := cb.buildFloat(float, childBaseWidth)
@@ -255,17 +271,45 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					return nil, err
 				}
 				if box != nil && box.Width > 0 {
-					// A float opening while a band is live is placed below it:
-					// the band is what the second float would otherwise
-					// overwrite, leaving the first one overhanging everything
-					// after it by its unconsumed remainder.
-					if band != nil {
-						skipBand("float")
+					// A float opening while a band of its own kind is live is
+					// placed below it: the band is what the second float would
+					// otherwise overwrite, leaving the first one overhanging
+					// everything after it by its unconsumed remainder. A float
+					// without a footprint and one that narrows the text do
+					// not compete, so those two share their position.
+					narrows := floatFootprint(side, box.Width, marginsOf(float), cb.pageIsRight()) > 0
+					if narrows && band != nil {
+						skipBand(band, "float")
+						band = nil
+					}
+					if !narrows && hanger != nil {
+						skipBand(hanger, "float")
+						hanger = nil
+					}
+					// The float sits below the previous sibling's bottom
+					// margin, where a browser puts it: that margin is laid
+					// out before the float, and the next sibling's top margin
+					// collapses with it, so a float between two blocks with
+					// equal margins starts level with the block after it. Left
+					// above the margin, the float's offset to that block would
+					// depend on whatever the margins around it happen to be.
+					if i > 0 && prevMarginBottom > floatSpentMargin {
+						k := node.NewKern()
+						k.Kern = prevMarginBottom - floatSpentMargin
+						k.Attributes = node.H{"origin": "margin"}
+						vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
+						vls.Height += k.Kern
+						floatSpentMargin = prevMarginBottom
 					}
 					// The float, not the item it arrived in: a replaced element
 					// comes wrapped in an anonymous inline run whose margins are
 					// its own, which is to say zeros.
-					band = openBand(vls, box, side, childBaseWidth, marginsOf(float))
+					opened := openBand(vls, box, side, childBaseWidth, marginsOf(float), cb.pageIsRight())
+					if narrows {
+						band = opened
+					} else {
+						hanger = opened
+					}
 					continue
 				}
 			}
@@ -297,6 +341,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// Collapsed margin: max of previous bottom and current top
 					marginGlue = bag.Max(prevMarginBottom, curMarginTop)
 				}
+				// A float before this child already laid out part of the
+				// collapsed margin; only the rest is added here.
+				marginGlue -= floatSpentMargin
+				floatSpentMargin = 0
 
 				// Insert margin kern if needed
 				if marginGlue > 0 {
@@ -554,8 +602,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			// The advance is height + depth: a child's own depth becomes the
 			// container's depth rather than its height, so the height delta
 			// alone carries the PREVIOUS child's depth and misses this one's.
-			if band != nil && !band.consume((vls.Height+vls.Depth)-(heightBefore+depthBefore)) {
+			advance := (vls.Height + vls.Depth) - (heightBefore + depthBefore)
+			if band != nil && !band.consume(advance) {
 				band = nil
+			}
+			if hanger != nil && !hanger.consume(advance) {
+				hanger = nil
 			}
 		}
 
@@ -565,14 +617,19 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// an overhanging float has nothing sensible to do at a page break.
 		// An inherited band is the ancestor's to extend: it painted the float and
 		// it is still counting this container's height against the band.
+		var overhang bag.ScaledPoint
 		if band != nil && !band.inherited {
-			if gap := band.gap(); gap > 0 {
-				k := node.NewKern()
-				k.Kern = gap
-				k.Attributes = node.H{"origin": "float"}
-				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
-				vls.Height += gap
-			}
+			overhang = band.gap()
+		}
+		if hanger != nil && hanger.gap() > overhang {
+			overhang = hanger.gap()
+		}
+		if overhang > 0 {
+			k := node.NewKern()
+			k.Kern = overhang
+			k.Attributes = node.H{"origin": "float"}
+			vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
+			vls.Height += overhang
 		}
 
 		// Handle final margin-bottom after last element.

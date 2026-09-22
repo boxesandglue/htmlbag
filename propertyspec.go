@@ -109,8 +109,8 @@ var Properties = []PropertySpec{
 	{Name: "border-spacing", Values: "One or two lengths, on tables in the separated model; the default is 2pt", Example: "border-spacing: 4pt 2pt;", Group: GroupBorder},
 
 	// Layout
-	{Name: "float", Values: "`left`, `right`, `none`; `top` (or `before`) and `bottom` (or `after`) lift the element out of the flow to the top or bottom of the page", Example: "float: right;", Group: GroupLayout},
-	{Name: "clear", Values: "`left`, `right`, `both`, `none`", Example: "clear: both;", Group: GroupLayout},
+	{Name: "float", Values: "`left`, `right`, `none`; `inside` and `outside` pick the side towards or away from the binding on the page the float lands on, with the declared `margin-left`/`margin-right` swapped on left pages; `top` (or `before`) and `bottom` (or `after`) lift the element out of the flow to the top or bottom of the page", Example: "float: outside;", Group: GroupLayout},
+	{Name: "clear", Values: "`left`, `right`, `inside`, `outside`, `both`, `none`", Example: "clear: both;", Group: GroupLayout},
 	{Name: "position", Values: "`static`, `relative`, `absolute`, `running(name)` for running elements that repeat in page margin boxes", Example: "position: absolute;", Note: "`fixed` and `sticky` are not supported", Group: GroupLayout},
 	{Name: "top", Aliases: []string{"right", "bottom", "left"}, Values: "Length or `auto`, with `position`", Example: "top: 1cm;", Group: GroupLayout},
 	{Name: "z-index", Values: "Integer or `auto`, with `position`", Example: "z-index: 1;", Group: GroupLayout},

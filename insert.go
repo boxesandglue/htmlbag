@@ -518,7 +518,12 @@ func (cb *CSSBuilder) flushInserts() error {
 	// MarginLeft / MarginTop, so unpadded pages are unaffected.
 	yCursor := pd.Height - pd.PageAreaTop - topFloatHeight
 	pageNum := len(cb.frontend.Doc.Pages)
+	rightPage := cb.pageIsRight()
 	for _, entry := range cb.pageBuf {
+		// The parity is known for certain only now: a float declared
+		// inside or outside that was built for the other one moves to
+		// its side of this page.
+		fixLogicalFloats(entry.box, rightPage)
 		cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, yCursor, entry.box)
 		if entry.headingIdx >= 0 && entry.headingIdx < len(cb.Headings) {
 			cb.Headings[entry.headingIdx].Page = pageNum

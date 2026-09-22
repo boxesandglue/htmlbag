@@ -119,9 +119,118 @@ func (m floatMargins) gutter(side string) bag.ScaledPoint {
 	return floatGutter
 }
 
+// A float declared inside or outside is resolved against the page it is
+// painted on. The container resolves it when it builds the float, assuming
+// the page that is current then; content is built ahead of the page breaks,
+// so the box also records what it assumed and what it would take to derive
+// the shift again (fixLogicalFloats), and whether it narrows the text beside
+// it, in which case the item is rebuilt on a page of the other parity (see
+// outputGroupNodes).
+const (
+	attrFloatLogical     = "floatLogical"
+	attrFloatBuiltRight  = "floatBuiltRight"
+	attrFloatWd          = "floatWd"
+	attrFloatDeclMargins = "floatDeclaredMargins"
+	attrFloatNarrows     = "floatNarrows"
+)
+
+// resolveFloatSide turns a declared float side into the physical one for a
+// page. inside is the side towards the binding: left on a right page, right
+// on a left page. outside is the other one. left and right are returned as
+// they are.
+func resolveFloatSide(declared string, rightPage bool) string {
+	switch declared {
+	case "inside":
+		if rightPage {
+			return "left"
+		}
+		return "right"
+	case "outside":
+		if rightPage {
+			return "right"
+		}
+		return "left"
+	}
+	return declared
+}
+
+// isLogicalSide reports whether a declared side depends on the page.
+func isLogicalSide(side string) bool {
+	return side == "inside" || side == "outside"
+}
+
+// forPage mirrors the horizontal margins of a logical float on a left page.
+// The declared margins describe the float on a right page; a left page is its
+// mirror image, so what was declared for the right edge applies to the left
+// one there. A margin note written as float: outside with a negative
+// margin-right hangs into the outer margin on either page that way.
+func (m floatMargins) forPage(rightPage bool) floatMargins {
+	if rightPage {
+		return m
+	}
+	m.left, m.right = m.right, m.left
+	return m
+}
+
+// floatInset is what the content beside a float has to give up: the float,
+// the margin between the two, and the margin on the far side, which is space
+// the float holds against the container edge rather than against the text. A
+// negative far margin of width plus gutter brings it to zero: the float hangs
+// outside the text block and takes nothing from it.
+func floatInset(side string, width bag.ScaledPoint, m floatMargins) bag.ScaledPoint {
+	inset := width + m.gutter(side)
+	if side == "right" {
+		return inset + m.right
+	}
+	return inset + m.left
+}
+
+// floatFootprint is the inset a float will leave once its side and margins
+// are resolved for the page, before its box is placed. The container uses it
+// to decide whether the float competes with a live band for the text's width.
+func floatFootprint(declared string, width bag.ScaledPoint, m floatMargins, rightPage bool) bag.ScaledPoint {
+	side := resolveFloatSide(declared, rightPage)
+	if isLogicalSide(declared) {
+		m = m.forPage(rightPage)
+	}
+	return floatInset(side, width, m)
+}
+
+// floatShiftX is where a float box of the given width sits inside a container
+// of width wd.
+func floatShiftX(side string, wd, width bag.ScaledPoint, m floatMargins) bag.ScaledPoint {
+	if side == "right" {
+		return wd - width - m.right
+	}
+	return m.left
+}
+
+// fixLogicalFloats re-derives the shift of every inside/outside float in the
+// box for the page it is painted on. The container built the box assuming the
+// page current at build time; content built ahead of a page break lands on the
+// other parity, and the shift is what has to follow. The side the text beside
+// the float was narrowed on is fixed at build time; the parity restart in
+// outputGroupNodes takes care of that where it matters.
+func fixLogicalFloats(vl *node.VList, rightPage bool) {
+	if declared, ok := vl.Attributes[attrFloatLogical].(string); ok {
+		if built, _ := vl.Attributes[attrFloatBuiltRight].(bool); built != rightPage {
+			wd, _ := vl.Attributes[attrFloatWd].(bag.ScaledPoint)
+			m, _ := vl.Attributes[attrFloatDeclMargins].(floatMargins)
+			vl.ShiftX = floatShiftX(resolveFloatSide(declared, rightPage), wd, vl.Width, m.forPage(rightPage))
+			vl.Attributes[attrFloatBuiltRight] = rightPage
+		}
+	}
+	for n := vl.List; n != nil; n = n.Next() {
+		if child, ok := n.(*node.VList); ok {
+			fixLogicalFloats(child, rightPage)
+		}
+	}
+}
+
 // floatBand is the vertical extent a float still covers.
 type floatBand struct {
-	side      string          // "left" or "right"
+	side      string          // "left" or "right", resolved for the page assumed at build time
+	rightPage bool            // the page parity the side was resolved against
 	inset     bag.ScaledPoint // what content has to give up to clear the float
 	remaining bag.ScaledPoint // band height not yet passed
 	// boxRemaining is the float box's own extent not yet passed. It is the band
@@ -186,7 +295,10 @@ func soleItem(t *frontend.Text) (any, bool) {
 	return found, found != nil
 }
 
-func clearsBand(itm any, side string) bool {
+// clearsBand reports whether a child ends the band: clear names the band's
+// side, physically or as inside/outside resolved against the same page the
+// band was.
+func clearsBand(itm any, b *floatBand) bool {
 	t, ok := itm.(*frontend.Text)
 	if !ok {
 		return false
@@ -195,7 +307,7 @@ func clearsBand(itm any, side string) bool {
 	if !ok {
 		return false
 	}
-	return clear == "both" || clear == side
+	return clear == "both" || resolveFloatSide(clear, b.rightPage) == b.side
 }
 
 // buildFloat formats a float child. The result reserves no vertical space: it is
@@ -230,7 +342,16 @@ func (cb *CSSBuilder) buildFloat(itm any, wd bag.ScaledPoint) (*node.VList, erro
 	return nil, nil
 }
 
-func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint, m floatMargins) *floatBand {
+// openBand places the float box in the container and returns the band it
+// leaves behind. declared is the float side as written; inside and outside are
+// resolved against rightPage, the parity of the page current while the
+// container is built, and their margins are read as written for a right page.
+func openBand(vls *node.VList, box *node.VList, declared string, wd bag.ScaledPoint, m floatMargins, rightPage bool) *floatBand {
+	side := resolveFloatSide(declared, rightPage)
+	declaredMargins := m
+	if isLogicalSide(declared) {
+		m = m.forPage(rightPage)
+	}
 	// The margin above the float is space the float itself takes: packed on top
 	// of the box, it pushes the float down the page and the band with it.
 	if m.top > 0 {
@@ -264,11 +385,7 @@ func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint,
 	// zero, and clamping it here would be a branch nothing can observe.
 	height := boxHeight + m.bottom
 	width := box.Width
-	if side == "right" {
-		box.ShiftX = wd - width - m.right
-	} else {
-		box.ShiftX = m.left
-	}
+	box.ShiftX = floatShiftX(side, wd, width, m)
 	// Zero height is what takes the box out of the vertical flow: the parent
 	// reserves nothing for it and the following content is held clear by the
 	// band instead. A box with no height above its reference point already hangs
@@ -279,16 +396,17 @@ func openBand(vls *node.VList, box *node.VList, side string, wd bag.ScaledPoint,
 	}
 	box.Attributes["origin"] = "float"
 	vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), box)
-	// What the content beside it has to give up: the float, the margin between
-	// the two, and the margin on the far side, which is space the float holds
-	// against the container edge rather than against the text.
-	inset := width + m.gutter(side)
-	if side == "right" {
-		inset += m.right
-	} else {
-		inset += m.left
+	inset := floatInset(side, width, m)
+	if isLogicalSide(declared) {
+		box.Attributes[attrFloatLogical] = declared
+		box.Attributes[attrFloatBuiltRight] = rightPage
+		box.Attributes[attrFloatWd] = wd
+		box.Attributes[attrFloatDeclMargins] = declaredMargins
+		if inset > 0 {
+			box.Attributes[attrFloatNarrows] = true
+		}
 	}
-	return &floatBand{side: side, inset: inset, remaining: height, boxRemaining: boxHeight}
+	return &floatBand{side: side, rightPage: rightPage, inset: inset, remaining: height, boxRemaining: boxHeight}
 }
 
 // narrow marks a child as sitting in the band. The row count is left to the
