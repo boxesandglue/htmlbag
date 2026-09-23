@@ -2298,6 +2298,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					vl.Attributes = node.H{}
 				}
 				vl.Attributes["origin"] = "inline-svg"
+				stampInlineID(vl, item)
 				if alt, ok := item.Attributes["alt"]; ok {
 					vl.Attributes["alt"] = alt
 				}
@@ -2319,6 +2320,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				vl.Attributes = node.H{}
 			}
 			vl.Attributes["origin"] = "inline-svg"
+			stampInlineID(vl, item)
 			if alt, ok := item.Attributes["alt"]; ok {
 				vl.Attributes["alt"] = alt
 			}
@@ -2771,4 +2773,13 @@ func cssFontFeatureSettings(v string) []string {
 		out = append(out, tag+"="+val)
 	}
 	return out
+}
+
+// stampInlineID gives an inline replaced element's box the element's id, as
+// block elements get theirs through SettingElementID, so the element can be
+// found on the laid-out page.
+func stampInlineID(vl *node.VList, item *HTMLItem) {
+	if id := item.Attributes["id"]; id != "" {
+		vl.Attributes["id"] = id
+	}
 }

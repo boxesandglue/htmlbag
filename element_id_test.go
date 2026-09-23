@@ -61,3 +61,26 @@ func TestElementIDReachesTheBox(t *testing.T) {
 		}
 	}
 }
+
+// TestInlineSVGIDReachesTheBox checks that an inline svg's id is carried onto
+// the one box the svg builds, in a paragraph and in a table cell. A <span>
+// breaks into several line fragments and has no single box to carry it.
+func TestInlineSVGIDReachesTheBox(t *testing.T) {
+	const svg = `<svg id="sig" width="40pt" height="20pt" viewBox="0 0 40 20"><rect width="40" height="20"/></svg>`
+	const pctSVG = `<svg id="sig" width="50%" height="20pt" viewBox="0 0 40 20"><rect width="40" height="20"/></svg>`
+	cases := map[string]string{
+		"paragraph":         `<p>Signed: ` + svg + ` here</p>`,
+		"percent width":     `<p>Signed: ` + pctSVG + ` here</p>`,
+		"cell":              `<table><tr><td>Signed: ` + svg + `</td></tr></table>`,
+		"cell, svg alone":   `<table><tr><td>` + svg + `</td></tr></table>`,
+		"span is left bare": `<p>Signed: <span id="span">by me</span> ` + svg + `</p>`,
+	}
+	for name, html := range cases {
+		t.Run(name, func(t *testing.T) {
+			ids := elementIDs(renderHTMLPages(t, borderModelCSS, html))
+			if ids["sig"] != 1 || len(ids) != 1 {
+				t.Errorf("ids = %v, want sig once and nothing else", ids)
+			}
+		})
+	}
+}
