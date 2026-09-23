@@ -175,12 +175,16 @@ type CSSBuilder struct {
 	// currently in-flight table. Saved/restored across nested buildTable
 	// calls. Drained into the table VList's "inserts" attribute at the
 	// end of buildTable.
-	// tableFloatRestores puts back the float/clear sentinels stripped from the
-	// cell content that reaches frontend.BuildTable unbuilt. They cannot be
-	// restored where they are taken: the cell's Text is formatted by BuildTable
-	// much later, so the restore belongs at the end of buildTable.
-	tableFloatRestores []func()
-	tableInserts       []*Insert
+	// tableRestores puts back the float/clear sentinels and the inline-id
+	// markers stripped from the cell content that reaches frontend.BuildTable
+	// unbuilt. They cannot be restored where they are taken: the cell's Text
+	// is formatted by BuildTable much later, so the restore belongs at the end
+	// of buildTable.
+	tableRestores []func()
+	tableInserts  []*Insert
+	// tableRowAnchors holds, per row of the in-flight table in tbl.Rows
+	// order, the AnchorEntry indices of the inline ids in its cells.
+	tableRowAnchors [][]int
 	// tableInsertWidth is the width to format insert bodies inside a
 	// table cell. Set by buildTable at entry, read by buildTD.
 	tableInsertWidth bag.ScaledPoint
@@ -814,6 +818,7 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 			break
 		}
 		propagateInsertsAttr(inner, inner.List)
+		propagateAnchorIndices(inner, inner.List)
 		contentList = inner.List
 		if inner.Width > 0 {
 			contentWidth = inner.Width
@@ -953,18 +958,12 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		// flush time, not here, so the page number reflects the page
 		// actually painted.
 		headingIdx := -1
-		var anchorIndices []int
 		if vl, ok := cur.(*node.VList); ok && vl.Attributes != nil {
 			if idx, ok := vl.Attributes["_heading_idx"].(int); ok {
 				headingIdx = idx
 			}
-			if idx, ok := vl.Attributes["_anchor_idx"].(int); ok {
-				anchorIndices = append(anchorIndices, idx)
-			}
-			if list, ok := vl.Attributes["_anchor_indices"].([]int); ok {
-				anchorIndices = append(anchorIndices, list...)
-			}
 		}
+		anchorIndices := anchorIndicesOn(cur)
 
 		cb.bufferBody(box, h, headingIdx, anchorIndices)
 
@@ -1440,6 +1439,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 			}
 		}
 		propagateInsertsAttr(inner, inner.List)
+		propagateAnchorIndices(inner, inner.List)
 		contentList = inner.List
 		if inner.Width > 0 {
 			contentWidth = inner.Width
@@ -1794,18 +1794,12 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		box.Height = h
 
 		headingIdx := -1
-		var anchorIndices []int
 		if vl, ok := cur.(*node.VList); ok && vl.Attributes != nil {
 			if idx, ok := vl.Attributes["_heading_idx"].(int); ok {
 				headingIdx = idx
 			}
-			if idx, ok := vl.Attributes["_anchor_idx"].(int); ok {
-				anchorIndices = append(anchorIndices, idx)
-			}
-			if list, ok := vl.Attributes["_anchor_indices"].([]int); ok {
-				anchorIndices = append(anchorIndices, list...)
-			}
 		}
+		anchorIndices := anchorIndicesOn(cur)
 
 		cb.bufferBody(box, h, headingIdx, anchorIndices)
 		if _, isFloat := floatBoxHeight(cur); isFloat {
@@ -2662,6 +2656,11 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		box.Height = h
 
 		cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, *y, box)
+		for _, idx := range anchorIndicesOn(row) {
+			if idx >= 0 && idx < len(cb.Anchors) {
+				cb.Anchors[idx].Page = len(cb.frontend.Doc.Pages)
+			}
+		}
 		*y -= h
 		*pageHasContent = true
 	}
