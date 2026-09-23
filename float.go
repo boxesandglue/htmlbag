@@ -49,9 +49,15 @@ import (
 //     float outside its container rather than overlapping the text beside it.
 //     Below the float it shortens the band, down to nothing at all, but never
 //     past the float box, which the container holds whatever the margin says.
-//   - Pagination runs through a band: the float box reserves no vertical space,
-//     so a float near the bottom of a page paints past the page edge and the
-//     lines it shortened continue on the next page beside nothing.
+//
+// At a page break a float behaves as in CSS paged media: the band does not
+// cross it. The float box reserves no vertical space, so the paginator reads
+// its painted extent (attrFloatHeight) and keeps the float on a page that
+// holds it together with a foothold of the block beside it, or moves both to
+// the next page. Content the band covered that lands on a later page is set
+// beside nothing and is rebuilt at full width, from the attrInFloatBand mark
+// on a sibling and the attrFloatBandIndent record on a split paragraph (see
+// outputGroupNodes and outputBlockSplit).
 
 // floatGutter is the space between a float and the text beside it when the float
 // declares no margin of its own. CSS has no default here, but a picture butting
@@ -132,7 +138,80 @@ const (
 	attrFloatWd          = "floatWd"
 	attrFloatDeclMargins = "floatDeclaredMargins"
 	attrFloatNarrows     = "floatNarrows"
+	// attrFloatHeight is the extent a float box paints, top margin included.
+	// The box itself reports no height, so the paginator reads this to know
+	// whether the float still fits on the page.
+	attrFloatHeight = "floatHeight"
+	// attrInFloatBand marks a sibling built while a float's band was live:
+	// its lines give way to a float that precedes it in the same container.
+	// Placed on a later page than that float, the child is set beside
+	// nothing and has to be rebuilt at full width.
+	attrInFloatBand = "floatBandChild"
+	// attrFloatBandIndent is the per-row inset a leaf paragraph's first lines
+	// were set at, kept for the tail replay when the paragraph is split at a
+	// page break (see outputBlockSplit).
+	attrFloatBandIndent = "floatBandIndent"
 )
+
+// floatBandIndent is what a band did to a leaf paragraph: the first rows lines
+// gave up inset on side.
+type floatBandIndent struct {
+	inset bag.ScaledPoint
+	rows  int
+	side  string
+}
+
+// settings are the paragraph settings the indent was applied through, for a
+// FormatParagraphTail step that has to reproduce the narrowed lines.
+func (b floatBandIndent) settings() frontend.TypesettingSettings {
+	if b.side == "right" {
+		return frontend.TypesettingSettings{
+			frontend.SettingIndentRight:     b.inset,
+			frontend.SettingIndentRightRows: b.rows,
+		}
+	}
+	return frontend.TypesettingSettings{
+		frontend.SettingIndentLeft:     b.inset,
+		frontend.SettingIndentLeftRows: b.rows,
+	}
+}
+
+// floatBoxHeight reports the painted extent of a float box in a sibling chain,
+// and false for anything that is not one.
+func floatBoxHeight(n node.Node) (bag.ScaledPoint, bool) {
+	vl, ok := n.(*node.VList)
+	if !ok || vl.Attributes == nil {
+		return 0, false
+	}
+	if o, _ := vl.Attributes["origin"].(string); o != "float" {
+		return 0, false
+	}
+	h, _ := vl.Attributes[attrFloatHeight].(bag.ScaledPoint)
+	return h, true
+}
+
+// inFloatBand reports whether a sibling was built beside a float that precedes
+// it in the same container.
+func inFloatBand(n node.Node) bool {
+	vl, ok := n.(*node.VList)
+	if !ok || vl.Attributes == nil {
+		return false
+	}
+	marked, _ := vl.Attributes[attrInFloatBand].(bool)
+	return marked
+}
+
+// markInFloatBand stamps the last child of a container as built in a band.
+func markInFloatBand(vls *node.VList) {
+	vl, ok := node.Tail(vls.List).(*node.VList)
+	if !ok {
+		return
+	}
+	if vl.Attributes == nil {
+		vl.Attributes = node.H{}
+	}
+	vl.Attributes[attrInFloatBand] = true
+}
 
 // resolveFloatSide turns a declared float side into the physical one for a
 // page. inside is the side towards the binding: left on a right page, right
@@ -377,6 +456,12 @@ func openBand(vls *node.VList, box *node.VList, declared string, wd bag.ScaledPo
 		box = wrapper
 	}
 	boxHeight := box.Height + box.Depth
+	if box.Attributes == nil {
+		box.Attributes = node.H{}
+	}
+	// Recorded before the height is zeroed below: the paginator needs the
+	// painted extent to keep the float on a page it fits on.
+	box.Attributes[attrFloatHeight] = boxHeight
 	// A negative bottom margin pulls the text up beside the float: the band ends
 	// that much sooner, and a margin deeper than the float ends it at once. It
 	// does not pull the float up with it, so what the container still has to hold
@@ -391,9 +476,6 @@ func openBand(vls *node.VList, box *node.VList, declared string, wd bag.ScaledPo
 	// band instead. A box with no height above its reference point already hangs
 	// below it, so no shift is wanted on top of that.
 	box.Height, box.Depth = 0, 0
-	if box.Attributes == nil {
-		box.Attributes = node.H{}
-	}
 	box.Attributes["origin"] = "float"
 	vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), box)
 	inset := floatInset(side, width, m)

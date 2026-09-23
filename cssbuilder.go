@@ -1249,6 +1249,19 @@ var reflowCarryKeys = []string{"_heading_idx", "_anchor_idx", "_anchor_indices",
 // by HTMLBorder) are left unstamped — pagination then keeps the old
 // single-width behavior.
 func stampGroupItemIndices(wrapper *frontend.Text, vl *node.VList) {
+	stampItemIndices(wrapper, vl, "_groupItemIdx")
+}
+
+// containerItemIdxKey is the stamp on the children of a splittable block
+// container. A key of its own, because outputGroupNodes unwraps a body whose
+// only child is a container and then walks that container's children as the
+// group's chain: a _groupItemIdx on them would be read against the body's
+// items.
+const containerItemIdxKey = "_containerItemIdx"
+
+// stampItemIndices is stampGroupItemIndices for any container built by the
+// box branch, with the stamp under key.
+func stampItemIndices(wrapper *frontend.Text, vl *node.VList, key string) {
 	if isBox, ok := wrapper.Settings[frontend.SettingBox].(bool); !ok || !isBox {
 		return
 	}
@@ -1291,7 +1304,7 @@ func stampGroupItemIndices(wrapper *frontend.Text, vl *node.VList) {
 		if child.Attributes == nil {
 			child.Attributes = node.H{}
 		}
-		child.Attributes["_groupItemIdx"] = idx
+		child.Attributes[key] = idx
 		if built, ok := narrowingFloatParity(child); ok {
 			child.Attributes["_floatParity"] = built
 		}
@@ -1445,11 +1458,18 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		return nil
 	}
 
+	// floatPage is the page the last float box of this chain was buffered
+	// for. A sibling built beside that float (attrInFloatBand) that ends up
+	// on a later page is beside nothing there and is rebuilt at full width;
+	// the rebuilt chain starts after the float, so it carries no band.
+	var floatPage *document.Page
+
 	// restartIdx reports whether pagination must hand control back to
 	// OutputPagesFromText, n being the (not yet placed) node of a whole body
 	// item: the current page's content width differs from the width the
-	// vlist was built at, or the item narrows text beside an inside/outside
-	// float that was resolved for a page of the other parity. Margin kerns
+	// vlist was built at, the item narrows text beside an inside/outside
+	// float that was resolved for a page of the other parity, or the item
+	// was set beside a float that stayed on an earlier page. Margin kerns
 	// in between are placed normally: they are width-independent and the
 	// rebuilt chain drops its leading kern.
 	restartIdx := func(n node.Node) (int, bool) {
@@ -1465,6 +1485,9 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 			return idx, true
 		}
 		if built, ok := nvl.Attributes["_floatParity"].(bool); ok && built != cb.pageIsRight() {
+			return idx, true
+		}
+		if inFloatBand(n) && floatPage != nil && floatPage != cb.frontend.Doc.CurrentPage {
 			return idx, true
 		}
 		return 0, false
@@ -1690,6 +1713,25 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 			}
 		}
 
+		// A float box reserves no height of its own, so it would always fit
+		// where the block beside it does not, and a page break would leave
+		// it alone at the bottom of the page. It stays with that block: the
+		// page has to hold the float's painted extent and a foothold of the
+		// block beside it, or both move to the next page.
+		if fh, isFloat := floatBoxHeight(cur); isFloat && next != nil {
+			if need := floatKeepWithNext(fh, siblingsFrom(next)); trialPageHeight(incoming, need) > contentArea && cb.pageBufHeight > 0 {
+				if err := cb.NewPage(); err != nil {
+					return -1, nil, err
+				}
+				if err := refreshPage(); err != nil {
+					return -1, nil, err
+				}
+				if idx, ok := restartIdx(cur); ok {
+					return idx, collectReflowCarry(cur), nil
+				}
+			}
+		}
+
 		if avoidBreakAfter(cur) && next != nil {
 			peekH := h + vlistNodeHeight(next)
 			nn := next.Next()
@@ -1766,6 +1808,9 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		}
 
 		cb.bufferBody(box, h, headingIdx, anchorIndices)
+		if _, isFloat := floatBoxHeight(cur); isFloat {
+			floatPage = cb.frontend.Doc.CurrentPage
+		}
 
 		if forceBreakAfter(cur) && next != nil {
 			if err := cb.NewPage(); err != nil {
@@ -1816,6 +1861,22 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 	splitTe, _ := blockVL.Attributes["_splittableTe"].(*frontend.Text)
 	teWidth, _ := blockVL.Attributes["_splittableTeWidth"].(bag.ScaledPoint)
 	curContentWidth := pd.ContentWidth
+	// A block container carries its source Text and offered width instead:
+	// children a page break parts from the float they were set beside are
+	// rebuilt from the items (see rebuildContainerRemainder).
+	containerTe, _ := blockVL.Attributes["_splittableContainerTe"].(*frontend.Text)
+	containerWd, _ := blockVL.Attributes["_splittableContainerWd"].(bag.ScaledPoint)
+	// The band a float imposed on a leaf paragraph's first lines. The lines
+	// are placed as built while they stay on the float's page; the ones
+	// pushed to the next page are beside nothing and are re-broken at full
+	// width, with the band replayed for the lines before them.
+	bandIndent, hasBand := blockVL.Attributes[attrFloatBandIndent].(floatBandIndent)
+	bandRows := 0
+	var bandSettings frontend.TypesettingSettings
+	if hasBand {
+		bandRows = bandIndent.rows
+		bandSettings = bandIndent.settings()
+	}
 
 	// Text color of the source paragraph. The node builder emits a single
 	// color instruction inside the first line and the reset inside the
@@ -1883,16 +1944,21 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 	// the current page's content width. Returns the new children slice, or
 	// nil when reflow is not possible (no source Text, degenerate paragraph,
 	// reproduction failed) — the caller then keeps the old-width lines.
-	reflowRemainder := func(i int) []node.Node {
-		if splitTe == nil || pd.ContentWidth == curContentWidth {
+	reflowRemainder := func(i int, force bool) []node.Node {
+		if splitTe == nil || (pd.ContentWidth == curContentWidth && !force) {
 			return nil
 		}
 		newTeWidth := teWidth + (pd.ContentWidth - curContentWidth)
 		if newTeWidth <= 0 {
 			return nil
 		}
-		steps := append(append([]frontend.ParagraphTailStep{}, history...),
-			frontend.ParagraphTailStep{Width: teWidth, Lines: placedLines})
+		step := frontend.ParagraphTailStep{Width: teWidth, Lines: placedLines}
+		if len(history) == 0 {
+			// The first pass is the one the band narrowed; every later
+			// pass is a tail set without it.
+			step.Settings = bandSettings
+		}
+		steps := append(append([]frontend.ParagraphTailStep{}, history...), step)
 		// Strip the htmlbag-private sentinels around the frontend call:
 		// they would hit the strict unknown-setting default in Mknodes.
 		pbi, hasPBI := splitTe.Settings[settingPageBreakInside]
@@ -1957,7 +2023,122 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		innerWidth = newTeWidth
 		curContentWidth = pd.ContentWidth
 		placedLines = 0
+		bandRows = 0
 		return newChildren
+	}
+
+	// rebuildContainerRemainder builds the not-yet-placed children of a block
+	// container afresh from their items. The rebuilt chain starts after the
+	// float whose band narrowed them, so they come back at full width, as
+	// they have to be on a page the float is not on. Returns nil when the
+	// container carries no source or the rebuild fails; the caller then
+	// keeps the built children.
+	rebuildContainerRemainder := func(i int) []node.Node {
+		if containerTe == nil {
+			return nil
+		}
+		itemIdx := -1
+		for _, c := range children[i:] {
+			if vl, ok := c.(*node.VList); ok && vl.Attributes != nil {
+				if idx, ok := vl.Attributes[containerItemIdxKey].(int); ok {
+					itemIdx = idx
+					break
+				}
+			}
+		}
+		if itemIdx < 0 {
+			return nil
+		}
+		// Headings, anchors and inserts were recorded on the first build
+		// and are not re-created by a rebuild (see reflowCarryKeys).
+		carry := map[int]node.H{}
+		for _, c := range children[i:] {
+			vl, ok := c.(*node.VList)
+			if !ok || vl.Attributes == nil {
+				continue
+			}
+			idx, ok := vl.Attributes[containerItemIdxKey].(int)
+			if !ok {
+				continue
+			}
+			attrs := node.H{}
+			for _, key := range reflowCarryKeys {
+				if v, ok := vl.Attributes[key]; ok {
+					attrs[key] = v
+				}
+			}
+			if len(attrs) > 0 {
+				carry[idx-itemIdx] = attrs
+			}
+		}
+		// The container's own settings, less what describes the whole
+		// box rather than its content: a declared height was already
+		// spent on the first fragment.
+		settings := make(frontend.TypesettingSettings, len(containerTe.Settings))
+		for k, v := range containerTe.Settings {
+			settings[k] = v
+		}
+		delete(settings, settingCSSHeight)
+		delete(settings, settingBookmark)
+		wrapper := &frontend.Text{Settings: settings, Items: containerTe.Items[itemIdx:]}
+		cb.reflowRebuild = true
+		vl, err := cb.CreateVlist(wrapper, containerWd)
+		cb.reflowRebuild = false
+		if err != nil || vl == nil {
+			slog.Debug("rebuild of split container failed, keeping built children", "error", err)
+			return nil
+		}
+		var rebuilt []node.Node
+		if snap, ok := vl.Attributes["_splittableInner"].([]node.Node); ok && len(snap) > 0 {
+			rebuilt = snap
+		} else {
+			for n := vl.List; n != nil; n = n.Next() {
+				rebuilt = append(rebuilt, n)
+			}
+		}
+		// The collapsed margin before the first rebuilt child was placed
+		// with the previous fragment.
+		if len(rebuilt) > 0 {
+			if k, ok := rebuilt[0].(*node.Kern); ok && k.Attributes != nil {
+				if o, _ := k.Attributes["origin"].(string); o == "margin" {
+					rebuilt = rebuilt[1:]
+				}
+			}
+		}
+		for _, c := range rebuilt {
+			c.SetPrev(nil)
+			c.SetNext(nil)
+			vl, ok := c.(*node.VList)
+			if !ok || vl.Attributes == nil {
+				continue
+			}
+			if idx, ok := vl.Attributes[containerItemIdxKey].(int); ok {
+				for k, v := range carry[idx] {
+					vl.Attributes[k] = v
+				}
+			}
+		}
+		return rebuilt
+	}
+
+	// rebuildRemainder is called right after a page break between fragments,
+	// with i the first child of the next fragment. It returns new children
+	// when the rest has to be rebuilt: the page has another content width,
+	// or the rest was set beside a float that stayed on the previous page.
+	rebuildRemainder := func(i int) []node.Node {
+		if containerTe != nil {
+			for _, c := range children[i:] {
+				if !isContentNode(c) {
+					continue
+				}
+				if inFloatBand(c) {
+					return rebuildContainerRemainder(i)
+				}
+				break
+			}
+			return nil
+		}
+		return reflowRemainder(i, bandRows > 0 && placedLines < bandRows)
 	}
 
 	// Nackter Absatz (kein Border/Background): HTMLBorder-Wrapper überspringen.
@@ -2130,11 +2311,17 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		batchH := bag.ScaledPoint(0)
 		for ; i < len(children); i++ {
 			ch := vlistNodeHeight(children[i])
+			// A float box has no height of its own; what has to fit is its
+			// painted extent together with the child beside it, or the
+			// float is parted from that child by the page break.
+			if fh, isFloat := floatBoxHeight(children[i]); isFloat {
+				ch = floatKeepWithNext(fh, children[i+1:])
+			}
 			if topOverhead+batchH+ch > avail && len(batch) > 0 {
 				break
 			}
 			batch = append(batch, children[i])
-			batchH += ch
+			batchH += vlistNodeHeight(children[i])
 		}
 		if len(batch) == 0 {
 			// One child is taller than a full empty page. Place it anyway —
@@ -2154,11 +2341,11 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		// page and shunts the whole card forward — orphaning a preceding
 		// page-break-after:avoid heading (it stays put while its card jumps).
 		// CSS Fragmentation 3 §4 spec defaults are widows: 2 and orphans: 2.
+		// A float box is neither: it paints beside the content.
 		countHL := func(items []node.Node) int {
 			n := 0
 			for _, c := range items {
-				switch c.(type) {
-				case *node.HList, *node.VList:
+				if isContentNode(c) {
 					n++
 				}
 			}
@@ -2179,8 +2366,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			}
 			i = 0
 			// The block restarts on the fresh page; if that page has a
-			// different content width, re-break it there from the start.
-			if nc := reflowRemainder(0); nc != nil {
+			// different content width, or the block was set beside a
+			// float that stays behind, re-break it there from the start.
+			if nc := rebuildRemainder(0); nc != nil {
 				children = nc
 			}
 			continue
@@ -2201,11 +2389,35 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 				batchH -= vlistNodeHeight(last)
 				batch = batch[:len(batch)-1]
 				i--
-				switch last.(type) {
-				case *node.HList, *node.VList:
+				if isContentNode(last) {
 					remainingLines++
 				}
 			}
+		}
+
+		// A float at the end of the batch would be parted from the child
+		// beside it, which the pullback above may just have moved on. It
+		// goes with that child; when it is all the batch holds, the child
+		// comes along instead, whether the page has room for it or not.
+		for i < len(children) && len(batch) > 0 {
+			last := batch[len(batch)-1]
+			if _, isFloat := floatBoxHeight(last); !isFloat {
+				break
+			}
+			if countHL(batch) == 0 {
+				for i < len(children) {
+					c := children[i]
+					batch = append(batch, c)
+					batchH += vlistNodeHeight(c)
+					i++
+					if isContentNode(c) {
+						break
+					}
+				}
+				break
+			}
+			batch = batch[:len(batch)-1]
+			i--
 		}
 
 		kind := fragTop
@@ -2240,9 +2452,10 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 				return err
 			}
 			// The fresh page may use a different content width (@page
-			// :first vs. @page): re-break the remaining lines at the new
-			// width instead of slicing old-width lines.
-			if nc := reflowRemainder(i); nc != nil {
+			// :first vs. @page), or the rest was set beside a float that
+			// stays on the page just shipped: rebuild it instead of
+			// placing lines built for another situation.
+			if nc := rebuildRemainder(i); nc != nil {
 				children = nc
 				i = 0
 			}
@@ -2604,6 +2817,57 @@ func splittablePeekHeight(n node.Node) (bag.ScaledPoint, bool) {
 		}
 	}
 	return 0, false
+}
+
+// floatKeepWithNext is the height a page has to have free to place a float
+// box of painted extent fh together with the block after it. The two overlap:
+// the block starts level with the float, so the taller of the two decides.
+// Margin kerns between them belong to the block. A splittable block needs
+// only its foothold, the lines the splitter's orphan rule keeps on the page
+// (see splittablePeekHeight).
+func floatKeepWithNext(fh bag.ScaledPoint, rest []node.Node) bag.ScaledPoint {
+	var beside bag.ScaledPoint
+	for _, n := range rest {
+		if !isContentNode(n) {
+			beside += vlistNodeHeight(n)
+			continue
+		}
+		if reduced, ok := splittablePeekHeight(n); ok {
+			beside += reduced
+		} else {
+			beside += vlistNodeHeight(n)
+		}
+		break
+	}
+	if fh > beside {
+		return fh
+	}
+	return beside
+}
+
+// siblingsFrom collects a chain into a slice, up to and including the first
+// content node: what floatKeepWithNext needs to see of it.
+func siblingsFrom(n node.Node) []node.Node {
+	var out []node.Node
+	for ; n != nil; n = n.Next() {
+		out = append(out, n)
+		if isContentNode(n) {
+			break
+		}
+	}
+	return out
+}
+
+// isContentNode reports whether a sibling is a block or a line, as opposed to
+// the kerns and glues between them and a float box, which paints beside the
+// content rather than being any of it.
+func isContentNode(n node.Node) bool {
+	switch n.(type) {
+	case *node.HList, *node.VList:
+		_, isFloat := floatBoxHeight(n)
+		return !isFloat
+	}
+	return false
 }
 
 // vlistNodeHeight returns the vertical extent of a node in a vertical list.

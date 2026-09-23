@@ -317,6 +317,9 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			if band != nil {
 				band.narrow(itm)
 			}
+			// Remembered before the child is built: the band may be spent by
+			// the time it is, and the mark is about how it was built.
+			inBand := band != nil
 			heightBefore, depthBefore := vls.Height, vls.Depth
 			switch t := itm.(type) {
 			case *frontend.Text:
@@ -603,6 +606,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			// container's depth rather than its height, so the height delta
 			// alone carries the PREVIOUS child's depth and misses this one's.
 			advance := (vls.Height + vls.Depth) - (heightBefore + depthBefore)
+			// A child set beside a float is marked as such: a page break
+			// between the float and the child leaves the child beside
+			// nothing, and the paginator rebuilds it from the mark.
+			if inBand && advance > 0 {
+				markInFloatBand(vls)
+			}
 			if band != nil && !band.consume(advance) {
 				band = nil
 			}
@@ -722,6 +731,13 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// the unsplit container, or centred content inside
 					// (display math, centred paragraphs) shifts.
 					vls.Attributes["_splittableInnerWidth"] = vls.Width
+					// Source Text, offered width and the item index of
+					// every child: lets outputBlockSplit rebuild the
+					// children a page break separated from the float
+					// they were set beside.
+					stampItemIndices(te, vls, containerItemIdxKey)
+					vls.Attributes["_splittableContainerTe"] = te
+					vls.Attributes["_splittableContainerWd"] = wd
 				}
 			}
 		}
@@ -739,6 +755,9 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			}
 			splittableHv := hv
 			splittableInnerWidth := childBaseWidth
+			// Item indices on the inner children, before HTMLBorder puts
+			// another VList around them (see the bare branch above).
+			stampItemIndices(te, vls, containerItemIdxKey)
 
 			vls = cb.HTMLBorder(vls, hv)
 
@@ -750,6 +769,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				vls.Attributes["_splittableInner"] = splittableInner
 				vls.Attributes["_splittableHv"] = splittableHv
 				vls.Attributes["_splittableInnerWidth"] = splittableInnerWidth
+				vls.Attributes["_splittableContainerTe"] = te
+				vls.Attributes["_splittableContainerWd"] = wd
 			}
 		}
 
@@ -874,7 +895,9 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// count is resolved here rather than in the container, because it is the
 	// band's height divided by the leading these lines will be set at — which
 	// only this point knows.
+	var bandIndent floatBandIndent
 	if inset, rows, side := floatIndentFor(te.Settings); rows > 0 {
+		bandIndent = floatBandIndent{inset: inset, rows: rows, side: side}
 		keys := [...]frontend.SettingType{frontend.SettingIndentLeft, frontend.SettingIndentLeftRows}
 		if side == "right" {
 			keys = [...]frontend.SettingType{frontend.SettingIndentRight, frontend.SettingIndentRightRows}
@@ -981,6 +1004,9 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			// break switches to a page with a different content width.
 			vl.Attributes["_splittableTe"] = te
 			vl.Attributes["_splittableTeWidth"] = contentWidth
+			if bandIndent.rows > 0 {
+				vl.Attributes[attrFloatBandIndent] = bandIndent
+			}
 		}
 	} else {
 		// CSS padding-top/bottom without border/background: HTMLBorder
@@ -1021,6 +1047,9 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			// in outputBlockSplit (see the bordered branch above).
 			vl.Attributes["_splittableTe"] = te
 			vl.Attributes["_splittableTeWidth"] = contentWidth
+			if bandIndent.rows > 0 {
+				vl.Attributes[attrFloatBandIndent] = bandIndent
+			}
 		}
 		// Box model trace overlay for the borderless leaf (HTMLBorder does
 		// not run here). The vertical padding kerns above are already part
