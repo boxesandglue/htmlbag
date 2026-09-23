@@ -1570,6 +1570,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	// stack is long gone.
 	if id, ok := item.Attributes["id"]; ok {
 		newte.Settings[frontend.SettingDest] = id
+		newte.Settings[frontend.SettingElementID] = id
 		if id != "" {
 			cb.recordAnchorSnapshot(id, ss)
 		}
