@@ -137,6 +137,57 @@ func extractAnchorMarkers(te *frontend.Text) []int {
 	return out
 }
 
+// takeAnchorMarkers is extractAnchorMarkers for a Text that has to be
+// seen whole again (a table cell, rebuilt when the page width changes):
+// the returned func puts the markers back.
+func takeAnchorMarkers(te *frontend.Text) ([]int, func()) {
+	type saved struct {
+		t     *frontend.Text
+		items []any
+	}
+	var all []saved
+	var walk func(t *frontend.Text)
+	walk = func(t *frontend.Text) {
+		all = append(all, saved{t, t.Items})
+		for _, itm := range t.Items {
+			if c, ok := itm.(*frontend.Text); ok {
+				walk(c)
+			}
+		}
+	}
+	walk(te)
+	indices := extractAnchorMarkers(te)
+	return indices, func() {
+		for _, s := range all {
+			s.t.Items = s.items
+		}
+	}
+}
+
+// anchorIndicesOn returns the AnchorEntry indices a node placed on the
+// page carries: a block's own id and the inline ids inside it. Table rows
+// (HLists) carry the inline ids of their cells.
+func anchorIndicesOn(n node.Node) []int {
+	var attrs node.H
+	switch t := n.(type) {
+	case *node.VList:
+		attrs = t.Attributes
+	case *node.HList:
+		attrs = t.Attributes
+	}
+	if attrs == nil {
+		return nil
+	}
+	var out []int
+	if idx, ok := attrs["_anchor_idx"].(int); ok {
+		out = append(out, idx)
+	}
+	if list, ok := attrs["_anchor_indices"].([]int); ok {
+		out = append(out, list...)
+	}
+	return out
+}
+
 // isFootnoteElement reports whether an HTMLItem should be treated as a
 // footnote by extraction. Called from collectHorizontalNodes.
 func isFootnoteElement(item *HTMLItem) bool {
@@ -419,6 +470,42 @@ func insertsOnNode(n node.Node) []*Insert {
 	}
 	ins, _ := v.([]*Insert)
 	return ins
+}
+
+// propagateAnchorIndices moves the _anchor_indices of a VList that is being
+// unwrapped onto the next VList/HList carrier, as propagateInsertsAttr does
+// for inserts. A table is left alone: its rows carry their own.
+func propagateAnchorIndices(from *node.VList, to node.Node) {
+	if from == nil || from.Attributes == nil {
+		return
+	}
+	if o, _ := from.Attributes["origin"].(string); o == "table" {
+		return
+	}
+	idx, ok := from.Attributes["_anchor_indices"].([]int)
+	if !ok || len(idx) == 0 {
+		return
+	}
+	for cur := to; cur != nil; cur = cur.Next() {
+		var attrs node.H
+		switch t := cur.(type) {
+		case *node.VList:
+			if t.Attributes == nil {
+				t.Attributes = node.H{}
+			}
+			attrs = t.Attributes
+		case *node.HList:
+			if t.Attributes == nil {
+				t.Attributes = node.H{}
+			}
+			attrs = t.Attributes
+		default:
+			continue
+		}
+		existing, _ := attrs["_anchor_indices"].([]int)
+		attrs["_anchor_indices"] = append(append([]int{}, idx...), existing...)
+		return
+	}
 }
 
 // propagateInsertsAttr moves an []*Insert from a VList that is being

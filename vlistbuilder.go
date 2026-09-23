@@ -413,7 +413,15 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						return nil, err
 					}
 					if wrapTable {
+						inner := vl
 						vl = cb.HTMLBorder(vl, tableHv)
+						// The page builder reads anchors off the box it places.
+						if idx, ok := inner.Attributes["_anchor_indices"]; ok {
+							if vl.Attributes == nil {
+								vl.Attributes = node.H{}
+							}
+							vl.Attributes["_anchor_indices"] = idx
+						}
 					}
 				} else {
 					// Two CSS shifts apply to every child of a block

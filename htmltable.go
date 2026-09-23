@@ -90,24 +90,27 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	// The float/clear pair is stripped where that content is collected and put
 	// back here, once the table is built: a width-change rebuild has to see the
 	// same input again.
-	savedFloatRestores := cb.tableFloatRestores
-	cb.tableFloatRestores = nil
+	savedRestores := cb.tableRestores
+	cb.tableRestores = nil
 	defer func() {
-		for _, restore := range cb.tableFloatRestores {
+		for _, restore := range cb.tableRestores {
 			restore()
 		}
-		cb.tableFloatRestores = savedFloatRestores
+		cb.tableRestores = savedRestores
 	}()
 
 	// Push a fresh insert-collection scope; restore on exit so nested
 	// tables don't leak their inserts into the enclosing table.
 	savedInserts := cb.tableInserts
 	savedWidth := cb.tableInsertWidth
+	savedRowAnchors := cb.tableRowAnchors
 	cb.tableInserts = nil
 	cb.tableInsertWidth = tbl.MaxWidth
+	cb.tableRowAnchors = nil
 	defer func() {
 		cb.tableInserts = savedInserts
 		cb.tableInsertWidth = savedWidth
+		cb.tableRowAnchors = savedRowAnchors
 	}()
 
 	// Process colgroup for column specifications
@@ -212,6 +215,31 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	}
 
 	vl := vls[0]
+
+	// Inline ids in the cells: each row carries its own, for a table that is
+	// placed row by row, and the table carries them all, for one placed whole.
+	var allAnchors []int
+	i := 0
+	for n := vl.List; n != nil && i < len(cb.tableRowAnchors); n = n.Next() {
+		hl, ok := n.(*node.HList)
+		if !ok {
+			continue
+		}
+		if idx := cb.tableRowAnchors[i]; len(idx) > 0 {
+			if hl.Attributes == nil {
+				hl.Attributes = node.H{}
+			}
+			hl.Attributes["_anchor_indices"] = idx
+			allAnchors = append(allAnchors, idx...)
+		}
+		i++
+	}
+	if len(allAnchors) > 0 {
+		if vl.Attributes == nil {
+			vl.Attributes = node.H{}
+		}
+		vl.Attributes["_anchor_indices"] = allAnchors
+	}
 
 	// Propagate page-break-inside from source tr Texts onto row HList
 	// Attributes. Rows are emitted in the same order we collected above,
@@ -402,6 +430,7 @@ func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
 		tr.MinHeight = h
 	}
 	delete(te.Settings, settingCSSHeight)
+	var anchors []int
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
 		case *frontend.Text:
@@ -410,16 +439,18 @@ func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
 				continue
 			}
 			if elt == "td" || elt == "th" {
-				cb.buildTD(t, tr, elt == "th", tbl.MaxWidth)
+				anchors = append(anchors, cb.buildTD(t, tr, elt == "th", tbl.MaxWidth)...)
 			}
 		}
 	}
 	tbl.Rows = append(tbl.Rows, tr)
+	cb.tableRowAnchors = append(cb.tableRowAnchors, anchors)
 }
 
 // buildTD converts a <td>/<th> Text into a TableCell. tableWidth is the
-// table's maximum width and resolves a percentage `width` on the cell.
-func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeader bool, tableWidth bag.ScaledPoint) {
+// table's maximum width and resolves a percentage `width` on the cell. It
+// returns the AnchorEntry indices of the inline ids in the cell.
+func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeader bool, tableWidth bag.ScaledPoint) []int {
 	// See buildTR: the sentinel must not reach frontend's settings switch.
 	delete(te.Settings, settingLangTag)
 	td := &frontend.TableCell{}
@@ -519,6 +550,7 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 		}
 	}
 
+	var anchors []int
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
 		case *frontend.Text:
@@ -540,12 +572,17 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 			if err == nil && len(bottomFls) > 0 {
 				cb.tableInserts = append(cb.tableInserts, bottomFls...)
 			}
+			// As in a paragraph, the inline-id markers must not reach
+			// Mknodes. Put back with the float sentinels, for a rebuild.
+			idx, restore := takeAnchorMarkers(t)
+			anchors = append(anchors, idx...)
+			cb.tableRestores = append(cb.tableRestores, restore)
 			// Anything but a box reaches frontend as a Text and is formatted
 			// there, so htmlbag's float sentinels have to come off first. A box
 			// goes through CreateVlist, which handles them — and can still float
 			// what is inside it.
 			if isBox, _ := t.Settings[frontend.SettingBox].(bool); !isBox {
-				cb.tableFloatRestores = append(cb.tableFloatRestores, captureInlineFloatSettings(t))
+				cb.tableRestores = append(cb.tableRestores, captureInlineFloatSettings(t))
 			}
 
 			// For box elements (ul, ol, div, etc.), create a FormatToVList function
@@ -626,6 +663,7 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 		}
 	}
 	row.Cells = append(row.Cells, td)
+	return anchors
 }
 
 // tagTable walks the table VList and creates Table/TR/TH/TD structure
