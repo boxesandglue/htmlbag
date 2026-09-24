@@ -48,6 +48,10 @@ const (
 // own, which is what lets a hard break survive in ordinary prose.
 var whiteSpaceStack = []frontend.WhiteSpace{frontend.WhiteSpaceNormal}
 
+// tabStopsStack tracks whether -bag-tab-stops is in force. A tab then
+// positions text, so it survives white-space collapsing (see collapseTabs).
+var tabStopsStack = []bool{false}
+
 var (
 	// A newline plus any horizontal space hugging it, which pre-line collapses
 	// down to the newline alone.
@@ -55,6 +59,40 @@ var (
 	// Runs of horizontal whitespace, which pre-line collapses to one space.
 	reHorizWS = regexp.MustCompile(`[ \t\r\f]{2,}`)
 )
+
+// reWSRun is a run of collapsible whitespace.
+var reWSRun = regexp.MustCompile(`[ \t\n\r\f]+`)
+
+// collapseTabs collapses the whitespace of txt where tab stops are in force.
+// A run without a newline becomes its tabs (or a space if it has none), so
+// the spaces around a tab go. A run with a newline is source formatting and
+// collapses as before: to a space, under pre-line to the newline, followed
+// by the tabs after the last newline, which start the next line. At the start
+// of a block (trimStart) a run with a newline is dropped.
+func collapseTabs(txt string, keepNL, trimStart bool) string {
+	first := true
+	return reWSRun.ReplaceAllStringFunc(txt, func(run string) string {
+		atStart := first && trimStart && strings.HasPrefix(txt, run)
+		first = false
+		nl := strings.LastIndexByte(run, '\n')
+		if nl < 0 {
+			if tabs := strings.Count(run, "\t"); tabs > 0 {
+				return strings.Repeat("\t", tabs)
+			}
+			if atStart {
+				return ""
+			}
+			return " "
+		}
+		if atStart {
+			return ""
+		}
+		if keepNL {
+			return "\n" + strings.Repeat("\t", strings.Count(run[nl:], "\t"))
+		}
+		return " "
+	})
+}
 
 // collapsesSpaces reports whether runs of whitespace collapse to one space.
 func collapsesSpaces(ws frontend.WhiteSpace) bool {
@@ -112,6 +150,16 @@ func (c *CSS) GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, first
 			ws := whiteSpaceStack[len(whiteSpaceStack)-1]
 			collapse, keepNL := collapsesSpaces(ws), keepsNewlines(ws)
 			txt := thisNode.Data
+			if collapse && tabStopsStack[len(tabStopsStack)-1] && strings.ContainsRune(txt, '\t') {
+				txt = collapseTabs(txt, keepNL, direction == ModeVertical)
+				if txt != "" && !isSpace.MatchString(txt) && direction == ModeVertical {
+					newDir = ModeHorizontal
+				}
+				if txt != "" {
+					firstItem.Children = append(firstItem.Children, &HTMLItem{Typ: html.TextNode, Data: txt})
+				}
+				break
+			}
 			// When turning from vertical to horizontal (a text is always
 			// horizontal material), trim the left space. TODO: honor preserve
 			// whitespace setting
@@ -149,6 +197,7 @@ func (c *CSS) GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, first
 			firstItem.Children = append(firstItem.Children, itm)
 		case html.ElementNode:
 			ws := whiteSpaceStack[len(whiteSpaceStack)-1]
+			tabs := tabStopsStack[len(tabStopsStack)-1]
 			eltname := thisNode.Data
 			switch eltname {
 			case "body", "address", "article", "aside", "blockquote", "canvas", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
@@ -181,6 +230,9 @@ func (c *CSS) GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, first
 				ws = frontend.WhiteSpacePreWrap
 			case "pre-line":
 				ws = frontend.WhiteSpacePreLine
+			}
+			if v := itm.Styles.Get("-bag-tab-stops"); v != "" {
+				tabs = v != "none"
 			}
 			// CSS `display` can override the tag-based block/inline
 			// classification above. Only the two basic keywords are
@@ -244,12 +296,16 @@ func (c *CSS) GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, first
 					// so subsequent siblings get incorrectly nested as
 					// children. Promote them back to the parent level.
 					whiteSpaceStack = append(whiteSpaceStack, ws)
+					tabStopsStack = append(tabStopsStack, tabs)
 					c.GetHTMLItemFromHTMLNode(thisNode.FirstChild, direction, firstItem)
 					whiteSpaceStack = whiteSpaceStack[:len(whiteSpaceStack)-1]
+					tabStopsStack = tabStopsStack[:len(tabStopsStack)-1]
 				} else {
 					whiteSpaceStack = append(whiteSpaceStack, ws)
+					tabStopsStack = append(tabStopsStack, tabs)
 					c.GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, itm)
 					whiteSpaceStack = whiteSpaceStack[:len(whiteSpaceStack)-1]
+					tabStopsStack = tabStopsStack[:len(tabStopsStack)-1]
 				}
 			}
 		case html.DocumentNode:

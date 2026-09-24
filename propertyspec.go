@@ -132,6 +132,7 @@ var Properties = []PropertySpec{
 	{Name: "-bag-leading-model", Values: "`half` (CSS line boxes, the default), `trailing` (TeX style)", Example: "-bag-leading-model: trailing;", Group: GroupCustom},
 	{Name: "-bag-linebreak-tolerance", Values: "Number, the TeX tolerance for line breaking", Example: "-bag-linebreak-tolerance: 500;", Group: GroupCustom},
 	{Name: "-bag-linebreak-hyphen-penalty", Values: "Number, the TeX hyphen penalty", Example: "-bag-linebreak-hyphen-penalty: 200;", Group: GroupCustom},
+	{Name: "-bag-tab-stops", Values: "`none`, or a comma separated list of stops: a length or percentage of the line width, optionally `start`, `end`, `center`, `decimal` or `decimal(\",\")`, optionally `leader(\" . \")` (or `dotted`, `solid`, `space`)", Example: "-bag-tab-stops: 12mm, 100% end leader(dotted);", Note: "Inherited. A tab advances to the next stop past the text before it, `left` and `right` are synonyms of `start` and `end`. Tabs within a line survive any `white-space` mode, whitespace with a newline stays source formatting", Group: GroupCustom},
 	{Name: "-bag-bookmark", Values: "`none`, or a level number optionally followed by `open` or `closed`", Example: "-bag-bookmark: 2 closed;", Note: "Adds the element to the PDF outline", Group: GroupCustom},
 
 	// @page descriptors

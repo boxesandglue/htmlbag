@@ -477,11 +477,8 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 		case "content":
 			// Check for leader() function: leader('.') or leader(".")
 			if strings.HasPrefix(v, "leader(") && strings.HasSuffix(v, ")") {
-				inner := v[7 : len(v)-1]
-				inner = strings.TrimSpace(inner)
-				inner = strings.Trim(inner, "'\"")
-				if inner != "" {
-					ih.leaderContent = inner
+				if pattern, ok := leaderPattern(v[7 : len(v)-1]); ok {
+					ih.leaderContent = pattern
 				}
 			}
 		case "font-style":
@@ -593,6 +590,12 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			ih.PaddingRight = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 		case "padding-top":
 			ih.PaddingTop = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+		case "-bag-tab-stops":
+			stops, err := parseTabStops(v, curFontSize, ih.DefaultFontSize)
+			if err != nil {
+				return err
+			}
+			ih.tabStops = stops
 		case "tab-size":
 			if ts, err := strconv.Atoi(v); err == nil {
 				ih.tabsizeSpaces = ts
@@ -914,14 +917,16 @@ type FormattingStyles struct {
 	whiteSpace         frontend.WhiteSpace
 	tabsize            bag.ScaledPoint
 	tabsizeSpaces      int
-	Valign             frontend.VerticalAlignment
-	width              string
-	height             string
-	pageBreakAfter     string
-	pageBreakBefore    string
-	pageBreakInside    string
-	bookmark           string // -bag-bookmark raw value (non-inherited; "" = unset)
-	yoffset            bag.ScaledPoint
+	// tabStops are the -bag-tab-stops; an empty list is "none".
+	tabStops        []frontend.TabStop
+	Valign          frontend.VerticalAlignment
+	width           string
+	height          string
+	pageBreakAfter  string
+	pageBreakBefore string
+	pageBreakInside string
+	bookmark        string // -bag-bookmark raw value (non-inherited; "" = unset)
+	yoffset         bag.ScaledPoint
 	// CSS positioning (CSS 2.1 §9-§10). None of these inherit; Clone()
 	// deliberately drops them so every element starts at the default
 	// (position: static, all offsets/z-index auto).
@@ -1024,6 +1029,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		whiteSpace:          is.whiteSpace,
 		tabsize:             is.tabsize,
 		tabsizeSpaces:       is.tabsizeSpaces,
+		tabStops:            is.tabStops,
 		Valign:              is.Valign,
 		Halign:              is.Halign,
 		// vertical-align itself does not inherit, but the baseline shift it
@@ -1220,6 +1226,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	settings[frontend.SettingYOffset] = ih.yoffset
 	settings[frontend.SettingTabSize] = ih.tabsize
 	settings[frontend.SettingTabSizeSpaces] = ih.tabsizeSpaces
+	if len(ih.tabStops) > 0 {
+		settings[frontend.SettingTabStops] = ih.tabStops
+	}
 	settings[frontend.SettingTextDecorationLine] = ih.TextDecorationLine
 	settings[frontend.SettingTextDecorationStyle] = ih.TextDecorationStyle
 	if ih.TextDecorationColor != nil {
