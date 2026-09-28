@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -662,6 +663,10 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// text italic correction). Inherited; "auto" enables, "none"
 			// disables.
 			ih.italicCorrection = strings.TrimSpace(v) == "auto"
+		case "font-synthesis-style":
+			ih.synthesizeItalic = strings.TrimSpace(v) == "auto"
+		case "font-synthesis":
+			ih.synthesizeItalic = slices.Contains(strings.Fields(v), "style")
 		case "initial-letter":
 			// CSS Inline Layout 3 dropcaps. v1 reads the size (number of
 			// lines the initial spans); the optional sink argument and
@@ -878,6 +883,7 @@ type FormattingStyles struct {
 	indent             bag.ScaledPoint
 	initialLetterLines int
 	italicCorrection   bool
+	synthesizeItalic   bool // font-synthesis-style: auto
 	indentRows         int
 	language           string     // BCP47 tag (e.g. "en", "ar", "de-DE")
 	langPattern        *lang.Lang // resolved hyphenator for {language, hyphens}; nil = use parent / doc default
@@ -1000,6 +1006,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		fontfeatures:       newFontFeatures,
 		variationSettings:  newVariationSettings,
 		italicCorrection:   is.italicCorrection,
+		synthesizeItalic:   is.synthesizeItalic,
 		Fontsize:           is.Fontsize,
 		fontstyle:          is.fontstyle,
 		Fontweight:         is.Fontweight,
@@ -1191,6 +1198,15 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		settings[frontend.SettingFontExpansion] = 0.05
 	}
 	settings[frontend.SettingFontFamily] = ih.fontfamily
+	if ih.synthesizeItalic {
+		// A family, not a run, synthesises: once any text set in it asks,
+		// every missing italic of the family is slanted.
+		for _, ff := range append([]*frontend.FontFamily{ih.fontfamily}, ih.fontfamilyStack...) {
+			if ff != nil {
+				ff.SetSynthesizeItalic(true)
+			}
+		}
+	}
 	if len(ih.fontfamilyStack) > 1 {
 		settings[frontend.SettingFontFamilyStack] = ih.fontfamilyStack
 	}

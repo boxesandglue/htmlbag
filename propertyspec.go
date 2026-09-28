@@ -59,6 +59,8 @@ var Properties = []PropertySpec{
 	{Name: "font-size", Values: "Length, `em`, `%`, the keywords `xx-small` to `xxx-large`, `smaller` and `larger`", Example: "font-size: 12pt;", Group: GroupText},
 	{Name: "font-weight", Values: "`normal`, `bold`, `bolder`, `lighter`, the names `thin` to `black`, or a number from 100 to 900", Example: "font-weight: 600;", Group: GroupText},
 	{Name: "font-style", Values: "`normal`, `italic`", Example: "font-style: italic;", Note: "`oblique` is not recognized", Group: GroupText},
+	{Name: "font-synthesis-style", Values: "`auto`, `none`", Example: "font-synthesis-style: auto;", Note: "`auto` slants a family's upright for an italic it lacks, from then on for the whole family; the default is `none`, where the upright is used as it is", Group: GroupText},
+	{Name: "font-synthesis", Values: "`none`, or any of `weight`, `style`, `small-caps`, `position`", Example: "font-synthesis: style;", Note: "Only `style` is read, as `font-synthesis-style: auto`", Group: GroupText},
 	{Name: "font", Values: "Shorthand: optional `font-style` and `font-weight`, then the size with an optional `/line-height`, then the family", Example: "font: italic bold 10pt/12pt serif;", Note: "Style, weight and line height reset to `normal` when omitted, as in CSS. Size and family are required", Group: GroupText},
 	{Name: "font-feature-settings", Values: "Comma separated OpenType feature tags, each optionally followed by `on`, `off` or a number. `normal` removes all features", Example: `font-feature-settings: "smcp", "onum";`, Group: GroupText},
 	{Name: "font-variation-settings", Values: "Comma separated pairs of an axis tag and a number, for variable fonts", Example: `font-variation-settings: "wght" 650;`, Group: GroupText},
