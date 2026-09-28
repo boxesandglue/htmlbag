@@ -1592,6 +1592,11 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			cb.recordAnchorSnapshot(id, ss)
 		}
 	}
+	// A placeholder for a pre-rendered VList among a cell's contents; the
+	// td case below handles one on the cell itself.
+	if vlid, ok := item.Attributes["data-vlist-id"]; ok && item.Data != "td" && item.Data != "th" {
+		newte.Settings[frontend.SettingPrerenderedVListID] = vlid
+	}
 	switch item.Data {
 	case "html":
 		if fs, ok := item.Styles["font-size"]; ok {
@@ -2048,8 +2053,10 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			// height (visible swatches / spacers, settingCSSHeight),
 			// and empty blocks that still paint something through a
 			// border or background (<hr> is a zero-content element
-			// whose whole rendering is its border).
-			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" || te.Settings[settingCSSHeight] != nil || hasVisibleDecoration(te.Settings) {
+			// whose whole rendering is its border), and a cell's
+			// placeholders for a pre-rendered VList.
+			isPlaceholder := (item.Data == "td" || item.Data == "th") && te.Settings[frontend.SettingPrerenderedVListID] != nil
+			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" || te.Settings[settingCSSHeight] != nil || hasVisibleDecoration(te.Settings) || isPlaceholder {
 				newte.Items = append(newte.Items, te)
 			}
 		}
