@@ -1,6 +1,7 @@
 package htmlbag
 
 import (
+	"maps"
 	"strconv"
 	"strings"
 
@@ -577,6 +578,20 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 			idx, restore := takeAnchorMarkers(t)
 			anchors = append(anchors, idx...)
 			cb.tableRestores = append(cb.tableRestores, restore)
+			// Formatted as the cell's plain text, a paragraph keeps its
+			// padding but loses its side margins, which only a block applies
+			// to its children. Wrap it in one, as on the page. The block
+			// would apply its vertical margins too, which a cell's plain
+			// paragraph never had, so the copy it wraps goes without them.
+			if isBox, _ := t.Settings[frontend.SettingBox].(bool); !isBox && hasSideMargin(t) {
+				p := &frontend.Text{Settings: maps.Clone(t.Settings), Items: t.Items}
+				delete(p.Settings, frontend.SettingMarginTop)
+				delete(p.Settings, frontend.SettingMarginBottom)
+				box := frontend.NewText()
+				box.Settings[frontend.SettingBox] = true
+				box.Items = []any{p}
+				t = box
+			}
 			// Anything but a box reaches frontend as a Text and is formatted
 			// there, so htmlbag's float sentinels have to come off first. A box
 			// goes through CreateVlist, which handles them — and can still float
@@ -664,6 +679,16 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 	}
 	row.Cells = append(row.Cells, td)
 	return anchors
+}
+
+// hasSideMargin reports whether t has a left or right margin.
+func hasSideMargin(t *frontend.Text) bool {
+	for _, k := range []frontend.SettingType{frontend.SettingMarginLeft, frontend.SettingMarginRight} {
+		if v, ok := t.Settings[k].(bag.ScaledPoint); ok && v != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // tagTable walks the table VList and creates Table/TR/TH/TD structure
