@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/htmlbag/fonts/camingocoderegular"
 )
@@ -37,18 +39,35 @@ func TestFontSynthesisStyleSlantsAMissingItalic(t *testing.T) {
 		if err := cb.InitPage(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := cb.HTMLToText(`<p style="font-family: Upright; ` + tc.style + `"><i>slanted</i></p>`); err != nil {
-			t.Fatal(err)
-		}
-		fs, err := ff.GetFontSource(400, frontend.FontStyleItalic)
+		te, err := cb.HTMLToText(`<p style="font-family: Upright; ` + tc.style + `"><i>slanted</i></p>`)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := fs.Slant != 0; got != tc.slant {
-			t.Errorf("%q: slanted %v, want %v", tc.style, got, tc.slant)
+		vl, _, err := fe.FormatParagraph(te, bag.MustSP("200pt"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !tc.slant && fs != upright {
-			t.Errorf("%q: the italic is not the upright itself", tc.style)
+		glyphs := 0
+		var walk func(n node.Node)
+		walk = func(n node.Node) {
+			for ; n != nil; n = n.Next() {
+				switch v := n.(type) {
+				case *node.Glyph:
+					glyphs++
+					if got := v.Font.Slant != 0; got != tc.slant {
+						t.Errorf("%q: slanted %v, want %v", tc.style, got, tc.slant)
+						return
+					}
+				case *node.HList:
+					walk(v.List)
+				case *node.VList:
+					walk(v.List)
+				}
+			}
+		}
+		walk(vl)
+		if glyphs == 0 {
+			t.Fatalf("%q: no glyphs", tc.style)
 		}
 	}
 }

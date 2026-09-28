@@ -1198,15 +1198,7 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		settings[frontend.SettingFontExpansion] = 0.05
 	}
 	settings[frontend.SettingFontFamily] = ih.fontfamily
-	if ih.synthesizeItalic {
-		// A family, not a run, synthesises: once any text set in it asks,
-		// every missing italic of the family is slanted.
-		for _, ff := range append([]*frontend.FontFamily{ih.fontfamily}, ih.fontfamilyStack...) {
-			if ff != nil {
-				ff.SetSynthesizeItalic(true)
-			}
-		}
-	}
+	settings[frontend.SettingSynthesizeStyle] = ih.synthesizeItalic
 	if len(ih.fontfamilyStack) > 1 {
 		settings[frontend.SettingFontFamilyStack] = ih.fontfamilyStack
 	}
