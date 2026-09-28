@@ -554,6 +554,16 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
 		case *frontend.Text:
+			// A placeholder among the cell's contents stands for a
+			// pre-rendered VList, set in its place.
+			if vlid, ok := t.Settings[frontend.SettingPrerenderedVListID].(string); ok {
+				if vl, vlOK := cb.PendingVLists[vlid]; vlOK {
+					td.Contents = append(td.Contents, frontend.FormatToVList(func(bag.ScaledPoint) (*node.VList, error) {
+						return vl, nil
+					}))
+					continue
+				}
+			}
 			// Pull any insertMarkers out of this cell's text tree before
 			// it reaches FormatParagraph / BuildTable. Footnote markers
 			// become in-text superscript calls; float markers become
