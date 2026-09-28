@@ -2,9 +2,12 @@ package htmlbag
 
 import (
 	"bytes"
+	"log/slog"
 	"math"
+	"strings"
 	"testing"
 
+	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
@@ -50,5 +53,38 @@ func TestFontFaceMetricOverrides(t *testing.T) {
 				t.Errorf("Metrics = %+v, want %+v", *got, *tc.want)
 			}
 		})
+	}
+}
+
+// Until bag's line box reads the metrics, an accepted override is reported at
+// debug level instead of passing silently.
+func TestFontFaceMetricOverridesLogged(t *testing.T) {
+	for _, tc := range []struct {
+		descriptors string
+		logged      bool
+	}{
+		{``, false},
+		{`ascent-override: 90%;`, true},
+		{`line-gap-override: normal;`, false},
+	} {
+		var buf bytes.Buffer
+		old := bag.Logger
+		bag.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		fe, err := frontend.NewForWriter(&bytes.Buffer{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cp := NewCSSParser()
+		if err := cp.AddCSSText(`@font-face { font-family: "M"; src: url("m.ttf"); ` + tc.descriptors + ` }`); err != nil {
+			t.Fatal(err)
+		}
+		err = AddFontFamiliesFromCSS(cp, fe)
+		bag.Logger = old
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(buf.String(), "do not affect the layout yet"); got != tc.logged {
+			t.Errorf("%q: logged = %v, want %v\n%s", tc.descriptors, got, tc.logged, buf.String())
+		}
 	}
 }

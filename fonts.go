@@ -104,6 +104,7 @@ func AddFontFamiliesFromCSS(cs *CSS, fe *frontend.Document) error {
 		fs.SizeAdjust = v.SizeAdjust
 		if v.AscentOverride >= 0 || v.DescentOverride >= 0 || v.LineGapOverride >= 0 {
 			fs.Metrics = &frontend.MetricsOverride{Ascent: v.AscentOverride, Descent: v.DescentOverride, LineGap: v.LineGapOverride}
+			bag.Logger.Debug("@font-face metric overrides do not affect the layout yet", "family", v.Family)
 		}
 		bag.Logger.Debug("AddFontFamiliesFromCSS", "family", v.Family, "variations", fs.VariationSettings)
 		var fontstyle frontend.FontStyle
