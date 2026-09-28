@@ -785,6 +785,9 @@ type FontFace struct {
 	Features          []string
 	VariationSettings map[string]float64 // axis tag -> value (e.g., "wght" -> 700)
 	SizeAdjust        float64
+	// AscentOverride, DescentOverride and LineGapOverride are the CSS
+	// descriptors as fractions of the em, negative for normal (the face's own).
+	AscentOverride, DescentOverride, LineGapOverride float64
 }
 
 // parseFontWeightValue parses one font-weight value: a number or one of
@@ -818,8 +821,11 @@ func parseFontWeightValue(value string) (int, bool) {
 
 func (c *CSS) doFontFace(ff []qrule) error {
 	f := FontFace{
-		Weight:    400,
-		WeightMax: 400,
+		Weight:          400,
+		WeightMax:       400,
+		AscentOverride:  -1,
+		DescentOverride: -1,
+		LineGapOverride: -1,
 	}
 	// var fontweight frontend.FontWeight = 400
 	// var fontstyle frontend.FontStyle = frontend.FontStyleNormal
@@ -924,6 +930,21 @@ func (c *CSS) doFontFace(ff []qrule) error {
 				panic(err)
 			}
 			f.SizeAdjust = 1 - (flt / 100)
+		case "ascent-override", "descent-override", "line-gap-override":
+			v := -1.0
+			if pc, ok := strings.CutSuffix(value, "%"); ok {
+				if flt, err := strconv.ParseFloat(pc, 64); err == nil && flt >= 0 {
+					v = flt / 100
+				}
+			}
+			switch key {
+			case "ascent-override":
+				f.AscentOverride = v
+			case "descent-override":
+				f.DescentOverride = v
+			default:
+				f.LineGapOverride = v
+			}
 		default:
 			fmt.Println("unhandled font setting", key)
 		}

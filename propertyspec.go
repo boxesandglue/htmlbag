@@ -153,6 +153,9 @@ var Properties = []PropertySpec{
 	{Name: "font-feature-settings", Values: "OpenType features switched on for this face, as on elements", Example: `font-feature-settings: "onum";`, Group: GroupFontFace},
 	{Name: "font-variation-settings", Values: "Axis values of a variable font, as on elements", Example: `font-variation-settings: "wght" 450;`, Group: GroupFontFace},
 	{Name: "size-adjust", Values: "Percentage that scales the glyphs of this face", Example: "size-adjust: 95%;", Group: GroupFontFace},
+	{Name: "ascent-override", Values: "`normal` or a percentage of the em, in place of the face's ascent when setting lines", Example: "ascent-override: 107.91%;", Group: GroupFontFace},
+	{Name: "descent-override", Values: "`normal` or a percentage of the em, in place of the face's descent when setting lines", Example: "descent-override: 25.1%;", Group: GroupFontFace},
+	{Name: "line-gap-override", Values: "`normal` or a percentage of the em, in place of the face's line gap when setting lines", Example: "line-gap-override: 0%;", Group: GroupFontFace},
 
 	// @-bag-color descriptors
 	{Name: "model", Values: "`cmyk`, `rgb`, `RGB`, `gray`, `GRAY`, `spotcolor`", Example: "model: cmyk;", Note: "Upper case `RGB` and `GRAY` take components from 0 to 255, lower case from 0 to 100", Group: GroupColor},
