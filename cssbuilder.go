@@ -2553,15 +2553,23 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		// the page, with the data starting on the next page under a repeated
 		// header. The empty-page guard mirrors avoidForcesBreak — when even
 		// a fresh page cannot hold the group, breaking cannot help.
+		//
+		// Rows a rowspan joins (_keepWithNext) go to a page together, so
+		// the break is only taken before the first of them. A group taller
+		// than a page then starts at the top of one and breaks like other
+		// rows.
 		fitH := h
+		if i >= headerCount && !carry && (i == headerCount || !keepsWithNext(rows[i-1])) {
+			fitH = keepGroupHeight(rows[:dataEnd], i)
+		}
 		if i == 0 && headerCount > 0 && dataEnd > headerCount {
-			groupH := bag.ScaledPoint(0)
-			for j := 0; j <= headerCount; j++ {
-				groupH += vlistNodeHeight(rows[j])
+			headersH := bag.ScaledPoint(0)
+			for j := 0; j < headerCount; j++ {
+				headersH += vlistNodeHeight(rows[j])
 			}
+			groupH := headersH + keepGroupHeight(rows[:dataEnd], headerCount)
 			// A first data row that may break inside only needs a part of
 			// it to follow the headers here.
-			headersH := groupH - vlistNodeHeight(rows[headerCount])
 			if sp := rowSplitterOf(rows[headerCount]); sp != nil && *y-headersH > effectiveLimit {
 				if _, _, ok := sp(*y - headersH - effectiveLimit); ok {
 					groupH = headersH
@@ -2708,6 +2716,23 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 
 	// Footer on the last page.
 	return placeFooters()
+}
+
+func keepsWithNext(n node.Node) bool {
+	if hl, ok := n.(*node.HList); ok {
+		keep, _ := hl.Attributes["_keepWithNext"].(bool)
+		return keep
+	}
+	return false
+}
+
+// keepGroupHeight is the height of rows[i] and the rows it keeps with.
+func keepGroupHeight(rows []node.Node, i int) bag.ScaledPoint {
+	h := vlistNodeHeight(rows[i])
+	for j := i; j+1 < len(rows) && keepsWithNext(rows[j]); j++ {
+		h += vlistNodeHeight(rows[j+1])
+	}
+	return h
 }
 
 // rowSplitterOf returns the splitter bag gives a table row that may break
