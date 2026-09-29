@@ -400,7 +400,7 @@ func (cb *CSSBuilder) outputMarginBoxes(dimensions PageDimensions) error {
 					// Image or running-element content: skip text rendering.
 				} else if c != "" {
 					txt := frontend.NewText()
-					ApplySettings(txt.Settings, styles)
+					cb.applySettings(txt.Settings, styles)
 					if styles.Fontsize > 0 {
 						txt.Settings[frontend.SettingSize] = styles.Fontsize
 					} else if styles.DefaultFontSize > 0 {

@@ -403,9 +403,14 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// line's natural height) is distributed. "half" splits it above
 			// and below each line box (CSS 2.1 section 10.8.1), "trailing"
 			// puts all of it below the line (the TeX-flavored default).
-			switch lm := strings.ToLower(strings.TrimSpace(v)); lm {
-			case "half", "trailing":
+			// Any other name selects a model registered with
+			// CSSBuilder.RegisterLineModel.
+			switch lm := strings.ToLower(strings.TrimSpace(v)); {
+			case lm == "half" || lm == "trailing":
 				ih.leadingModel = lm
+				ih.lineModel = ""
+			case lm != "" && !builtinLeadingModel(lm):
+				ih.lineModel = lm
 			}
 		case "display":
 			ih.Hide = (v == "none")
@@ -881,6 +886,7 @@ type FormattingStyles struct {
 	hyphenPenalty      int     // -bag-linebreak-hyphen-penalty (0 = inherit/default)
 	linebreakTolerance float64 // -bag-linebreak-tolerance (0 = inherit/default)
 	leadingModel       string  // -bag-leading-model: "half" or "trailing" ("" = inherit/default)
+	lineModel          string  // -bag-leading-model naming a registered line model
 	indent             bag.ScaledPoint
 	initialLetterLines int
 	italicCorrection   bool
@@ -1018,6 +1024,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		hyphenPenalty:      is.hyphenPenalty,
 		linebreakTolerance: is.linebreakTolerance,
 		leadingModel:       is.leadingModel,
+		lineModel:          is.lineModel,
 		language:           is.language,
 		langPattern:        is.langPattern,
 		letterSpacing:      is.letterSpacing,
@@ -1299,6 +1306,51 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 }
 
+// builtinLeadingModel reports whether name is a -bag-leading-model value
+// htmlbag handles itself, and so never a registered line model's name.
+func builtinLeadingModel(name string) bool {
+	switch name {
+	case "half", "trailing", "inherit", "initial", "unset", "revert", "revert-layer":
+		return true
+	}
+	return false
+}
+
+// applySettings is ApplySettings plus the registered line model the styles
+// name, which ApplySettings has no CSSBuilder to look up.
+func (cb *CSSBuilder) applySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) {
+	ApplySettings(settings, ih)
+	if cb == nil || ih.lineModel == "" {
+		return
+	}
+	f := cb.lineModels[ih.lineModel]
+	if f == nil {
+		if !cb.warnedLineModels[ih.lineModel] {
+			if cb.warnedLineModels == nil {
+				cb.warnedLineModels = map[string]bool{}
+			}
+			cb.warnedLineModels[ih.lineModel] = true
+			bag.Logger.Warn("-bag-leading-model names no registered line model, keeping the built-in leading", "name", ih.lineModel)
+		}
+		return
+	}
+	lineHeight, _ := settings[frontend.SettingLeading].(bag.ScaledPoint)
+	lm := f(LineModelStyles{
+		Name:       ih.lineModel,
+		FontSize:   ih.Fontsize,
+		LineHeight: lineHeight,
+		Language:   ih.language,
+	})
+	if lm != nil {
+		settings[frontend.SettingLineModel] = lm
+		// Under a registered model the vertical-align shift is a line shift,
+		// so the model can grow the line with it. The glyphs move the same.
+		// Set it even when it is 0, or a nested run inherits its parent's.
+		settings[frontend.SettingYOffset] = bag.ScaledPoint(0)
+		settings[frontend.SettingLineShift] = ih.yoffset
+	}
+}
+
 // parseCounterList parses a CSS counter-reset / counter-increment value
 // like "section" or "section 1 sub 0" — a whitespace-separated list of
 // names, each optionally followed by an integer. Names without a number
@@ -1546,7 +1598,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	// stack walks performed by counter()/counters() at content time read
 	// these values directly off the styles in the stack.
 	ss.applyCounters()
-	ApplySettings(newte.Settings, styles)
+	cb.applySettings(newte.Settings, styles)
 	newte.Settings[frontend.SettingDebug] = item.Data
 	// An explicit language switch on this block element (lang= differing
 	// from the inherited language) rides along as a private sentinel so
@@ -1883,7 +1935,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	if item.Data == "img" {
 		delete(newte.Settings, frontend.SettingWidth)
 		inner := frontend.NewText()
-		ApplySettings(inner.Settings, styles)
+		cb.applySettings(inner.Settings, styles)
 		delete(inner.Settings, frontend.SettingWidth)
 		if err := collectHorizontalNodes(cb, inner, item, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 			ss.PopStyles()
@@ -1908,7 +1960,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	if !generatedContentExempt(item.Data) {
 		if beforeContent, ok := item.Styles["before::content"]; ok && !beforeContent.isEmpty() {
 			beforeRun = frontend.NewText()
-			ApplySettings(beforeRun.Settings, blockStyles)
+			cb.applySettings(beforeRun.Settings, blockStyles)
 			appendGeneratedContent(cb, beforeRun, beforeContent, blockStyles, item, ss, anchorPages)
 			if len(beforeRun.Items) == 0 {
 				beforeRun = nil
@@ -1952,14 +2004,14 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 					beforeRun = nil
 				}
 			}
-			ApplySettings(te.Settings, styles)
+			cb.applySettings(te.Settings, styles)
 			if isFootnoteElement(itm) {
 				// Footnote inline element: collect its contents into a
 				// separate Text and append a sentinel to te. extractFootnotes
 				// will later replace the sentinel with a marker call and
 				// format the body as a standalone paragraph.
 				fnText := frontend.NewText()
-				ApplySettings(fnText.Settings, styles)
+				cb.applySettings(fnText.Settings, styles)
 				if err := collectHorizontalNodes(cb, fnText, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 					return nil, err
 				}
@@ -1971,7 +2023,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				// empty placeholder (no in-text glyph) and formats the
 				// body for placement at the appropriate page edge.
 				flText := frontend.NewText()
-				ApplySettings(flText.Settings, styles)
+				cb.applySettings(flText.Settings, styles)
 				if err := collectHorizontalNodes(cb, flText, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 					return nil, err
 				}
@@ -2068,7 +2120,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	switch item.Data {
 	case "ul", "ol":
 		ulte := frontend.NewText()
-		ApplySettings(ulte.Settings, styles)
+		cb.applySettings(ulte.Settings, styles)
 		ulte.Settings[frontend.SettingDebug] = item.Data
 		ulte.Settings[frontend.SettingBox] = true
 	}
@@ -2085,7 +2137,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 					run = beforeRun
 				} else {
 					run = frontend.NewText()
-					ApplySettings(run.Settings, blockStyles)
+					cb.applySettings(run.Settings, blockStyles)
 				}
 			}
 			appendGeneratedContent(cb, run, afterContent, blockStyles, item, ss, anchorPages)
@@ -2184,7 +2236,7 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue Styl
 			return
 		}
 		txt := frontend.NewText()
-		ApplySettings(txt.Settings, sty)
+		cb.applySettings(txt.Settings, sty)
 		txt.Items = append(txt.Items, s)
 		te.Items = append(te.Items, txt)
 	}
@@ -2195,7 +2247,7 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue Styl
 			flushString(buf.String())
 			buf.Reset()
 			leaderTxt := frontend.NewText()
-			ApplySettings(leaderTxt.Settings, sty)
+			cb.applySettings(leaderTxt.Settings, sty)
 			leaderTxt.Settings[frontend.SettingLeader] = tok.Value
 			te.Items = append(te.Items, leaderTxt)
 			continue
@@ -2689,7 +2741,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				return err
 			}
 			applyLangAndHyphens(sty, item.Attributes, df)
-			ApplySettings(leaderText.Settings, sty)
+			cb.applySettings(leaderText.Settings, sty)
 			te.Items = append(te.Items, leaderText)
 			ss.PopStyles()
 			return nil
@@ -2737,7 +2789,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				return err
 			}
 			applyLangAndHyphens(sty, item.Attributes, df)
-			ApplySettings(cld.Settings, sty)
+			cb.applySettings(cld.Settings, sty)
 			for k, v := range childSettings {
 				cld.Settings[k] = v
 			}
