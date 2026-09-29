@@ -431,6 +431,11 @@ func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
 		tr.MinHeight = h
 	}
 	delete(te.Settings, settingCSSHeight)
+	// break-inside: auto asks for a row that may break across pages; without
+	// it a row stays whole, as it always has.
+	if v, _ := te.Settings[settingPageBreakInside].(string); v == "auto" {
+		tr.BreakInside = true
+	}
 	var anchors []int
 	for _, itm := range te.Items {
 		switch t := itm.(type) {

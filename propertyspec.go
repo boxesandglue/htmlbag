@@ -118,7 +118,7 @@ var Properties = []PropertySpec{
 	{Name: "z-index", Values: "Integer or `auto`, with `position`", Example: "z-index: 1;", Group: GroupLayout},
 	{Name: "page-break-before", Aliases: []string{"break-before"}, Values: "`auto`, `always`, `avoid`; `break-before` also takes `page`, `left`, `right`, `recto`, `verso`", Example: "page-break-before: always;", Note: "The page side variants break the page but do not pick a side", Group: GroupLayout},
 	{Name: "page-break-after", Aliases: []string{"break-after"}, Values: "Same values as `page-break-before`", Example: "page-break-after: avoid;", Group: GroupLayout},
-	{Name: "page-break-inside", Aliases: []string{"break-inside"}, Values: "`auto`, `avoid`", Example: "page-break-inside: avoid;", Group: GroupLayout},
+	{Name: "page-break-inside", Aliases: []string{"break-inside"}, Values: "`auto`, `avoid`", Example: "page-break-inside: avoid;", Note: "On a table row, `auto` lets the row break across pages; a row without the property stays whole, as with `avoid`", Group: GroupLayout},
 
 	// Lists and generated content
 	{Name: "list-style-type", Values: "`disc`, `circle`, `square`, `none`, `decimal`, `decimal-leading-zero`, `lower-alpha`, `upper-alpha`, `lower-latin`, `upper-latin`, `lower-roman`, `upper-roman`, `lower-greek`", Example: "list-style-type: lower-roman;", Group: GroupGenerated},
