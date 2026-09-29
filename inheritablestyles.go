@@ -392,8 +392,9 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 				ih.hyphenPenalty = n
 			}
 		case "-bag-linebreak-tolerance":
-			// boxesandglue-specific: Knuth-Plass tolerance (float).
-			// Higher values allow looser lines.
+			// boxesandglue-specific: the line breaker's tolerance, a limit
+			// on a line's adjustment ratio, not a badness (float). Higher
+			// values allow looser lines.
 			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 				ih.linebreakTolerance = f
 			}
