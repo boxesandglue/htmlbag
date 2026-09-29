@@ -2528,6 +2528,9 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		return nil
 	}
 
+	// carry is set when rows[i] is the rest of a row split at the end of the
+	// last page, so it starts a new page.
+	carry := false
 	for i := 0; i < dataEnd; i++ {
 		row := rows[i]
 		h := vlistNodeHeight(row)
@@ -2556,17 +2559,42 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 			for j := 0; j <= headerCount; j++ {
 				groupH += vlistNodeHeight(rows[j])
 			}
+			// A first data row that may break inside only needs a part of
+			// it to follow the headers here.
+			headersH := groupH - vlistNodeHeight(rows[headerCount])
+			if sp := rowSplitterOf(rows[headerCount]); sp != nil && *y-headersH > effectiveLimit {
+				if _, _, ok := sp(*y - headersH - effectiveLimit); ok {
+					groupH = headersH
+				}
+			}
 			if groupH+footerHeight <= pageContent {
 				fitH = groupH
 			}
 		}
+		// A row that may break inside is split where the page ends, if a
+		// line of it fits there; the rest goes on after the next page's
+		// header rows.
+		var rest *node.HList
+		splitHere := func() {
+			if i < headerCount || *y-h >= effectiveLimit {
+				return
+			}
+			if sp := rowSplitterOf(row); sp != nil {
+				if first, more, ok := sp(*y - effectiveLimit); ok {
+					row, rest, h = first, more, vlistNodeHeight(first)
+				}
+			}
+		}
+		if !carry {
+			splitHere()
+		}
 		avoidForcesBreak := avoidBreakInside(row) && *y-h < effectiveLimit && !*pageHasContent && h+footerHeight <= pageContent
-		if (*y-fitH < effectiveLimit && *pageHasContent) || avoidForcesBreak {
+		if carry || rest == nil && ((*y-fitH < effectiveLimit && *pageHasContent) || avoidForcesBreak) {
 			// Place footer at the bottom of the current page before
 			// breaking so it appears on every spanned page. At i == 0 no
-			// row of this table is on the page yet, so there is nothing
-			// for a footer to close off.
-			if i > 0 {
+			// row of this table is on the page yet, unless it is carried
+			// from a split, so there is nothing for a footer to close off.
+			if i > 0 || carry {
 				if err := placeFooters(); err != nil {
 					return err
 				}
@@ -2599,6 +2627,12 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 									newRows = append(newRows, n)
 								}
 								if len(newRows) == len(rows) {
+									// The rest of a split row cannot be matched
+									// in the rebuilt table, so it keeps the
+									// old width.
+									if carry {
+										newRows[i] = row
+									}
 									rows = newRows
 									tableVL = newVL
 									tableWidth = newVL.Width
@@ -2644,6 +2678,8 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 				}
 				*pageHasContent = true
 			}
+			carry = false
+			splitHere()
 		}
 
 		// Detach row from linked list and place it.
@@ -2663,10 +2699,25 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		}
 		*y -= h
 		*pageHasContent = true
+		if rest != nil {
+			rows[i] = rest
+			carry = true
+			i--
+		}
 	}
 
 	// Footer on the last page.
 	return placeFooters()
+}
+
+// rowSplitterOf returns the splitter bag gives a table row that may break
+// inside, or nil.
+func rowSplitterOf(n node.Node) frontend.RowSplitter {
+	if hl, ok := n.(*node.HList); ok {
+		sp, _ := hl.Attributes["_split"].(frontend.RowSplitter)
+		return sp
+	}
+	return nil
 }
 
 // avoidBreakAfter checks if a node has the page-break-after: avoid attribute.
