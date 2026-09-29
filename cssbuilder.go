@@ -1431,10 +1431,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		// table paths below (repeating thead headers via outputTableRows,
 		// the row splice, the width reflow) need the table VList intact —
 		// unwrapping would strip the _buildHeaders machinery and place the
-		// bare rows one by one. Tables that fit on a page keep the old
-		// unwrap behavior.
+		// bare rows one by one. So does a table with a row that may break
+		// inside. Other tables that fit on a page keep the old unwrap
+		// behavior.
 		if inner.Attributes != nil {
-			if o, _ := inner.Attributes["origin"].(string); o == "table" && vlistNodeHeight(inner) > pd.ContentHeight {
+			if o, _ := inner.Attributes["origin"].(string); o == "table" && (vlistNodeHeight(inner) > pd.ContentHeight || hasRowSplitter(inner)) {
 				break
 			}
 		}
@@ -1585,8 +1586,15 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		// when a large top reservation eats most of page 1). Short tables
 		// that do fit in the remaining space fall through to the normal
 		// pageBuf path, which composes them with adjacent paragraphs.
+		// A table without a header takes this path too when a row may break
+		// inside, since only outputTableRows splits rows.
 		if tableVL, ok := cur.(*node.VList); ok && tableVL.Attributes != nil {
-			if buildHeadersFn, tok := tableVL.Attributes["_buildHeaders"]; tok {
+			buildHeadersFn, tok := tableVL.Attributes["_buildHeaders"]
+			if !tok {
+				o, _ := tableVL.Attributes["origin"].(string)
+				tok = o == "table" && hasRowSplitter(tableVL)
+			}
+			if tok {
 				tableIncoming := insertsOnNode(cur)
 				tableInsertsH := cb.totalFloatTopHeight(filterInserts(tableIncoming, InsertFloatTop)) +
 					cb.totalFloatBottomHeight(filterInserts(tableIncoming, InsertFloatBottom)) +
@@ -2460,9 +2468,18 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 
 // outputTableRows unpacks a table VList into individual rows and places them
 // on pages, repeating header rows after each page break.
+//
+// A nil buildHeadersFn is a table without header rows. Its <tfoot> rows, if
+// any, are then placed once at the end like the other rows, as they are for
+// such tables without a row that breaks inside.
 func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y *bag.ScaledPoint, yLimit *bag.ScaledPoint, pageHasContent *bool, pd *PageDimensions) error {
-	buildHeaders := buildHeadersFn.(func() ([]*node.HList, error))
-	headerCount := tableVL.Attributes["_headerCount"].(int)
+	noHeaders := buildHeadersFn == nil
+	buildHeaders := func() ([]*node.HList, error) { return nil, nil }
+	headerCount := 0
+	if !noHeaders {
+		buildHeaders = buildHeadersFn.(func() ([]*node.HList, error))
+		headerCount = tableVL.Attributes["_headerCount"].(int)
+	}
 	tableWidth := tableVL.Width
 	// curContentWidth tracks the content width the table rows were built
 	// for. A page break onto a page with a different width triggers a
@@ -2474,14 +2491,16 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 	var footerCount int
 	var footerHeight bag.ScaledPoint
 	var buildFooters func() ([]*node.HList, error)
-	if fc, ok := tableVL.Attributes["_footerCount"].(int); ok {
-		footerCount = fc
-	}
-	if fh, ok := tableVL.Attributes["_footerHeight"].(bag.ScaledPoint); ok {
-		footerHeight = fh
-	}
-	if bf, ok := tableVL.Attributes["_buildFooters"].(func() ([]*node.HList, error)); ok {
-		buildFooters = bf
+	if !noHeaders {
+		if fc, ok := tableVL.Attributes["_footerCount"].(int); ok {
+			footerCount = fc
+		}
+		if fh, ok := tableVL.Attributes["_footerHeight"].(bag.ScaledPoint); ok {
+			footerHeight = fh
+		}
+		if bf, ok := tableVL.Attributes["_buildFooters"].(func() ([]*node.HList, error)); ok {
+			buildFooters = bf
+		}
 	}
 
 	// Collect all row nodes from the table VList. The trailing
@@ -2647,10 +2666,10 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 									if bh, ok := newVL.Attributes["_buildHeaders"].(func() ([]*node.HList, error)); ok {
 										buildHeaders = bh
 									}
-									if fh, ok := newVL.Attributes["_footerHeight"].(bag.ScaledPoint); ok {
+									if fh, ok := newVL.Attributes["_footerHeight"].(bag.ScaledPoint); ok && !noHeaders {
 										footerHeight = fh
 									}
-									if bf, ok := newVL.Attributes["_buildFooters"].(func() ([]*node.HList, error)); ok {
+									if bf, ok := newVL.Attributes["_buildFooters"].(func() ([]*node.HList, error)); ok && !noHeaders {
 										buildFooters = bf
 									}
 									row = rows[i]
@@ -2733,6 +2752,16 @@ func keepGroupHeight(rows []node.Node, i int) bag.ScaledPoint {
 		h += vlistNodeHeight(rows[j+1])
 	}
 	return h
+}
+
+// hasRowSplitter reports whether a row of the table may break inside.
+func hasRowSplitter(tableVL *node.VList) bool {
+	for n := tableVL.List; n != nil; n = n.Next() {
+		if rowSplitterOf(n) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // rowSplitterOf returns the splitter bag gives a table row that may break
