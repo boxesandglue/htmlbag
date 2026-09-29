@@ -1477,6 +1477,10 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		return nil
 	}
 
+	// chained holds the blocks after the head of the break-after: avoid
+	// chain being placed.
+	chained := map[node.Node]bool{}
+
 	// floatPage is the page the last float box of this chain was buffered
 	// for. A sibling built beside that float (attrInFloatBand) that ends up
 	// on a later page is beside nothing there and is rebuilt at full width;
@@ -1758,22 +1762,19 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 			}
 		}
 
-		if avoidBreakAfter(cur) && next != nil {
-			peekH := h + vlistNodeHeight(next)
-			nn := next.Next()
-			if nn != nil {
-				peekH += vlistNodeHeight(nn)
+		// A run of break-after: avoid blocks is weighed once, at its first
+		// block: the chain and the foothold of the block after it go to the
+		// next page together unless they fit here. The chain's later blocks
+		// are not weighed again, or one that does not fit an empty page
+		// would break after the head it has just been moved with.
+		if chained[cur] {
+			delete(chained, cur)
+		} else if avoidBreakAfter(cur) && next != nil {
+			need, rest := avoidChainHeight(cur)
+			for _, n := range rest {
+				chained[n] = true
 			}
-			fits := trialPageHeight(incoming, peekH) <= contentArea
-			if !fits && nn != nil {
-				if reduced, ok := splittablePeekHeight(nn); ok {
-					relaxedH := h + vlistNodeHeight(next) + reduced
-					if trialPageHeight(incoming, relaxedH) <= contentArea {
-						fits = true
-					}
-				}
-			}
-			if !fits && cb.pageBufHeight > 0 {
+			if trialPageHeight(incoming, need) > contentArea && cb.pageBufHeight > 0 {
 				if err := cb.NewPage(); err != nil {
 					return -1, nil, err
 				}
@@ -2821,6 +2822,34 @@ func avoidBreakAfter(n node.Node) bool {
 		}
 	}
 	return false
+}
+
+// avoidChainHeight returns the height that has to fit for the run of
+// break-after: avoid blocks starting at head to stay where it is, and the
+// run's blocks after head. The height is the run with the margins inside it,
+// and the foothold of the block after it: its first lines when it can split,
+// all of it otherwise.
+func avoidChainHeight(head node.Node) (bag.ScaledPoint, []node.Node) {
+	need := vlistNodeHeight(head)
+	var rest []node.Node
+	for n := head.Next(); n != nil; n = n.Next() {
+		if fh, isFloat := floatBoxHeight(n); isFloat {
+			return need + floatKeepWithNext(fh, siblingsFrom(n.Next())), rest
+		}
+		if !isContentNode(n) {
+			need += vlistNodeHeight(n)
+			continue
+		}
+		if !avoidBreakAfter(n) {
+			if reduced, ok := splittablePeekHeight(n); ok {
+				return need + reduced, rest
+			}
+			return need + vlistNodeHeight(n), rest
+		}
+		need += vlistNodeHeight(n)
+		rest = append(rest, n)
+	}
+	return need, rest
 }
 
 // lastContentChild returns the last VList child of vl, skipping trailing
