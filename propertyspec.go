@@ -76,7 +76,7 @@ var Properties = []PropertySpec{
 	{Name: "white-space", Values: "`normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`", Example: "white-space: pre;", Group: GroupText},
 	{Name: "hyphens", Values: "`auto`, `manual`, `none`", Example: "hyphens: none;", Note: "`manual` and `none` both switch the language patterns off, soft hyphens (U+00AD) stay break opportunities", Group: GroupText},
 	{Name: "hanging-punctuation", Values: "`none`, `allow-end`", Example: "hanging-punctuation: allow-end;", Group: GroupText},
-	{Name: "vertical-align", Values: "`baseline`, `sub`, `super`, `top`, `text-top`, `middle`, `bottom`, `text-bottom`, a length or a percentage of the line height", Example: "vertical-align: super;", Group: GroupText},
+	{Name: "vertical-align", Values: "`baseline`, `sub`, `super`, `top`, `text-top`, `middle`, `bottom`, `text-bottom`, a length or a percentage of the line height", Example: "vertical-align: super;", Note: "Under a line model registered with `CSSBuilder.RegisterLineModel`, the shift of `sub`, `super`, a length or a percentage is passed to the model, which may grow the line with it", Group: GroupText},
 	{Name: "direction", Values: "`ltr`, `rtl`", Example: "direction: rtl;", Group: GroupText},
 	{Name: "unicode-bidi", Values: "`normal`, `embed`, `isolate`, `bidi-override`, `isolate-override`, `plaintext`", Example: "unicode-bidi: isolate;", Group: GroupText},
 	{Name: "tab-size", Values: "Number of spaces or a length", Example: "tab-size: 4;", Group: GroupText},
@@ -131,7 +131,7 @@ var Properties = []PropertySpec{
 	// Custom properties
 	{Name: "-bag-font-expansion", Values: "Percentage of allowed glyph stretching, `0%` turns it off", Example: "-bag-font-expansion: 0%;", Group: GroupCustom},
 	{Name: "-bag-italic-correction", Values: "`auto`, `none`", Example: "-bag-italic-correction: none;", Group: GroupCustom},
-	{Name: "-bag-leading-model", Values: "`half` (CSS line boxes, the default), `trailing` (TeX style)", Example: "-bag-leading-model: trailing;", Group: GroupCustom},
+	{Name: "-bag-leading-model", Values: "`half` (CSS line boxes, the default), `trailing` (TeX style), or a name registered with `CSSBuilder.RegisterLineModel`", Example: "-bag-leading-model: trailing;", Note: "An unregistered name keeps the built-in leading and logs a warning once", Group: GroupCustom},
 	{Name: "-bag-linebreak-tolerance", Values: "Number, the largest adjustment ratio a line may have, default 4", Example: "-bag-linebreak-tolerance: 8;", Note: "How far the spaces of a line may stretch, as a multiple of their stretchability. A ratio, not a badness as TeX's `\\tolerance`: TeX's 200 is about 1.26", Group: GroupCustom},
 	{Name: "-bag-linebreak-hyphen-penalty", Values: "Number, the TeX hyphen penalty", Example: "-bag-linebreak-hyphen-penalty: 200;", Group: GroupCustom},
 	{Name: "-bag-tab-stops", Values: "`none`, or a comma separated list of stops: a length or percentage of the line width, optionally `start`, `end`, `center`, `decimal` or `decimal(\",\")`, optionally `leader(\" . \")` (or `dotted`, `solid`, `space`)", Example: "-bag-tab-stops: 12mm, 100% end leader(dotted);", Note: "Inherited. A tab advances to the next stop past the text before it, `left` and `right` are synonyms of `start` and `end`. Tabs within a line survive any `white-space` mode, whitespace with a newline stays source formatting", Group: GroupCustom},

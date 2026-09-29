@@ -376,6 +376,9 @@ func (cb *CSSBuilder) makeFootnoteCall(parentSettings frontend.TypesettingSettin
 	// Stay in scaled-point integer arithmetic to avoid float→sp double-conversion.
 	call.Settings[frontend.SettingSize] = bag.ScaledPoint(float64(baseSize) * cb.FootnoteCallSizeRatio)
 	call.Settings[frontend.SettingYOffset] = bag.ScaledPoint(float64(baseSize) * cb.FootnoteCallRiseRatio)
+	// The rise replaces the surrounding shift, which a registered line
+	// model receives as a line shift instead of the y offset.
+	delete(call.Settings, frontend.SettingLineShift)
 
 	call.Items = append(call.Items, strconv.Itoa(number))
 	return call

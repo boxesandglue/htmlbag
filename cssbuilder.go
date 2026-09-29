@@ -98,6 +98,22 @@ type ElementCallbackFunc func(event ElementEvent)
 // PageInitCallbackFunc is called after a new page has been initialized.
 type PageInitCallbackFunc func()
 
+// LineModelStyles is what a LineModelFunc is told about the paragraph whose
+// -bag-leading-model names it. Fields may be added.
+type LineModelStyles struct {
+	// Name is the -bag-leading-model name, lower case.
+	Name       string
+	FontSize   bag.ScaledPoint
+	LineHeight bag.ScaledPoint
+	// Language is the paragraph's BCP 47 language tag, "" when unset.
+	Language string
+}
+
+// LineModelFunc makes the line model (node.LineModel) for a paragraph whose
+// -bag-leading-model names it; see CSSBuilder.RegisterLineModel. A nil model
+// keeps the built-in leading. It may be called more than once per paragraph.
+type LineModelFunc func(LineModelStyles) node.LineModel
+
 // CSSBuilder handles HTML chunks and CSS instructions.
 type CSSBuilder struct {
 	pagebox               []node.Node
@@ -108,6 +124,8 @@ type CSSBuilder struct {
 	structureRoot         *document.StructureElement
 	structureCurrent      *document.StructureElement
 	enableTagging         bool
+	lineModels            map[string]LineModelFunc
+	warnedLineModels      map[string]bool
 	ElementCallback       ElementCallbackFunc
 	PageInitCallback      PageInitCallbackFunc
 	// Counters holds named counter values used when evaluating CSS content
@@ -3037,6 +3055,28 @@ func (cb *CSSBuilder) HTMLToText(html string) (*frontend.Text, error) {
 	}
 
 	return te, nil
+}
+
+// RegisterLineModel makes name a value of -bag-leading-model that sets a
+// paragraph's lines by the model f returns, which htmlbag passes to bag as
+// frontend.SettingLineModel. Names are case-insensitive. half, trailing, a
+// CSS-wide keyword and the empty name are rejected; registering a name again
+// replaces its function.
+func (cb *CSSBuilder) RegisterLineModel(name string, f LineModelFunc) error {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch {
+	case name == "":
+		return fmt.Errorf("line model: empty name")
+	case builtinLeadingModel(name):
+		return fmt.Errorf("line model %q: the name is reserved", name)
+	case f == nil:
+		return fmt.Errorf("line model %q: nil function", name)
+	}
+	if cb.lineModels == nil {
+		cb.lineModels = map[string]LineModelFunc{}
+	}
+	cb.lineModels[name] = f
+	return nil
 }
 
 // AddCSS reads the CSS instructions in css.
