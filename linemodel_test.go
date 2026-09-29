@@ -183,15 +183,18 @@ func TestVerticalAlignIsALineShiftUnderARegisteredModel(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct {
-		va   string
-		want bag.ScaledPoint
+		html  string
+		glyph string
+		want  bag.ScaledPoint
 	}{
-		{"3pt", bag.MustSP("3pt")},
-		{"-2pt", bag.MustSP("-2pt")},
-		{"super", bag.MustSP("10pt") / 3},
-		{"sub", -bag.MustSP("10pt") / 5},
+		{`<span style="vertical-align: 3pt">b</span>`, "b", bag.MustSP("3pt")},
+		{`<span style="vertical-align: -2pt">b</span>`, "b", bag.MustSP("-2pt")},
+		{`<span style="vertical-align: super">b</span>`, "b", bag.MustSP("10pt") / 3},
+		{`<span style="vertical-align: sub">b</span>`, "b", -bag.MustSP("10pt") / 5},
+		// Shifts that add up to zero must not inherit the parent's line shift.
+		{`<span style="vertical-align: 3pt">b<span style="vertical-align: -3pt">c</span></span>`, "c", 0},
 	} {
-		html := `<p>a <span style="vertical-align: ` + tc.va + `">b</span></p>`
+		html := `<p>a ` + tc.html + `</p>`
 		for _, model := range []string{"fixed", "half", "trailing"} {
 			var cfg func(*CSSBuilder)
 			if model == "fixed" {
@@ -200,23 +203,23 @@ func TestVerticalAlignIsALineShiftUnderARegisteredModel(t *testing.T) {
 			line := lineModelLines(t, `p { -bag-leading-model: `+model+` }`, html, cfg)[0]
 			var g *node.Glyph
 			for n := line.List; n != nil; n = n.Next() {
-				if gl, ok := n.(*node.Glyph); ok && gl.Codepoint != 0 && gl.YOffset != 0 {
+				if gl, ok := n.(*node.Glyph); ok && gl.Components == tc.glyph {
 					g = gl
 				}
 			}
 			if g == nil {
-				t.Errorf("%s, %s: no glyph is shifted", model, tc.va)
+				t.Errorf("%s, %s: no glyph %q", model, tc.html, tc.glyph)
 				continue
 			}
 			wantShift := bag.ScaledPoint(0)
 			if model == "fixed" {
-				wantShift = g.YOffset
+				wantShift = tc.want
 			}
 			if g.YOffset != tc.want {
-				t.Errorf("%s, %s: glyph YOffset %s, want %s", model, tc.va, g.YOffset, tc.want)
+				t.Errorf("%s, %s: glyph YOffset %s, want %s", model, tc.html, g.YOffset, tc.want)
 			}
 			if g.LineShift != wantShift {
-				t.Errorf("%s, %s: glyph LineShift %s, want %s", model, tc.va, g.LineShift, wantShift)
+				t.Errorf("%s, %s: glyph LineShift %s, want %s", model, tc.html, g.LineShift, wantShift)
 			}
 		}
 	}

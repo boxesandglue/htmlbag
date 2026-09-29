@@ -1345,10 +1345,9 @@ func (cb *CSSBuilder) applySettings(settings frontend.TypesettingSettings, ih *F
 		settings[frontend.SettingLineModel] = lm
 		// Under a registered model the vertical-align shift is a line shift,
 		// so the model can grow the line with it. The glyphs move the same.
-		if ih.yoffset != 0 {
-			settings[frontend.SettingYOffset] = bag.ScaledPoint(0)
-			settings[frontend.SettingLineShift] = ih.yoffset
-		}
+		// Set it even when it is 0, or a nested run inherits its parent's.
+		settings[frontend.SettingYOffset] = bag.ScaledPoint(0)
+		settings[frontend.SettingLineShift] = ih.yoffset
 	}
 }
 
