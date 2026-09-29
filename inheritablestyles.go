@@ -940,6 +940,10 @@ type FormattingStyles struct {
 	pageBreakInside string
 	bookmark        string // -bag-bookmark raw value (non-inherited; "" = unset)
 	yoffset         bag.ScaledPoint
+	// relativeYOffset is the sum of the top/bottom offsets of the
+	// position: relative inline elements around the text. It moves the
+	// glyphs after line layout, so unlike yoffset it is never a line shift.
+	relativeYOffset bag.ScaledPoint
 	// CSS positioning (CSS 2.1 §9-§10). None of these inherit; Clone()
 	// deliberately drops them so every element starts at the default
 	// (position: static, all offsets/z-index auto).
@@ -959,6 +963,31 @@ func (is *FormattingStyles) IsPositioned() bool {
 		return true
 	}
 	return false
+}
+
+// applyInlineRelativeOffset moves the text of a position: relative inline
+// element by its top or bottom offset (CSS 2.1 §9.4.3): top wins, and the
+// offset adds to an enclosing relative inline's. The shift is applied to the
+// glyphs after the lines are set, so the line box and the neighbours stay
+// where they are. The offsets are resolved against the element's own font
+// size, as em lengths are in CSS. A percentage refers to the height of the
+// containing block, which is not known for an inline, so it computes to auto.
+func applyInlineRelativeOffset(sty *FormattingStyles, attributes StyleMap) {
+	if sty.position != "relative" {
+		return
+	}
+	offset := func(key string) (bag.ScaledPoint, bool) {
+		v := strings.TrimSpace(attributes.Get(key))
+		if v == "" || v == "auto" || strings.HasSuffix(v, "%") || !strings.ContainsRune("+-.0123456789", rune(v[0])) {
+			return 0, false
+		}
+		return ParseRelativeSize(v, sty.Fontsize, sty.DefaultFontSize), true
+	}
+	if top, ok := offset("top"); ok {
+		sty.relativeYOffset -= top
+	} else if bottom, ok := offset("bottom"); ok {
+		sty.relativeYOffset += bottom
+	}
 }
 
 // parseOffsetValue turns a CSS top/right/bottom/left value into a
@@ -1052,7 +1081,8 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		// parent's (shifted) baseline. Nested sub/super/length values add
 		// their own shift on top (see the vertical-align case in
 		// StylesToStyles).
-		yoffset: is.yoffset,
+		yoffset:         is.yoffset,
+		relativeYOffset: is.relativeYOffset,
 	}
 	return newis
 }
@@ -1239,7 +1269,7 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	settings[frontend.SettingWhiteSpace] = ih.whiteSpace
 	settings[frontend.SettingSize] = ih.Fontsize
 	settings[frontend.SettingStyle] = ih.fontstyle
-	settings[frontend.SettingYOffset] = ih.yoffset
+	settings[frontend.SettingYOffset] = ih.yoffset + ih.relativeYOffset
 	settings[frontend.SettingTabSize] = ih.tabsize
 	settings[frontend.SettingTabSizeSpaces] = ih.tabsizeSpaces
 	if len(ih.tabStops) > 0 {
@@ -1345,8 +1375,9 @@ func (cb *CSSBuilder) applySettings(settings frontend.TypesettingSettings, ih *F
 		settings[frontend.SettingLineModel] = lm
 		// Under a registered model the vertical-align shift is a line shift,
 		// so the model can grow the line with it. The glyphs move the same.
-		// Set it even when it is 0, or a nested run inherits its parent's.
-		settings[frontend.SettingYOffset] = bag.ScaledPoint(0)
+		// A relative offset stays a y offset, as it must not grow the line.
+		// Set both even when 0, or a nested run inherits its parent's.
+		settings[frontend.SettingYOffset] = ih.relativeYOffset
 		settings[frontend.SettingLineShift] = ih.yoffset
 	}
 }
@@ -2306,6 +2337,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				return err
 			}
 			applyLangAndHyphens(sty, item.Attributes, df)
+			applyInlineRelativeOffset(sty, item.Styles)
 			appendGeneratedContent(cb, te, contentValue, sty, item, ss, anchorPages)
 			ss.PopStyles()
 			return nil
@@ -2741,6 +2773,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				return err
 			}
 			applyLangAndHyphens(sty, item.Attributes, df)
+			applyInlineRelativeOffset(sty, item.Styles)
 			cb.applySettings(leaderText.Settings, sty)
 			te.Items = append(te.Items, leaderText)
 			ss.PopStyles()
@@ -2789,6 +2822,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				return err
 			}
 			applyLangAndHyphens(sty, item.Attributes, df)
+			applyInlineRelativeOffset(sty, item.Styles)
 			cb.applySettings(cld.Settings, sty)
 			for k, v := range childSettings {
 				cld.Settings[k] = v
