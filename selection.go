@@ -94,6 +94,23 @@ func collapseTabs(txt string, keepNL, trimStart bool) string {
 	})
 }
 
+// trimAfterBreak drops the whitespace a text starts with after a <br>, so the
+// new line starts at the margin. Where tab stops are in force (keepTabs), the
+// tabs after the last newline in that whitespace stay: they position the start
+// of the line. Source indentation is gone by then outside pre-line, since
+// collapseTabs turns a run with a newline into a space.
+func trimAfterBreak(txt string, keepTabs bool) string {
+	rest := strings.TrimLeft(txt, " \t\r\n")
+	if !keepTabs {
+		return rest
+	}
+	lead := txt[:len(txt)-len(rest)]
+	if nl := strings.LastIndexByte(lead, '\n'); nl >= 0 {
+		lead = lead[nl+1:]
+	}
+	return strings.Repeat("\t", strings.Count(lead, "\t")) + rest
+}
+
 // collapsesSpaces reports whether runs of whitespace collapse to one space.
 func collapsesSpaces(ws frontend.WhiteSpace) bool {
 	return ws != frontend.WhiteSpacePre && ws != frontend.WhiteSpacePreWrap

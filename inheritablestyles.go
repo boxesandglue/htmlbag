@@ -1925,7 +1925,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			// lastWasHardBreak flag stays true so a consecutive <br>
 			// sibling still chains correctly.
 			if lastWasHardBreak && itm.Typ == html.TextNode {
-				itm.Data = strings.TrimLeft(itm.Data, " \t\r\n")
+				itm.Data = trimAfterBreak(itm.Data, len(blockStyles.tabStops) > 0)
 				if itm.Data == "" {
 					continue
 				}
@@ -2703,10 +2703,16 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 		// glue. Without this, source like “<div>foo<br>\n  bar</div>”
 		// renders bar with a one-space indent.
 		lastWasHardBreak := false
+		// The tab stops in force for the children: the enclosing block's,
+		// unless this element sets its own.
+		keepTabs := len(ss.CurrentStyle().tabStops) > 0
+		if v := item.Styles.Get("-bag-tab-stops"); v != "" {
+			keepTabs = v != "none"
+		}
 		for _, itm := range item.Children {
 			effective := itm
 			if lastWasHardBreak && itm.Typ == html.TextNode {
-				trimmed := strings.TrimLeft(itm.Data, " \t\r\n")
+				trimmed := trimAfterBreak(itm.Data, keepTabs)
 				if trimmed == "" {
 					// Whitespace-only text node directly after <br> —
 					// skip it entirely. Keep lastWasHardBreak true so a

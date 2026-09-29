@@ -83,6 +83,29 @@ func TestTabStopsKeepTabs(t *testing.T) {
 	}
 }
 
+// TestTabStopsKeepTabAfterBreak checks that the whitespace dropped after a
+// <br> keeps a tab where tab stops are in force (htmlbag#21), in a block and
+// inside an inline element. Without stops, and for source indentation outside
+// pre-line, the new line still starts at the margin.
+func TestTabStopsKeepTabAfterBreak(t *testing.T) {
+	const stops = "-bag-tab-stops: 25% center, 75% center"
+	for _, tc := range []struct {
+		name, style, src, want string
+	}{
+		{"block", stops, "\ta\tb<br>\tc\td", "\ta\tb|\tc\td"},
+		{"inline", stops, "<span>\ta\tb<br>\tc\td</span>", "\ta\tb|\tc\td"},
+		{"tab before an element", stops, "a<br>\t<b>c</b>", "a|\t|c"},
+		{"no stops", "", "a<br>\tc", "a|c"},
+		{"source indentation", stops, "a<br>\n\t\tc", "a|c"},
+		{"pre-line", stops + "; white-space: pre-line", "a<br>\n\tc", "a|\tc"},
+	} {
+		te := renderToText(t, `<!DOCTYPE html><html><body><p style="`+tc.style+`">`+tc.src+`</p></body></html>`)
+		if got := strings.Join(collectStrings(te.Items), "|"); got != tc.want {
+			t.Errorf("%s: %q gives %q, want %q", tc.name, tc.src, got, tc.want)
+		}
+	}
+}
+
 // TestTabStopsSetting checks the stops reach the typesetter.
 func TestTabStopsSetting(t *testing.T) {
 	te := renderToText(t, `<!DOCTYPE html><html><body><ul style="-bag-tab-stops: 12mm, 100% end leader(dotted)"><li>1`+"\t"+`Intro`+"\t"+`3</li></ul></body></html>`)
