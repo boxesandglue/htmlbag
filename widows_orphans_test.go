@@ -132,3 +132,12 @@ func TestWidowsOnAnonymousBlock(t *testing.T) {
 		t.Errorf("lines on pages 1/2 = %d/%d, want 2/3 (%v)", p1, p2, got)
 	}
 }
+
+// The widows and orphans map must not keep a document's Texts reachable once
+// OutputPagesFromText is done with them.
+func TestFragLinesClearedAfterOutput(t *testing.T) {
+	_, cb := renderHTMLPagesCB(t, "body { widows: 3; orphans: 3 }", "<p>"+lines(5)+"</p>")
+	if n := len(cb.fragLines); n != 0 {
+		t.Errorf("fragLines holds %d entries after OutputPagesFromText, want 0", n)
+	}
+}

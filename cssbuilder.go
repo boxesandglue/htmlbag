@@ -1160,6 +1160,10 @@ func (cb *CSSBuilder) appendOutline() {
 // (see reflowRebuild). Groups whose pages share one content width — the
 // common case — never restart and take the unchanged fast path.
 func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
+	// Page-width rebuilds reuse the item Texts, so the map is needed until
+	// the last group is placed and no longer.
+	defer func() { cb.fragLines = nil }()
+
 	// Find the body-level Text element (unwrap html > body wrappers).
 	body := findBody(te)
 
