@@ -617,7 +617,7 @@ func (cb *CSSBuilder) flushInsertsIn(reg region) error {
 		// inside or outside that was built for the other one moves to
 		// its side of this page.
 		fixLogicalFloats(entry.box, reg.isRight())
-		reg.page.OutputAt(reg.left, yCursor, entry.box)
+		reg.output(yCursor, entry.box, entry.height)
 		if entry.headingIdx >= 0 && entry.headingIdx < len(cb.Headings) {
 			cb.Headings[entry.headingIdx].Page = reg.pageNum
 			// yCursor is the top edge of the box in PDF user space; the

@@ -3,6 +3,7 @@ package htmlbag
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1170,27 +1171,46 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	// the last group is placed and no longer.
 	defer func() { cb.fragLines = nil }()
 
+	fc := &flowCursor{regions: &pageRegions{cb: cb}}
+	if _, err := cb.flowText(te, fc); err != nil {
+		return err
+	}
+	if err := fc.regions.filled(filled{}); err != nil {
+		return err
+	}
+	if err := cb.BeforeShipout(); err != nil {
+		return err
+	}
+	cb.frontend.Doc.CurrentPage.Shipout()
+	if cb.GenerateOutline {
+		cb.appendOutline()
+	}
+	return nil
+}
+
+// flowText pours the body of te into the regions of fc, all but handing the
+// last region back. For a caller's regions it returns the margin-bottom that
+// ends the flow.
+func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoint, error) {
 	// Find the body-level Text element (unwrap html > body wrappers).
 	body := findBody(te)
 
 	// Split body items into groups at pageBreakBefore boundaries.
-	groups := splitTextAtPageBreaks(body)
+	groups := splitTextAtPageBreaks(body, fc.forcedKeyword)
 
-	fc := &flowCursor{regions: &pageRegions{cb: cb}}
+	var marginAfter bag.ScaledPoint
 	for i, group := range groups {
 		if i == 0 {
-			reg, err := fc.regions.next("")
-			if err != nil {
-				return err
+			if err := fc.start(); err != nil {
+				return 0, err
 			}
-			fc.cur = reg
 		} else {
 			var brk string
 			if t, ok := group[0].(*frontend.Text); ok {
-				brk = breakKeyword(t.Settings[frontend.SettingPageBreakBefore])
+				brk = fc.forcedKeyword(t.Settings[frontend.SettingPageBreakBefore])
 			}
 			if err := fc.breakTo(brk); err != nil {
-				return err
+				return 0, err
 			}
 		}
 
@@ -1203,12 +1223,18 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 				Settings: body.Settings,
 				Items:    items,
 			}
+			if fc.caller {
+				// The build collapses the last child's margin-bottom into
+				// the wrapper's, which is read below: a copy keeps it off
+				// the body and apart from the other groups.
+				wrapper.Settings = maps.Clone(body.Settings)
+			}
 
 			cb.reflowRebuild = rebuild
 			vl, err := cb.CreateVlist(wrapper, fc.cur.width)
 			cb.reflowRebuild = false
 			if err != nil {
-				return err
+				return 0, err
 			}
 			stampGroupItemIndices(wrapper, vl)
 			if rebuild {
@@ -1218,13 +1244,14 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 				dropLeadingMarginKern(vl)
 				applyReflowCarry(vl, carry)
 			}
+			marginAfter, _ = wrapper.Settings[frontend.SettingMarginBottom].(bag.ScaledPoint)
 
 			// Place nodes from this group's vlist onto pages.
 			// Within a group there are no forced page breaks, but content may
 			// overflow and require automatic page breaks.
 			restart, c, err := cb.outputGroupNodes(vl, fc)
 			if err != nil {
-				return err
+				return 0, err
 			}
 			if restart < 0 {
 				break
@@ -1240,18 +1267,7 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 			rebuild = true
 		}
 	}
-
-	if err := fc.regions.filled(filled{}); err != nil {
-		return err
-	}
-	if err := cb.BeforeShipout(); err != nil {
-		return err
-	}
-	cb.frontend.Doc.CurrentPage.Shipout()
-	if cb.GenerateOutline {
-		cb.appendOutline()
-	}
-	return nil
+	return marginAfter, nil
 }
 
 // findBody descends through the root → <html> → <body> wrapper chain to reach
@@ -1280,14 +1296,15 @@ func findBody(te *frontend.Text) *frontend.Text {
 
 // splitTextAtPageBreaks splits the Items of a body-level Text into groups.
 // A new group starts whenever a child Text carries a CSS forced break-before
-// keyword (`always`, `page`, `left`, `right`, `recto`, `verso`, `all`).
-func splitTextAtPageBreaks(body *frontend.Text) [][]any {
+// keyword (`always`, `page`, `left`, `right`, `recto`, `verso`, `all`, and
+// `column` in FlowText), as forced reports it.
+func splitTextAtPageBreaks(body *frontend.Text, forced func(any) string) [][]any {
 	var groups [][]any
 	var current []any
 
 	for _, itm := range body.Items {
 		if t, ok := itm.(*frontend.Text); ok {
-			if pbb, ok := t.Settings[frontend.SettingPageBreakBefore]; ok && isForcedBreakValue(pbb) {
+			if pbb, ok := t.Settings[frontend.SettingPageBreakBefore]; ok && forced(pbb) != "" {
 				if len(current) > 0 {
 					groups = append(groups, current)
 				}
@@ -1605,6 +1622,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		if idx, ok := restartIdx(cur); ok {
 			return idx, collectReflowCarry(cur), nil
 		}
+		if fc.truncated(cb, cur) {
+			cur = cur.Next()
+			continue
+		}
+		cur = fc.marginBefore(cb, cur)
 
 		next := cur.Next()
 		h := vlistNodeHeight(cur)
@@ -1660,7 +1682,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 				tok = o == "table" && hasRowSplitter(tableVL)
 			}
 			if tok {
-				tableIncoming := insertsOnNode(cur)
+				tableIncoming := fc.insertsOn(cur)
 				tableInsertsH := cb.totalFloatTopHeight(filterInserts(tableIncoming, InsertFloatTop)) +
 					cb.totalFloatBottomHeight(filterInserts(tableIncoming, InsertFloatBottom)) +
 					cb.totalFootnoteHeight(filterInserts(tableIncoming, InsertFootnote))
@@ -1745,7 +1767,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			}
 		}
 
-		incoming := insertsOnNode(cur)
+		incoming := fc.insertsOn(cur)
 
 		// Splittable block (<pre>, block container with bg/border) that's
 		// taller than what fits even on an empty page: fragment it across
@@ -1772,8 +1794,8 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 					if err := cb.outputBlockSplit(vlS, fc); err != nil {
 						return -1, nil, err
 					}
-					if forceBreakAfter(cur) && next != nil {
-						if err := fc.breakTo(breakAfterKeyword(cur)); err != nil {
+					if brk := fc.breakAfter(cur); brk != "" && next != nil {
+						if err := fc.breakTo(brk); err != nil {
 							return -1, nil, err
 						}
 					}
@@ -1835,6 +1857,12 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			}
 		}
 
+		// A break above may have left cur, a margin, at the top of a region.
+		if fc.truncated(cb, cur) {
+			cur = next
+			continue
+		}
+
 		if len(incoming) > 0 {
 			for _, ins := range incoming {
 				cb.pageInserts[ins.Class] = append(cb.pageInserts[ins.Class], ins)
@@ -1864,8 +1892,8 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			floatPage = fc.cur.page
 		}
 
-		if forceBreakAfter(cur) && next != nil {
-			if err := fc.breakTo(breakAfterKeyword(cur)); err != nil {
+		if brk := fc.breakAfter(cur); brk != "" && next != nil {
+			if err := fc.breakTo(brk); err != nil {
 				return -1, nil, err
 			}
 		}
@@ -2502,6 +2530,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 				children = nc
 				i = 0
 			}
+			for i < len(children) && fc.truncated(cb, children[i]) {
+				i++
+			}
 		}
 	}
 	return nil
@@ -2569,7 +2600,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 			box.List = ft
 			box.Width = tableWidth
 			box.Height = h
-			fc.cur.page.OutputAt(fc.cur.left, *y, box)
+			fc.cur.output(*y, box, h)
 			*y -= h
 		}
 		*pageHasContent = true
@@ -2736,7 +2767,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 					box.List = hdr
 					box.Width = tableWidth
 					box.Height = hdrH
-					fc.cur.page.OutputAt(fc.cur.left, *y, box)
+					fc.cur.output(*y, box, hdrH)
 					*y -= hdrH
 				}
 				*pageHasContent = true
@@ -2754,7 +2785,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		box.Width = tableWidth
 		box.Height = h
 
-		fc.cur.page.OutputAt(fc.cur.left, *y, box)
+		fc.cur.output(*y, box, h)
 		for _, idx := range anchorIndicesOn(row) {
 			if idx >= 0 && idx < len(cb.Anchors) {
 				cb.Anchors[idx].Page = fc.cur.pageNum
