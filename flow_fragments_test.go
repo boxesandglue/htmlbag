@@ -7,6 +7,7 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/document"
+	"github.com/boxesandglue/boxesandglue/backend/node"
 )
 
 // boxIDs counts the id attributes of the boxes in a region's box.
@@ -141,5 +142,50 @@ func TestSplitParagraphFragmentsCarryTheID(t *testing.T) {
 	}
 	if n := elementIDs(pages)["long"]; n != 3 {
 		t.Errorf("%d boxes carry the id, want one on each of the 3 pages", n)
+	}
+}
+
+// idBoxWidths lists the widths of the boxes in a region's box that carry id.
+func idBoxWidths(f Filled, id string) []bag.ScaledPoint {
+	var ws []bag.ScaledPoint
+	var walk func(n node.Node)
+	walk = func(n node.Node) {
+		for ; n != nil; n = n.Next() {
+			switch v := n.(type) {
+			case *node.VList:
+				if got, _ := v.GetAttribute("id"); got == id {
+					ws = append(ws, v.Width)
+				}
+				walk(v.List)
+			case *node.HList:
+				if got, _ := v.GetAttribute("id"); got == id {
+					ws = append(ws, v.Width)
+				}
+				walk(v.List)
+			}
+		}
+	}
+	walk(f.Box)
+	return ws
+}
+
+// The box that carries a table's id is as wide as the table, whole or split
+// by rows, so a caller that walks the boxes finds it where it is drawn.
+func TestFlowTextTableIDBoxIsTheTablesWidth(t *testing.T) {
+	var rows strings.Builder
+	for i := range 8 {
+		fmt.Fprintf(&rows, `<tr><td>R%dq</td></tr>`, i)
+	}
+	for name, rows := range map[string]string{"whole": `<tr><td>Rq</td></tr>`, "split by rows": rows.String()} {
+		t.Run(name, func(t *testing.T) {
+			cb, _ := newFlowBuilder(t, "")
+			tr := flow(t, cb, `<p>Aq</p><table id="tbl" style="width: 80pt">`+rows+`</table>`, wide("72pt"), wide("1000pt"))
+			for i, f := range tr.filled {
+				ws := idBoxWidths(f, "tbl")
+				if len(ws) != 1 || ws[0] != sp("80pt") {
+					t.Errorf("region %d: the id is on boxes %v wide, want one of 80pt", i+1, ws)
+				}
+			}
+		})
 	}
 }

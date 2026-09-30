@@ -474,17 +474,38 @@ func appendAt(box *node.VList, tail node.Node, cursor, top bag.ScaledPoint, nd n
 	return nd
 }
 
-// stackEntries stacks the boxes of one fragment in a box of its own.
+// stackEntries stacks the boxes of one fragment in a box of its own, as wide
+// as the widest of them (the rows of a table narrower than the region), or
+// the region's width without any.
 func stackEntries(run []sinkEntry, width bag.ScaledPoint) *node.VList {
 	vl := node.NewVList()
-	vl.Width = width
 	top := run[0].off
 	var tail node.Node
 	for _, e := range run {
+		if !e.margin {
+			vl.Width = max(vl.Width, drawnWidth(e.box))
+		}
 		tail = appendAt(vl, tail, top+vl.Height, e.off, e.box)
 		vl.Height = e.off + e.height - top
 	}
+	if vl.Width == 0 {
+		vl.Width = width
+	}
 	return vl
+}
+
+// drawnWidth is the width of box, or of its only child: a table row placed
+// on its own sits in a box of the region's width.
+func drawnWidth(box *node.VList) bag.ScaledPoint {
+	if box.List != nil && box.List.Next() == nil {
+		switch c := box.List.(type) {
+		case *node.VList:
+			return c.Width
+		case *node.HList:
+			return c.Width
+		}
+	}
+	return box.Width
 }
 
 // carriesID reports whether a box of the run already carries id: an unsplit
