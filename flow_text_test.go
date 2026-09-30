@@ -3,6 +3,7 @@ package htmlbag
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -559,4 +560,35 @@ func TestFlowTextRefusesToNest(t *testing.T) {
 			t.Errorf("FlowText after the pages: %v", err)
 		}
 	})
+}
+
+// A block set beside a float that stays in the region before is rebuilt at
+// full width, also when both regions lie on one page or have no page.
+func TestFlowTextRebuildsABlockPartedFromItsFloat(t *testing.T) {
+	body := `<div style="float: left; width: 80pt; height: 90pt">Fq</div><p>` + strings.Repeat("alpha beta ", 4) + `</p>` +
+		`<div style="break-inside: avoid"><p>` + strings.Repeat("gamma delta ", 3) + `</p><p>Zq</p></div>`
+	for _, samePage := range []bool{true, false} {
+		t.Run(fmt.Sprintf("same page %v", samePage), func(t *testing.T) {
+			cb, fe := newFlowBuilder(t, "")
+			r1, r2 := wide("40pt"), wide("1000pt")
+			if samePage {
+				pg := fe.Doc.NewPage()
+				r1.Page, r1.PageNum = pg, 1
+				r2.Page, r2.PageNum = pg, 1
+			}
+			tr := flow(t, cb, body, r1, r2)
+			if len(tr.filled) != 2 {
+				t.Fatalf("filled %d regions, want 2", len(tr.filled))
+			}
+			n := 0
+			for _, l := range boxLines(tr.filled[1]) {
+				if strings.Contains(l.text, "gamma") {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Errorf("the block beside the float takes %d lines in region 2, want 1 at full width", n)
+			}
+		})
+	}
 }

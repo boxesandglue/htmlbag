@@ -1551,11 +1551,12 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 	// chain being placed.
 	chained := map[node.Node]bool{}
 
-	// floatPage is the page the last float box of this chain was buffered
-	// for. A sibling built beside that float (attrInFloatBand) that ends up
-	// on a later page is beside nothing there and is rebuilt at full width;
-	// the rebuilt chain starts after the float, so it carries no band.
-	var floatPage *document.Page
+	// floatRegion is the region the last float box of this chain was
+	// buffered for, 0 before one. A sibling built beside that float
+	// (attrInFloatBand) that ends up in a later region is beside nothing
+	// there and is rebuilt at full width; the rebuilt chain starts after the
+	// float, so it carries no band.
+	floatRegion := 0
 
 	// restartIdx reports whether pagination must hand control back to
 	// OutputPagesFromText, n being the (not yet placed) node of a whole body
@@ -1580,7 +1581,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		if built, ok := nvl.Attributes["_floatParity"].(bool); ok && built != fc.cur.isRight() {
 			return idx, true
 		}
-		if inFloatBand(n) && floatPage != nil && floatPage != fc.cur.page {
+		if inFloatBand(n) && floatRegion != 0 && floatRegion != fc.serial {
 			return idx, true
 		}
 		return 0, false
@@ -1899,7 +1900,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 
 		cb.bufferBody(box, h, headingIdx, anchorIndices)
 		if _, isFloat := floatBoxHeight(cur); isFloat {
-			floatPage = fc.cur.page
+			floatRegion = fc.serial
 		}
 
 		if brk := fc.breakAfter(cur); brk != "" && next != nil {

@@ -436,6 +436,9 @@ type flowCursor struct {
 	caller bool
 	top    regionTop
 	warned map[InsertClass]bool
+	// serial numbers the regions from 1, as pages cannot: a caller's
+	// regions may share one.
+	serial int
 }
 
 // start takes the first region.
@@ -444,7 +447,7 @@ func (fc *flowCursor) start() error {
 	if err != nil {
 		return err
 	}
-	fc.cur, fc.top = reg, topKept
+	fc.cur, fc.top, fc.serial = reg, topKept, 1
 	return nil
 }
 
@@ -458,6 +461,7 @@ func (fc *flowCursor) breakTo(brk string) error {
 		return err
 	}
 	fc.cur = reg
+	fc.serial++
 	fc.top = topKept
 	if brk == "" {
 		fc.top = topTruncated
