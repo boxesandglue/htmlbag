@@ -293,6 +293,8 @@ type CSSBuilder struct {
 	// every block, and a private setting would have to be stripped on each
 	// path that hands a Text to FormatParagraph (cells, footnotes, floats).
 	fragLines map[*frontend.Text]fragLines
+	// flowing is set while OutputPagesFromText or FlowText runs.
+	flowing bool
 	// FootnoteSeparatorHeight overrides the default footnote rule thickness.
 	// Zero falls back to the package default (0.4pt).
 	FootnoteSeparatorHeight bag.ScaledPoint
@@ -1166,7 +1168,15 @@ func (cb *CSSBuilder) appendOutline() {
 // inserts are transferred from the discarded nodes onto the rebuilt ones
 // (see reflowRebuild). Groups whose pages share one content width — the
 // common case — never restart and take the unchanged fast path.
+//
+// OutputPagesFromText returns an error when it is called while it or
+// FlowText is running on the same builder, such as from a PageInitCallback.
 func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
+	done, err := cb.startFlow()
+	if err != nil {
+		return err
+	}
+	defer done()
 	// Page-width rebuilds reuse the item Texts, so the map is needed until
 	// the last group is placed and no longer.
 	defer func() { cb.fragLines = nil }()

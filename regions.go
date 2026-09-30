@@ -77,13 +77,22 @@ type Filled struct {
 // or background, and a paragraph whose rest fails to re-break.
 //
 // Nothing of the flow is left in the builder when FlowText returns, and the
-// page OutputPagesFromText may have in progress is kept as it was. As with
+// page content the builder holds is kept as it was. As with
 // OutputPagesFromText, that includes the widows and orphans HTMLToText
 // recorded, so each Text goes to FlowText before the next HTMLToText.
+//
+// FlowText returns an error when it is called while it or
+// OutputPagesFromText is running on the same builder, such as from a method
+// of r.
 func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 	if r == nil {
 		return errors.New("htmlbag: FlowText needs regions")
 	}
+	done, err := cb.startFlow()
+	if err != nil {
+		return err
+	}
+	defer done()
 	saved := cb.takePageState()
 	defer func() {
 		cb.fragLines = nil
@@ -97,6 +106,16 @@ func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 		return err
 	}
 	return fc.regions.filled(filled{marginAfter: marginAfter})
+}
+
+// startFlow marks the builder as flowing until done is called, or fails
+// when it already is: a flow keeps its state in the builder.
+func (cb *CSSBuilder) startFlow() (done func(), err error) {
+	if cb.flowing {
+		return nil, errors.New("htmlbag: OutputPagesFromText or FlowText is already running on this builder")
+	}
+	cb.flowing = true
+	return func() { cb.flowing = false }, nil
 }
 
 // pageState is the part of the builder that holds the page being filled.

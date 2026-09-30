@@ -477,3 +477,86 @@ func TestFlowTextNextFails(t *testing.T) {
 		t.Errorf("left %d page entries (%s) and widows/orphans %v", len(cb.pageBuf), cb.pageBufHeight, cb.fragLines)
 	}
 }
+
+// nestingRegions runs nested from its second Next.
+type nestingRegions struct {
+	testRegions
+	nested    func() error
+	nestedErr error
+}
+
+func (nr *nestingRegions) Next(brk string) (Region, error) {
+	if len(nr.brks) == 1 {
+		nr.nestedErr = nr.nested()
+	}
+	return nr.testRegions.Next(brk)
+}
+
+// Neither FlowText nor OutputPagesFromText runs inside a flow on the same
+// builder, and the flow it was called from goes on unharmed.
+func TestFlowTextRefusesToNest(t *testing.T) {
+	body := `<html><body><p>` + charLines("A", 6) + `</p></body></html>`
+	nested := map[string]func(cb *CSSBuilder, te *frontend.Text) error{
+		"FlowText": func(cb *CSSBuilder, te *frontend.Text) error {
+			return cb.FlowText(te, &testRegions{sizes: []Region{wide("1000pt")}})
+		},
+		"OutputPagesFromText": func(cb *CSSBuilder, te *frontend.Text) error {
+			return cb.OutputPagesFromText(te)
+		},
+	}
+	for name, run := range nested {
+		t.Run("from Regions, "+name, func(t *testing.T) {
+			cb, fe := newFlowBuilder(t, "")
+			te, err := cb.HTMLToText(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inner, err := cb.HTMLToText(`<html><body><p>Zq</p></body></html>`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nr := &nestingRegions{testRegions: testRegions{sizes: []Region{wide("36pt"), wide("1000pt")}}}
+			nr.nested = func() error { return run(cb, inner) }
+			if err := cb.FlowText(te, nr); err != nil {
+				t.Fatalf("FlowText: %v", err)
+			}
+			if nr.nestedErr == nil {
+				t.Errorf("nested %s ran", name)
+			}
+			if len(fe.Doc.Pages) != 0 {
+				t.Errorf("made %d pages", len(fe.Doc.Pages))
+			}
+			if lines := len(boxLines(nr.filled[0])) + len(boxLines(nr.filled[1])); lines != 6 {
+				t.Errorf("placed %d lines, want 6", lines)
+			}
+		})
+	}
+	t.Run("FlowText from a PageInitCallback", func(t *testing.T) {
+		cb, _ := newFlowBuilder(t, "")
+		te, err := cb.HTMLToText(`<html><body><p>` + charLines("A", 20) + `</p></body></html>`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inner, err := cb.HTMLToText(`<html><body><p>Zq</p></body></html>`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var nestedErr error
+		calls := 0
+		cb.PageInitCallback = func() {
+			if calls++; calls == 2 {
+				nestedErr = cb.FlowText(inner, &testRegions{sizes: []Region{wide("1000pt")}})
+			}
+		}
+		if err := cb.OutputPagesFromText(te); err != nil {
+			t.Fatal(err)
+		}
+		if calls < 2 || nestedErr == nil {
+			t.Errorf("nested FlowText ran (%d page inits)", calls)
+		}
+		// Not flowing any more.
+		if err := cb.FlowText(inner, &testRegions{sizes: []Region{wide("1000pt")}}); err != nil {
+			t.Errorf("FlowText after the pages: %v", err)
+		}
+	})
+}
