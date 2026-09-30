@@ -1214,7 +1214,10 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 	groups := splitTextAtPageBreaks(body, fc.forcedKeyword)
 
 	var marginAfter bag.ScaledPoint
-	children := newFlowChildren(body)
+	var children *flowChildren
+	if fc.caller {
+		children = newFlowChildren(body)
+	}
 	groupStart := 0
 	for i, group := range groups {
 		if i > 0 {
@@ -1258,7 +1261,7 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 				return 0, err
 			}
 			stampGroupItemIndices(wrapper, vl)
-			if fc.caller {
+			if children != nil {
 				children.stamp(vl, groupStart+len(group)-len(items))
 			}
 			if rebuild {

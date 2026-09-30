@@ -504,7 +504,8 @@ func carriesID(run []sinkEntry, id string) bool {
 }
 
 // fragmentOf is the Fragment of child that run holds. Margins take no part
-// in its extent; a run of margins alone is no fragment.
+// in its extent, side floats all they paint; a run of margins alone is no
+// fragment.
 func fragmentOf(run []sinkEntry, child *flowChild, seen map[*flowChild]bool) (Fragment, bool) {
 	fr := Fragment{ID: child.id, Index: child.index, Continued: seen[child]}
 	found := false
@@ -515,7 +516,7 @@ func fragmentOf(run []sinkEntry, child *flowChild, seen map[*flowChild]bool) (Fr
 		if !found {
 			fr.Top, found = e.off, true
 		}
-		fr.Height = e.off + e.height - fr.Top
+		fr.Height = max(fr.Height, e.off+max(e.height, e.floats)-fr.Top)
 	}
 	return fr, found
 }

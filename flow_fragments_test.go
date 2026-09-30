@@ -111,6 +111,28 @@ func TestFlowTextFragmentsOfATableSplitByRows(t *testing.T) {
 	}
 }
 
+// A paragraph over three regions continues from the first through the
+// second into the third.
+func TestFlowTextFragmentsOverThreeRegions(t *testing.T) {
+	cb, _ := newFlowBuilder(t, "")
+	tr := flow(t, cb, `<p id="long">`+charLines("B", 10)+`</p><p id="z">Zq</p>`, wide("48pt"), wide("48pt"), wide("1000pt"))
+	checkFragments(t, tr, [][]Fragment{
+		{{"long", 0, 0, sp("48pt"), false, true}},
+		{{"long", 0, 0, sp("48pt"), true, true}},
+		{{"long", 0, 0, sp("24pt"), true, false}, {"z", 1, sp("24pt"), charLine, false, false}},
+	})
+}
+
+// A side float's fragment is as tall as the float paints, though its box
+// reports no height.
+func TestFlowTextFragmentOfASideFloat(t *testing.T) {
+	cb, _ := newFlowBuilder(t, "")
+	tr := flow(t, cb, `<div id="f" style="float: left; width: 40pt; height: 20pt">Fq</div><p id="g">`+charLines("G", 3)+`</p>`, wide("1000pt"))
+	checkFragments(t, tr, [][]Fragment{
+		{{"f", 0, 0, sp("20pt"), false, false}, {"g", 1, 0, sp("36pt"), false, false}},
+	})
+}
+
 // On pages too, every fragment of a split paragraph carries its id.
 func TestSplitParagraphFragmentsCarryTheID(t *testing.T) {
 	pages := renderHTMLPages(t, charCSS, `<html><body><p>Aq</p><p id="long">`+charLines("B", 30)+`</p></body></html>`)
