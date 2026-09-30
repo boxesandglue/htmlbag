@@ -34,15 +34,13 @@ type Region struct {
 	// break. After an automatic break the margin at a region's top is
 	// truncated (CSS Fragmentation 3 §5.2), so it is not used there.
 	MarginBefore bag.ScaledPoint
-	// Page is the page the region lies on, for the caller to place
-	// Filled.Box on; FlowText paints nothing and does not read it. PageNum
-	// is the page's 1-based number: headings and anchors take their page
-	// from it, and inside/outside floats their side, odd being right.
-	Page    *document.Page
+	// PageNum is the 1-based number of the caller's page the region lies
+	// on: headings and anchors take their page from it, and inside/outside
+	// floats their side, odd being right.
 	PageNum int
 	// Left and Top are the region's top-left corner in PDF coordinates on
-	// Page, where the caller places Filled.Box. Heading positions for the
-	// outline are computed from them.
+	// the caller's page, where the caller places Filled.Box. Heading
+	// positions for the outline are computed from them.
 	Left, Top bag.ScaledPoint
 }
 
@@ -162,8 +160,9 @@ type region struct {
 	width, height bag.ScaledPoint
 	// left and top are its top-left corner in PDF coordinates on page.
 	left, top bag.ScaledPoint
-	// page is the page the region lies on, pageNum its 1-based number.
-	// Headings, anchors and inside/outside floats take their page from here.
+	// page is the page a page region paints on, nil for a caller's region.
+	// pageNum is the 1-based page number headings, anchors and
+	// inside/outside floats take.
 	page    *document.Page
 	pageNum int
 	// marginBefore is Region.MarginBefore.
@@ -285,7 +284,6 @@ func (cr *callerRegions) next(brk string) (region, error) {
 		height:       rg.Height,
 		left:         rg.Left,
 		top:          rg.Top,
-		page:         rg.Page,
 		pageNum:      rg.PageNum,
 		marginBefore: rg.MarginBefore,
 		sink:         &regionSink{},

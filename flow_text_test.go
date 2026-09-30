@@ -336,10 +336,9 @@ func TestFlowTextPassesForcedBreaksToNext(t *testing.T) {
 }
 
 func TestFlowTextHeadingsAndAnchorsTakeTheRegionsPage(t *testing.T) {
-	cb, fe := newFlowBuilder(t, "")
-	pg := fe.Doc.NewPage()
-	r1 := Region{Width: sp("160pt"), Height: sp("30pt"), Page: pg, PageNum: 7, Left: sp("30pt"), Top: sp("500pt")}
-	r2 := Region{Width: sp("160pt"), Height: sp("1000pt"), Page: pg, PageNum: 8, Left: sp("30pt"), Top: sp("300pt")}
+	cb, _ := newFlowBuilder(t, "")
+	r1 := Region{Width: sp("160pt"), Height: sp("30pt"), PageNum: 7, Left: sp("30pt"), Top: sp("500pt")}
+	r2 := Region{Width: sp("160pt"), Height: sp("1000pt"), PageNum: 8, Left: sp("30pt"), Top: sp("300pt")}
 	body := `<p>` + charLines("A", 2) + `</p><h1 id="head">Hq</h1><p id="para">` + charLines("B", 3) + `</p>`
 	tr := flow(t, cb, body, r1, r2)
 	if len(tr.filled) != 2 {
@@ -563,18 +562,16 @@ func TestFlowTextRefusesToNest(t *testing.T) {
 }
 
 // A block set beside a float that stays in the region before is rebuilt at
-// full width, also when both regions lie on one page or have no page.
+// full width, also when both regions have the same page number or none.
 func TestFlowTextRebuildsABlockPartedFromItsFloat(t *testing.T) {
 	body := `<div style="float: left; width: 80pt; height: 90pt">Fq</div><p>` + strings.Repeat("alpha beta ", 4) + `</p>` +
 		`<div style="break-inside: avoid"><p>` + strings.Repeat("gamma delta ", 3) + `</p><p>Zq</p></div>`
 	for _, samePage := range []bool{true, false} {
-		t.Run(fmt.Sprintf("same page %v", samePage), func(t *testing.T) {
-			cb, fe := newFlowBuilder(t, "")
+		t.Run(fmt.Sprintf("same page number %v", samePage), func(t *testing.T) {
+			cb, _ := newFlowBuilder(t, "")
 			r1, r2 := wide("40pt"), wide("1000pt")
 			if samePage {
-				pg := fe.Doc.NewPage()
-				r1.Page, r1.PageNum = pg, 1
-				r2.Page, r2.PageNum = pg, 1
+				r1.PageNum, r2.PageNum = 1, 1
 			}
 			tr := flow(t, cb, body, r1, r2)
 			if len(tr.filled) != 2 {
