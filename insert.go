@@ -573,8 +573,9 @@ func (cb *CSSBuilder) makeFootnoteSeparator(width bag.ScaledPoint) *node.VList {
 
 // flushInserts paints the current page in four layers — top-floats,
 // buffered body, bottom-floats, footnotes — and clears the per-page
-// state. Called by cb.NewPage() before shipout, and once at the end of
-// the final page in OutputPages / OutputPagesFromText.
+// state. Called by cb.NewPage() before shipout, once at the end of the
+// final page in OutputPages, and through pageRegions for
+// OutputPagesFromText.
 //
 // Painting order:
 //  1. Top-floats at yStart, going down (placeFloatTopInserts).
@@ -588,11 +589,16 @@ func (cb *CSSBuilder) makeFootnoteSeparator(width bag.ScaledPoint) *node.VList {
 // their respective placers — the next NewPage starts with a fresh page
 // state.
 func (cb *CSSBuilder) flushInserts() error {
-	pd, err := cb.PageSize()
+	reg, err := cb.pageRegion()
 	if err != nil {
 		return err
 	}
+	return cb.flushInsertsIn(reg)
+}
 
+// flushInsertsIn is flushInserts with the body painted into reg, a region
+// on the current page.
+func (cb *CSSBuilder) flushInsertsIn(reg region) error {
 	// Snapshot the top-float reservation height *before* placeFloatTopInserts
 	// clears it, so we know where the body cursor starts.
 	topFloatHeight := cb.pageInsertHeight[InsertFloatTop]
@@ -601,22 +607,19 @@ func (cb *CSSBuilder) flushInserts() error {
 		return err
 	}
 
-	// Paint the buffered body just below the top-float zone. The horizontal
-	// origin and the top edge are the padded content area (PageAreaLeft /
-	// PageAreaTop = margin + @page border + @page padding), so @page padding
-	// acts as a content indent. Without @page border/padding these equal
-	// MarginLeft / MarginTop, so unpadded pages are unaffected.
-	yCursor := pd.Height - pd.PageAreaTop - topFloatHeight
-	pageNum := len(cb.frontend.Doc.Pages)
-	rightPage := cb.pageIsRight()
+	// Paint the buffered body just below the top-float zone. For a page
+	// region the horizontal origin and the top edge are the padded content
+	// area (PageAreaLeft / PageAreaTop = margin + @page border + @page
+	// padding), so @page padding acts as a content indent.
+	yCursor := reg.top - topFloatHeight
 	for _, entry := range cb.pageBuf {
 		// The parity is known for certain only now: a float declared
 		// inside or outside that was built for the other one moves to
 		// its side of this page.
-		fixLogicalFloats(entry.box, rightPage)
-		cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, yCursor, entry.box)
+		fixLogicalFloats(entry.box, reg.isRight())
+		reg.page.OutputAt(reg.left, yCursor, entry.box)
 		if entry.headingIdx >= 0 && entry.headingIdx < len(cb.Headings) {
-			cb.Headings[entry.headingIdx].Page = pageNum
+			cb.Headings[entry.headingIdx].Page = reg.pageNum
 			// yCursor is the top edge of the box in PDF user space; the
 			// outline builder uses it for an /XYZ destination so a bookmark
 			// jumps to the heading's exact vertical position.
@@ -624,7 +627,7 @@ func (cb *CSSBuilder) flushInserts() error {
 		}
 		for _, idx := range entry.anchorIndices {
 			if idx >= 0 && idx < len(cb.Anchors) {
-				cb.Anchors[idx].Page = pageNum
+				cb.Anchors[idx].Page = reg.pageNum
 			}
 		}
 		yCursor -= entry.height

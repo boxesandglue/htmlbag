@@ -734,6 +734,12 @@ func (cb *CSSBuilder) NewPage() error {
 	if err := cb.flushInserts(); err != nil {
 		return err
 	}
+	return cb.shipoutAndStartPage()
+}
+
+// shipoutAndStartPage is NewPage after the flush: it ships the current page
+// out and starts the next one.
+func (cb *CSSBuilder) shipoutAndStartPage() error {
 	if err := cb.BeforeShipout(); err != nil {
 		return err
 	}
@@ -1170,9 +1176,20 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	// Split body items into groups at pageBreakBefore boundaries.
 	groups := splitTextAtPageBreaks(body)
 
+	fc := &flowCursor{regions: &pageRegions{cb: cb}}
 	for i, group := range groups {
-		if i > 0 {
-			if err := cb.NewPage(); err != nil {
+		if i == 0 {
+			reg, err := fc.regions.next("")
+			if err != nil {
+				return err
+			}
+			fc.cur = reg
+		} else {
+			var brk string
+			if t, ok := group[0].(*frontend.Text); ok {
+				brk = breakKeyword(t.Settings[frontend.SettingPageBreakBefore])
+			}
+			if err := fc.breakTo(brk); err != nil {
 				return err
 			}
 		}
@@ -1181,11 +1198,6 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 		rebuild := false
 		var carry map[int]node.H
 		for {
-			pd, err := cb.PageSize()
-			if err != nil {
-				return err
-			}
-
 			// Create a wrapper Text with the body's settings for this group.
 			wrapper := &frontend.Text{
 				Settings: body.Settings,
@@ -1193,7 +1205,7 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 			}
 
 			cb.reflowRebuild = rebuild
-			vl, err := cb.CreateVlist(wrapper, pd.ContentWidth)
+			vl, err := cb.CreateVlist(wrapper, fc.cur.width)
 			cb.reflowRebuild = false
 			if err != nil {
 				return err
@@ -1210,7 +1222,7 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 			// Place nodes from this group's vlist onto pages.
 			// Within a group there are no forced page breaks, but content may
 			// overflow and require automatic page breaks.
-			restart, c, err := cb.outputGroupNodes(vl, pd)
+			restart, c, err := cb.outputGroupNodes(vl, fc)
 			if err != nil {
 				return err
 			}
@@ -1229,8 +1241,7 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 		}
 	}
 
-	// Flush any inserts accumulated on the final page before its shipout.
-	if err := cb.flushInserts(); err != nil {
+	if err := fc.regions.filled(filled{}); err != nil {
 		return err
 	}
 	if err := cb.BeforeShipout(); err != nil {
@@ -1468,11 +1479,11 @@ func hasTableChild(nl node.Node) bool {
 // nodes — OutputPagesFromText then re-breaks the remaining items at the new
 // width. Nodes that do not correspond to a whole item (fragment lines from an
 // unwrapped paragraph, spliced table rows) are placed at the old width.
-func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, map[int]node.H, error) {
+func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map[int]node.H, error) {
 	// builtWidth is the content width the vlist was formatted at. Pages
 	// whose @page rule yields the same width slice this vlist by height
 	// only (fast path); a differing width triggers the item-level restart.
-	builtWidth := pd.ContentWidth
+	builtWidth := fc.cur.width
 
 	// Unwrap nested single-child VLists. Each unwrap step strips one VList;
 	// if it carried an inserts attribute, propagate it onto the next inner
@@ -1495,7 +1506,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		// inside. Other tables that fit on a page keep the old unwrap
 		// behavior.
 		if inner.Attributes != nil {
-			if o, _ := inner.Attributes["origin"].(string); o == "table" && (vlistNodeHeight(inner) > pd.ContentHeight || hasRowSplitter(inner)) {
+			if o, _ := inner.Attributes["origin"].(string); o == "table" && (vlistNodeHeight(inner) > fc.cur.height || hasRowSplitter(inner)) {
 				break
 			}
 		}
@@ -1507,17 +1518,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		}
 	}
 
-	storePageDimensions(cb, pd)
-
 	cur := contentList
-
-	refreshPage := func() error {
-		var err error
-		if pd, err = cb.PageSize(); err != nil {
-			return err
-		}
-		return nil
-	}
 
 	// chained holds the blocks after the head of the break-after: avoid
 	// chain being placed.
@@ -1546,13 +1547,13 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		if !ok {
 			return 0, false
 		}
-		if pd.ContentWidth != builtWidth {
+		if fc.cur.width != builtWidth {
 			return idx, true
 		}
-		if built, ok := nvl.Attributes["_floatParity"].(bool); ok && built != cb.pageIsRight() {
+		if built, ok := nvl.Attributes["_floatParity"].(bool); ok && built != fc.cur.isRight() {
 			return idx, true
 		}
-		if inFloatBand(n) && floatPage != nil && floatPage != cb.frontend.Doc.CurrentPage {
+		if inFloatBand(n) && floatPage != nil && floatPage != fc.cur.page {
 			return idx, true
 		}
 		return 0, false
@@ -1607,7 +1608,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 
 		next := cur.Next()
 		h := vlistNodeHeight(cur)
-		contentArea := pd.ContentHeight
+		contentArea := fc.cur.height
 
 		// A table taller than the page must break across pages, but such a
 		// table is often nested inside a transparent wrapper (a plain
@@ -1673,13 +1674,13 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 					// current page with the correct y cursor.
 					flushedBodyH := cb.pageBufHeight
 					topFloatH := cb.pageInsertHeight[InsertFloatTop]
-					if err := cb.flushInserts(); err != nil {
+					if err := cb.flushInsertsIn(fc.cur); err != nil {
 						return -1, nil, err
 					}
-					yLocal := pd.Height - pd.PageAreaTop - topFloatH - flushedBodyH
-					yLimitLocal := pd.pageAreaBottom()
+					yLocal := fc.cur.top - topFloatH - flushedBodyH
+					yLimitLocal := fc.cur.bottom()
 					phc := flushedBodyH > 0 || topFloatH > 0
-					if err := cb.outputTableRows(tableVL, buildHeadersFn, &yLocal, &yLimitLocal, &phc, &pd); err != nil {
+					if err := cb.outputTableRows(tableVL, buildHeadersFn, &yLocal, &yLimitLocal, &phc, fc); err != nil {
 						return -1, nil, err
 					}
 					// Commit the table's own inserts (typically footnotes
@@ -1700,7 +1701,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 					// and the normal fit checks break to a new page only
 					// when a block really doesn't fit anymore.
 					if next != nil {
-						usedH := pd.Height - pd.PageAreaTop - yLocal
+						usedH := fc.cur.top - yLocal
 						if usedH > 0 {
 							k := node.NewKern()
 							k.Kern = usedH
@@ -1758,7 +1759,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 					// reservations. Don't ship pageBuf here — the splitter
 					// appends its first fragment after whatever's already
 					// buffered (e.g. a heading just placed via the
-					// avoidBreakAfter relaxation), and only calls NewPage
+					// avoidBreakAfter relaxation), and only breaks
 					// between fragments.
 					if len(incoming) > 0 {
 						for _, ins := range incoming {
@@ -1768,14 +1769,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 						cb.pageInsertHeight[InsertFloatBottom] = cb.totalFloatBottomHeight(cb.pageInserts[InsertFloatBottom])
 						cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
 					}
-					if err := cb.outputBlockSplit(vlS, &pd, refreshPage); err != nil {
+					if err := cb.outputBlockSplit(vlS, fc); err != nil {
 						return -1, nil, err
 					}
 					if forceBreakAfter(cur) && next != nil {
-						if err := cb.NewPage(); err != nil {
-							return -1, nil, err
-						}
-						if err := refreshPage(); err != nil {
+						if err := fc.breakTo(breakAfterKeyword(cur)); err != nil {
 							return -1, nil, err
 						}
 					}
@@ -1792,10 +1790,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		// block beside it, or both move to the next page.
 		if fh, isFloat := floatBoxHeight(cur); isFloat && next != nil {
 			if need := floatKeepWithNext(fh, siblingsFrom(next)); trialPageHeight(incoming, need) > contentArea && cb.pageBufHeight > 0 {
-				if err := cb.NewPage(); err != nil {
-					return -1, nil, err
-				}
-				if err := refreshPage(); err != nil {
+				if err := fc.breakTo(""); err != nil {
 					return -1, nil, err
 				}
 				if idx, ok := restartIdx(cur); ok {
@@ -1817,10 +1812,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 				chained[n] = true
 			}
 			if trialPageHeight(incoming, need) > contentArea && cb.pageBufHeight > 0 {
-				if err := cb.NewPage(); err != nil {
-					return -1, nil, err
-				}
-				if err := refreshPage(); err != nil {
+				if err := fc.breakTo(""); err != nil {
 					return -1, nil, err
 				}
 				// The fresh page may use a different content width; if cur
@@ -1833,10 +1825,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 		}
 
 		if trialPageHeight(incoming, h) > contentArea && cb.pageBufHeight > 0 {
-			if err := cb.NewPage(); err != nil {
-				return -1, nil, err
-			}
-			if err := refreshPage(); err != nil {
+			if err := fc.breakTo(""); err != nil {
 				return -1, nil, err
 			}
 			// Same width check as above: cur has not been buffered yet, so
@@ -1872,14 +1861,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 
 		cb.bufferBody(box, h, headingIdx, anchorIndices)
 		if _, isFloat := floatBoxHeight(cur); isFloat {
-			floatPage = cb.frontend.Doc.CurrentPage
+			floatPage = fc.cur.page
 		}
 
 		if forceBreakAfter(cur) && next != nil {
-			if err := cb.NewPage(); err != nil {
-				return -1, nil, err
-			}
-			if err := refreshPage(); err != nil {
+			if err := fc.breakTo(breakAfterKeyword(cur)); err != nil {
 				return -1, nil, err
 			}
 		}
@@ -1903,9 +1889,9 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, pd PageDimensions) (int, 
 // Padding-left/right and side-borders are emitted on every fragment.
 //
 // Each fragment is buffered via bufferBody so it composes correctly with
-// surrounding paragraphs in the page buffer; NewPage is called between
+// surrounding paragraphs in the page buffer; the next region is taken between
 // fragments to ship the partial page.
-func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, refreshPage func() error) error {
+func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) error {
 	children, _ := blockVL.Attributes["_splittableInner"].([]node.Node)
 	hv, _ := blockVL.Attributes["_splittableHv"].(HTMLValues)
 	innerWidth, _ := blockVL.Attributes["_splittableInnerWidth"].(bag.ScaledPoint)
@@ -1916,14 +1902,14 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 
 	// Width-change reflow state. Leaf splittables (a paragraph or <pre>
 	// whose children are line HLists) carry their source Text and its
-	// formatting width; when a NewPage between fragments switches to a page
+	// formatting width; when a break between fragments switches to a page
 	// with a different content width, the not-yet-placed lines are
 	// re-broken at the new width via FormatParagraphTail. Box-container
 	// splittables (a bordered card holding block children) are not stamped
 	// and keep their built width.
 	splitTe, _ := blockVL.Attributes["_splittableTe"].(*frontend.Text)
 	teWidth, _ := blockVL.Attributes["_splittableTeWidth"].(bag.ScaledPoint)
-	curContentWidth := pd.ContentWidth
+	curContentWidth := fc.cur.width
 	// A block container carries its source Text and offered width instead:
 	// children a page break parts from the float they were set beside are
 	// rebuilt from the items (see rebuildContainerRemainder).
@@ -2008,10 +1994,10 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 	// nil when reflow is not possible (no source Text, degenerate paragraph,
 	// reproduction failed) — the caller then keeps the old-width lines.
 	reflowRemainder := func(i int, force bool) []node.Node {
-		if splitTe == nil || (pd.ContentWidth == curContentWidth && !force) {
+		if splitTe == nil || (fc.cur.width == curContentWidth && !force) {
 			return nil
 		}
-		newTeWidth := teWidth + (pd.ContentWidth - curContentWidth)
+		newTeWidth := teWidth + (fc.cur.width - curContentWidth)
 		if newTeWidth <= 0 {
 			return nil
 		}
@@ -2084,7 +2070,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		history = steps
 		teWidth = newTeWidth
 		innerWidth = newTeWidth
-		curContentWidth = pd.ContentWidth
+		curContentWidth = fc.cur.width
 		placedLines = 0
 		bandRows = 0
 		return newChildren
@@ -2320,7 +2306,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 	}
 
 	availOnPage := func() bag.ScaledPoint {
-		contentArea := pd.ContentHeight
+		contentArea := fc.cur.height
 		used := cb.pageBufHeight +
 			cb.pageInsertHeight[InsertFloatTop] +
 			cb.pageInsertHeight[InsertFloatBottom] +
@@ -2416,15 +2402,12 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		}
 
 		// Orphan protection: if the first fragment of the block would leave
-		// fewer than `orphans` on the current page, force a NewPage first so
+		// fewer than `orphans` on the current page, break first so
 		// the block restarts on a fresh page with full available space. Only
 		// applies when there's something already on the page — on an empty
 		// page even a single line has to land here.
 		if isFirst && cb.pageBufHeight > 0 && countHL(batch) < fl.orphans && i < len(children) {
-			if err := cb.NewPage(); err != nil {
-				return err
-			}
-			if err := refreshPage(); err != nil {
+			if err := fc.breakTo(""); err != nil {
 				return err
 			}
 			i = 0
@@ -2508,10 +2491,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 
 		// More fragments to come: ship this page and start fresh.
 		if i < len(children) {
-			if err := cb.NewPage(); err != nil {
-				return err
-			}
-			if err := refreshPage(); err != nil {
+			if err := fc.breakTo(""); err != nil {
 				return err
 			}
 			// The fresh page may use a different content width (@page
@@ -2533,7 +2513,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 // A nil buildHeadersFn is a table without header rows. Its <tfoot> rows, if
 // any, are then placed once at the end like the other rows, as they are for
 // such tables without a row that breaks inside.
-func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y *bag.ScaledPoint, yLimit *bag.ScaledPoint, pageHasContent *bool, pd *PageDimensions) error {
+func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y *bag.ScaledPoint, yLimit *bag.ScaledPoint, pageHasContent *bool, fc *flowCursor) error {
 	noHeaders := buildHeadersFn == nil
 	buildHeaders := func() ([]*node.HList, error) { return nil, nil }
 	headerCount := 0
@@ -2545,7 +2525,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 	// curContentWidth tracks the content width the table rows were built
 	// for. A page break onto a page with a different width triggers a
 	// rebuild of the table (see below).
-	curContentWidth := pd.ContentWidth
+	curContentWidth := fc.cur.width
 
 	// Footer support: tables with <tfoot> repeat the footer at the
 	// bottom of every page they span (HTML semantics, CSS Tables 3 §11.1).
@@ -2589,21 +2569,19 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 			box.List = ft
 			box.Width = tableWidth
 			box.Height = h
-			cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, *y, box)
+			fc.cur.page.OutputAt(fc.cur.left, *y, box)
 			*y -= h
 		}
 		*pageHasContent = true
 		return nil
 	}
 
-	refreshPage := func() error {
-		var err error
-		*pd, err = cb.PageSize()
-		if err != nil {
+	breakTo := func() error {
+		if err := fc.breakTo(""); err != nil {
 			return err
 		}
-		*y = pd.Height - pd.PageAreaTop
-		*yLimit = pd.pageAreaBottom()
+		*y = fc.cur.top
+		*yLimit = fc.cur.bottom()
 		*pageHasContent = false
 		return nil
 	}
@@ -2624,7 +2602,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		// avoid rows, but only when a fresh page would actually fit the
 		// row — otherwise the loop is pointless and risks infinite breaks
 		// for rows taller than a full page.
-		pageContent := pd.ContentHeight
+		pageContent := fc.cur.height
 		effectiveLimit := *yLimit + footerHeight
 		// fitH is what must still fit on this page for row i to be placed
 		// here. For the very first row of a table with headers that is the
@@ -2687,10 +2665,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 					return err
 				}
 			}
-			if err := cb.NewPage(); err != nil {
-				return err
-			}
-			if err := refreshPage(); err != nil {
+			if err := breakTo(); err != nil {
 				return err
 			}
 
@@ -2701,10 +2676,10 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 			// deterministic and the row count is width-independent. The
 			// already-placed rows keep their old width; when the rebuild is
 			// not possible the old rows are sliced as before.
-			if pd.ContentWidth != curContentWidth {
+			if fc.cur.width != curContentWidth {
 				if te, ok := tableVL.Attributes["_tableTe"].(*frontend.Text); ok {
 					if teWd, ok := tableVL.Attributes["_tableTeWidth"].(bag.ScaledPoint); ok {
-						newWd := teWd + (pd.ContentWidth - curContentWidth)
+						newWd := teWd + (fc.cur.width - curContentWidth)
 						if newWd > 0 {
 							cb.reflowRebuild = true
 							newVL, err := cb.buildTable(te, newWd)
@@ -2744,7 +2719,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 						}
 					}
 				}
-				curContentWidth = pd.ContentWidth
+				curContentWidth = fc.cur.width
 			}
 
 			// Repeat header rows on the new page (skip if this IS a header row).
@@ -2761,7 +2736,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 					box.List = hdr
 					box.Width = tableWidth
 					box.Height = hdrH
-					cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, *y, box)
+					fc.cur.page.OutputAt(fc.cur.left, *y, box)
 					*y -= hdrH
 				}
 				*pageHasContent = true
@@ -2779,10 +2754,10 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		box.Width = tableWidth
 		box.Height = h
 
-		cb.frontend.Doc.CurrentPage.OutputAt(pd.PageAreaLeft, *y, box)
+		fc.cur.page.OutputAt(fc.cur.left, *y, box)
 		for _, idx := range anchorIndicesOn(row) {
 			if idx >= 0 && idx < len(cb.Anchors) {
-				cb.Anchors[idx].Page = len(cb.frontend.Doc.Pages)
+				cb.Anchors[idx].Page = fc.cur.pageNum
 			}
 		}
 		*y -= h
