@@ -34,8 +34,10 @@ type Region struct {
 	// break. After an automatic break the margin at a region's top is
 	// truncated (CSS Fragmentation 3 §5.2), so it is not used there.
 	MarginBefore bag.ScaledPoint
-	// Page is the page the region lies on and PageNum its 1-based number.
-	// Headings, anchors and inside/outside floats take their page from here.
+	// Page is the page the region lies on, for the caller to place
+	// Filled.Box on; FlowText paints nothing and does not read it. PageNum
+	// is the page's 1-based number: headings and anchors take their page
+	// from it, and inside/outside floats their side, odd being right.
 	Page    *document.Page
 	PageNum int
 	// Left and Top are the region's top-left corner in PDF coordinates on
