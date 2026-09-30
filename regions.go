@@ -19,7 +19,8 @@ type Regions interface {
 	// column, left, right, …).
 	Next(brk string) (Region, error)
 	// Filled hands back every region exactly once, the last one included,
-	// before the Next that follows it.
+	// before the Next that follows it. When FlowText returns an error, the
+	// region it was filling is not handed back.
 	Filled(f Filled) error
 }
 
@@ -49,11 +50,13 @@ type Filled struct {
 	// corner. Box.Height == Used.
 	Box *node.VList
 	// Used is the height from the region's top edge to the bottom edge of
-	// the last box in it.
+	// the last box in it, or of a side float that reaches further. It
+	// exceeds the region's Height when a box too tall for the empty region
+	// is placed in it anyway.
 	Used bag.ScaledPoint
-	// MarginAfter is the margin below the last box, not included in Used:
-	// the last block's margin-bottom at the end of the flow, the margin
-	// spent at the foot of the region at an automatic break.
+	// MarginAfter is the margin below the last box, as far as it reaches
+	// below Used: the last block's margin-bottom at the end of the flow,
+	// the margin spent at the foot of the region at an automatic break.
 	MarginAfter bag.ScaledPoint
 }
 
@@ -288,8 +291,10 @@ type regionSink struct {
 
 type sinkEntry struct {
 	off, height bag.ScaledPoint
-	box         *node.VList
-	margin      bool
+	// floats is how far below off the side floats in box paint.
+	floats bag.ScaledPoint
+	box    *node.VList
+	margin bool
 }
 
 func (s *regionSink) empty() bool { return len(s.entries) == 0 }
@@ -301,11 +306,32 @@ func (s *regionSink) add(off bag.ScaledPoint, box *node.VList, h bag.ScaledPoint
 	}
 	_, margin := marginKern(box.List)
 	margin = margin && box.List.Next() == nil
-	s.entries = append(s.entries, sinkEntry{off: off, height: h, box: box, margin: margin})
+	s.entries = append(s.entries, sinkEntry{off: off, height: h, floats: floatsBottom(box), box: box, margin: margin})
+}
+
+// floatsBottom is how far below the top of n the side floats in it paint: a
+// float box reports no height of its own.
+func floatsBottom(n node.Node) bag.ScaledPoint {
+	if fh, ok := floatBoxHeight(n); ok {
+		return fh
+	}
+	vl, ok := n.(*node.VList)
+	if !ok {
+		return 0
+	}
+	var y, bottom bag.ScaledPoint
+	for c := vl.List; c != nil; c = c.Next() {
+		if b := floatsBottom(c); b > 0 {
+			bottom = max(bottom, y+b)
+		}
+		y += vlistNodeHeight(c)
+	}
+	return bottom
 }
 
 // filled assembles the boxes into the region's Box. Margins below the last
 // box are left out and reported as MarginAfter, collapsed with flowMargin.
+// A side float that paints below the last box extends Used to its bottom.
 func (s *regionSink) filled(width, flowMargin bag.ScaledPoint) Filled {
 	n := len(s.entries)
 	var trailing bag.ScaledPoint
@@ -315,7 +341,7 @@ func (s *regionSink) filled(width, flowMargin bag.ScaledPoint) Filled {
 	}
 	box := node.NewVList()
 	box.Width = width
-	var cursor bag.ScaledPoint
+	var cursor, floats bag.ScaledPoint
 	var tail node.Node
 	appendNode := func(nd node.Node) {
 		if tail == nil {
@@ -336,11 +362,24 @@ func (s *regionSink) filled(width, flowMargin bag.ScaledPoint) Filled {
 		e.box.SetNext(nil)
 		appendNode(e.box)
 		cursor = e.off + e.height
+		floats = max(floats, e.off+e.floats)
+	}
+	margin := max(trailing, flowMargin)
+	if floats > cursor {
+		k := node.NewKern()
+		k.Kern = floats - cursor
+		appendNode(k)
+		margin = max(0, margin-k.Kern)
+		cursor = floats
 	}
 	box.Height = cursor
 	s.entries = nil
-	return Filled{Box: box, Used: cursor, MarginAfter: max(trailing, flowMargin)}
+	return Filled{Box: box, Used: cursor, MarginAfter: margin}
 }
+
+// attrMarginTop is the margin-top of the block after a collapsed-margin kern
+// between two siblings.
+const attrMarginTop = "_marginTop"
 
 // marginKern returns n as a collapsed-margin kern.
 func marginKern(n node.Node) (*node.Kern, bool) {
@@ -430,12 +469,17 @@ func (fc *flowCursor) marginBefore(cb *CSSBuilder, cur node.Node) node.Node {
 		return cur
 	}
 	fc.top = topPlaced
-	m := fc.cur.marginBefore
-	if m <= 0 {
+	m := max(fc.cur.marginBefore, 0)
+	if k, ok := marginKern(cur); ok {
+		// Of a margin collapsed across a forced break-after, only the
+		// margin-top after the break is kept.
+		if mt, ok := k.Attributes[attrMarginTop].(bag.ScaledPoint); ok {
+			k.Kern = mt
+		}
+		k.Kern = max(k.Kern, m)
 		return cur
 	}
-	if k, ok := marginKern(cur); ok {
-		k.Kern = max(k.Kern, m)
+	if m == 0 {
 		return cur
 	}
 	k := node.NewKern()

@@ -353,7 +353,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				if marginGlue > 0 {
 					k := node.NewKern()
 					k.Kern = marginGlue
-					k.Attributes = node.H{"origin": "margin"}
+					k.Attributes = node.H{"origin": "margin", attrMarginTop: curMarginTop}
 					vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
 					vls.Height += marginGlue
 				}

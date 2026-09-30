@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -299,6 +300,10 @@ func TestFlowTextMarginBefore(t *testing.T) {
 			[]Region{wide("1000pt")}, 2, "5pt"},
 		{"break-after", `<p style="break-after: column">` + charLines("A", 3) + `</p><p style="margin-top: 5pt">` + charLines("B", 2) + `</p>`,
 			[]Region{wide("1000pt"), withBefore(wide("1000pt"), "3pt")}, 2, "5pt"},
+		{"break-after, margin-bottom before it", `<p style="break-after: column; margin-bottom: 9pt">` + charLines("A", 3) + `</p><p style="margin-top: 5pt">` + charLines("B", 2) + `</p>`,
+			[]Region{wide("1000pt"), withBefore(wide("1000pt"), "3pt")}, 2, "5pt"},
+		{"automatic break inside a split list", `<p>Zq</p><ul style="margin: 0; padding: 0; background: yellow; orphans: 1; widows: 1"><li>` + charLines("A", 3) + `</li><li style="margin-top: 5pt">` + charLines("B", 2) + `</li></ul>`,
+			[]Region{wide("52pt"), wide("1000pt")}, 2, "0pt"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -423,5 +428,52 @@ func TestFlowTextKeepsSideFloats(t *testing.T) {
 	}
 	if !found {
 		t.Error("the side float is not in the region")
+	}
+}
+
+// A side float that reaches below the last line of a region is part of what
+// the region holds.
+func TestFlowTextUsedCoversASideFloat(t *testing.T) {
+	cb, _ := newFlowBuilder(t, "")
+	body := `<div style="float: left; width: 80pt; height: 50pt">Fq</div><p>` + strings.Repeat("alpha beta ", 4) + `</p>` +
+		`<table><tr><td>` + charLines("T", 3) + `</td></tr></table>`
+	tr := flow(t, cb, body, wide("60pt"), wide("1000pt"))
+	if len(tr.filled) != 2 {
+		t.Fatalf("filled %d regions, want 2", len(tr.filled))
+	}
+	if f := tr.filled[0]; f.Used != sp("50pt") || f.Box.Height != f.Used {
+		t.Errorf("region 1: Used %s, Box.Height %s, want the float's bottom 50pt", f.Used, f.Box.Height)
+	}
+}
+
+type failingRegions struct {
+	testRegions
+	failAt int
+}
+
+func (fr *failingRegions) Next(brk string) (Region, error) {
+	if len(fr.brks)+1 == fr.failAt {
+		return Region{}, errors.New("no more regions")
+	}
+	return fr.testRegions.Next(brk)
+}
+
+// A Next that fails midway ends the flow with its error, after the regions
+// before it were handed back, and leaves nothing behind.
+func TestFlowTextNextFails(t *testing.T) {
+	cb, _ := newFlowBuilder(t, `p { widows: 3 }`)
+	te, err := cb.HTMLToText(`<html><body><p>` + charLines("A", 20) + `</p></body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr := &failingRegions{testRegions: testRegions{sizes: []Region{wide("48pt")}}, failAt: 3}
+	if err := cb.FlowText(te, fr); err == nil || err.Error() != "no more regions" {
+		t.Fatalf("FlowText returned %v, want the error from Next", err)
+	}
+	if want := "next filled next filled"; strings.Join(fr.order, " ") != want {
+		t.Errorf("calls %q, want %q", strings.Join(fr.order, " "), want)
+	}
+	if cb.fragLines != nil || len(cb.pageBuf) > 0 || cb.pageBufHeight != 0 {
+		t.Errorf("left %d page entries (%s) and widows/orphans %v", len(cb.pageBuf), cb.pageBufHeight, cb.fragLines)
 	}
 }
