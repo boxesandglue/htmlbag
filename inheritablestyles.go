@@ -568,6 +568,19 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			ih.pageBreakBefore = v
 		case "page-break-inside", "break-inside":
 			ih.pageBreakInside = v
+		case "widows", "orphans":
+			n := 0
+			if lv := strings.TrimSpace(v); lv != "initial" {
+				var err error
+				if n, err = strconv.Atoi(lv); err != nil || n < 1 {
+					break
+				}
+			}
+			if k == "widows" {
+				ih.widows = n
+			} else {
+				ih.orphans = n
+			}
 		case "-bag-bookmark":
 			// boxesandglue-specific PDF outline control. Grammar:
 			// `none | [<integer>] [open|closed]`. Read in vlistbuilder.
@@ -938,6 +951,8 @@ type FormattingStyles struct {
 	pageBreakAfter  string
 	pageBreakBefore string
 	pageBreakInside string
+	widows          int    // 0 = initial (2)
+	orphans         int    // 0 = initial (2)
 	bookmark        string // -bag-bookmark raw value (non-inherited; "" = unset)
 	yoffset         bag.ScaledPoint
 	// relativeYOffset is the sum of the top/bottom offsets of the
@@ -953,6 +968,18 @@ type FormattingStyles struct {
 	bottomOffset *bag.ScaledPoint
 	leftOffset   *bag.ScaledPoint
 	zIndex       *int // nil = auto; *0 = explicit zero
+}
+
+// fragLines resolves the widows and orphans, which default to 2.
+func (is *FormattingStyles) fragLines() fragLines {
+	fl := defaultFragLines
+	if is.widows > 0 {
+		fl.widows = is.widows
+	}
+	if is.orphans > 0 {
+		fl.orphans = is.orphans
+	}
+	return fl
 }
 
 // IsPositioned reports whether the element participates in CSS positioning
@@ -1083,6 +1110,8 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		// StylesToStyles).
 		yoffset:         is.yoffset,
 		relativeYOffset: is.relativeYOffset,
+		widows:          is.widows,
+		orphans:         is.orphans,
 	}
 	return newis
 }
@@ -1639,6 +1668,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	if styles.declaredLang != "" {
 		newte.Settings[settingLangTag] = styles.declaredLang
 	}
+	cb.setFragLines(newte, styles.fragLines())
 	// Remember the element's own resolved CSS height: `styles` is
 	// reassigned when an inline run starts below, but the empty-block
 	// check at the end of this function needs the element's value.
@@ -2028,6 +2058,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			if te == nil {
 				te = frontend.NewText()
 				styles = ss.PushStyles()
+				cb.setFragLines(te, styles.fragLines())
 				// A pending block-level ::before joins the first inline
 				// run so the generated text shares its line box.
 				if beforeRun != nil {

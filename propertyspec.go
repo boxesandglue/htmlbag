@@ -119,6 +119,8 @@ var Properties = []PropertySpec{
 	{Name: "page-break-before", Aliases: []string{"break-before"}, Values: "`auto`, `always`, `avoid`; `break-before` also takes `page`, `left`, `right`, `recto`, `verso`", Example: "page-break-before: always;", Note: "The page side variants break the page but do not pick a side", Group: GroupLayout},
 	{Name: "page-break-after", Aliases: []string{"break-after"}, Values: "Same values as `page-break-before`", Example: "page-break-after: avoid;", Group: GroupLayout},
 	{Name: "page-break-inside", Aliases: []string{"break-inside"}, Values: "`auto`, `avoid`", Example: "page-break-inside: avoid;", Note: "On a table row, `auto` lets the row break across pages; a row without the property stays whole, as with `avoid`", Group: GroupLayout},
+	{Name: "widows", Values: "Positive integer, the default is 2; `1` switches the control off", Example: "widows: 3;", Note: "Counts the lines of a paragraph or `<pre>`, and the child blocks of a container such as a list or a bordered box", Group: GroupLayout},
+	{Name: "orphans", Values: "Positive integer, the default is 2; `1` switches the control off", Example: "orphans: 3;", Note: "Counts as `widows` does", Group: GroupLayout},
 
 	// Lists and generated content
 	{Name: "list-style-type", Values: "`disc`, `circle`, `square`, `none`, `decimal`, `decimal-leading-zero`, `lower-alpha`, `upper-alpha`, `lower-latin`, `upper-latin`, `lower-roman`, `upper-roman`, `lower-greek`", Example: "list-style-type: lower-roman;", Group: GroupGenerated},

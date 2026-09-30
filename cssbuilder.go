@@ -21,12 +21,46 @@ import (
 
 var onecm = bag.MustSP("1cm")
 
-// splitMinLines is the number of content children (HList lines or VList
-// blocks) a fragmented block must leave on a page. CSS Fragmentation 3 §4
-// puts both the widows and the orphans default at 2. outputBlockSplit
-// enforces it, and splittablePeekHeight must predict it — the two would
-// otherwise disagree about whether a block can start on the current page.
-const splitMinLines = 2
+// fragLines holds the CSS widows and orphans of a block: the number of
+// content children (HList lines or VList blocks) a fragment must carry at the
+// top of a page and leave at the bottom of one. outputBlockSplit enforces
+// them, and splittablePeekHeight must predict them — the two would otherwise
+// disagree about whether a block can start on the current page.
+type fragLines struct{ widows, orphans int }
+
+// defaultFragLines is the initial value of both properties (CSS
+// Fragmentation 3 §4.3).
+var defaultFragLines = fragLines{widows: 2, orphans: 2}
+
+const attrFragLines = "_fragLines"
+
+// setFragLines records the widows and orphans of an element's block Text
+// when they differ from the initial value.
+func (cb *CSSBuilder) setFragLines(te *frontend.Text, fl fragLines) {
+	if cb == nil || fl == defaultFragLines {
+		return
+	}
+	if cb.fragLines == nil {
+		cb.fragLines = map[*frontend.Text]fragLines{}
+	}
+	cb.fragLines[te] = fl
+}
+
+// stampFragLines puts the widows and orphans of te on the splittable node
+// built from it.
+func (cb *CSSBuilder) stampFragLines(attrs node.H, te *frontend.Text) {
+	if fl, ok := cb.fragLines[te]; ok {
+		attrs[attrFragLines] = fl
+	}
+}
+
+// fragLinesOf returns the widows and orphans of a splittable block.
+func fragLinesOf(vl *node.VList) fragLines {
+	if fl, ok := vl.Attributes[attrFragLines].(fragLines); ok {
+		return fl
+	}
+	return defaultFragLines
+}
 
 // HeadingEntry records a heading (h1–h6) or a bookmarked element found
 // during VList construction. Page and Y are filled later during OutputPages
@@ -254,6 +288,10 @@ type CSSBuilder struct {
 	// same footer can repeat on every page. When the same name is
 	// captured more than once, the first occurrence wins (GCPM `first`).
 	runningElements map[string]*frontend.Text
+	// fragLines holds widows and orphans off the Settings: they inherit to
+	// every block, and a private setting would have to be stripped on each
+	// path that hands a Text to FormatParagraph (cells, footnotes, floats).
+	fragLines map[*frontend.Text]fragLines
 	// FootnoteSeparatorHeight overrides the default footnote rule thickness.
 	// Zero falls back to the package default (0.4pt).
 	FootnoteSeparatorHeight bag.ScaledPoint
@@ -1122,6 +1160,10 @@ func (cb *CSSBuilder) appendOutline() {
 // (see reflowRebuild). Groups whose pages share one content width — the
 // common case — never restart and take the unchanged fast path.
 func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
+	// Page-width rebuilds reuse the item Texts, so the map is needed until
+	// the last group is placed and no longer.
+	defer func() { cb.fragLines = nil }()
+
 	// Find the body-level Text element (unwrap html > body wrappers).
 	body := findBody(te)
 
@@ -2294,6 +2336,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		return s
 	}
 
+	fl := fragLinesOf(blockVL)
 	i := 0
 	isFirst := true
 	for i < len(children) {
@@ -2361,7 +2404,6 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		// reports zero "lines", so the orphan branch below fires on every
 		// page and shunts the whole card forward — orphaning a preceding
 		// page-break-after:avoid heading (it stays put while its card jumps).
-		// CSS Fragmentation 3 §4 spec defaults are widows: 2 and orphans: 2.
 		// A float box is neither: it paints beside the content.
 		countHL := func(items []node.Node) int {
 			n := 0
@@ -2374,11 +2416,11 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		}
 
 		// Orphan protection: if the first fragment of the block would leave
-		// fewer than splitMinLines on the current page, force a NewPage first so
+		// fewer than `orphans` on the current page, force a NewPage first so
 		// the block restarts on a fresh page with full available space. Only
 		// applies when there's something already on the page — on an empty
 		// page even a single line has to land here.
-		if isFirst && cb.pageBufHeight > 0 && countHL(batch) < splitMinLines && i < len(children) {
+		if isFirst && cb.pageBufHeight > 0 && countHL(batch) < fl.orphans && i < len(children) {
 			if err := cb.NewPage(); err != nil {
 				return err
 			}
@@ -2395,9 +2437,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 			continue
 		}
 
-		// Widow protection: the next page must carry at least splitMinLines
+		// Widow protection: the next page must carry at least `widows`
 		// content children; otherwise pull items back from this batch until
-		// it does, while leaving at least splitMinLines in the current batch
+		// it does, while leaving at least `orphans` in the current batch
 		// (don't trade a widow for an orphan). A pulled-back VList counts
 		// like an HList — the same HList/VList duality as in countHL: only
 		// counting HLists never advances remainingLines for a box container
@@ -2405,7 +2447,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, pd *PageDimensions, 
 		// the batch down to the orphan minimum and leave the page half empty.
 		if i < len(children) {
 			remainingLines := countHL(children[i:])
-			for remainingLines < splitMinLines && countHL(batch) > splitMinLines {
+			for remainingLines < fl.widows && countHL(batch) > fl.orphans {
 				last := batch[len(batch)-1]
 				batchH -= vlistNodeHeight(last)
 				batch = batch[:len(batch)-1]
@@ -2946,7 +2988,8 @@ func splittablePeekHeight(n node.Node) (bag.ScaledPoint, bool) {
 		return 0, false
 	}
 	hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
-	// Reserve room for splitMinLines content children (HList lines or
+	orphans := fragLinesOf(vl).orphans
+	// Reserve room for `orphans` content children (HList lines or
 	// VList blocks), not just the first one: outputBlockSplit refuses to
 	// start a block that would leave fewer than that on the current page
 	// and bumps the whole block to the next page instead. Promising the
@@ -2962,7 +3005,7 @@ func splittablePeekHeight(n node.Node) (bag.ScaledPoint, bool) {
 		switch c.(type) {
 		case *node.HList, *node.VList:
 			seen++
-			if seen >= splitMinLines {
+			if seen >= orphans {
 				return peek, true
 			}
 		}

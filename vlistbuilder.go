@@ -746,6 +746,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					stampItemIndices(te, vls, containerItemIdxKey)
 					vls.Attributes["_splittableContainerTe"] = te
 					vls.Attributes["_splittableContainerWd"] = wd
+					cb.stampFragLines(vls.Attributes, te)
 				}
 			}
 		}
@@ -779,6 +780,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				vls.Attributes["_splittableInnerWidth"] = splittableInnerWidth
 				vls.Attributes["_splittableContainerTe"] = te
 				vls.Attributes["_splittableContainerWd"] = wd
+				cb.stampFragLines(vls.Attributes, te)
 			}
 		}
 
@@ -1012,6 +1014,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			// break switches to a page with a different content width.
 			vl.Attributes["_splittableTe"] = te
 			vl.Attributes["_splittableTeWidth"] = contentWidth
+			cb.stampFragLines(vl.Attributes, te)
 			if bandIndent.rows > 0 {
 				vl.Attributes[attrFloatBandIndent] = bandIndent
 			}
@@ -1055,6 +1058,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			// in outputBlockSplit (see the bordered branch above).
 			vl.Attributes["_splittableTe"] = te
 			vl.Attributes["_splittableTeWidth"] = contentWidth
+			cb.stampFragLines(vl.Attributes, te)
 			if bandIndent.rows > 0 {
 				vl.Attributes[attrFloatBandIndent] = bandIndent
 			}
