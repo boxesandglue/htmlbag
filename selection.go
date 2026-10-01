@@ -371,6 +371,7 @@ func cloneNode(n *html.Node) *html.Node {
 // previous-pass id → page map used to resolve CSS target-counter().
 // Pass nil for anchorPages on a clean first pass.
 func HTMLNodeToText(cb *CSSBuilder, n *html.Node, ss StylesStack, df *frontend.Document, anchorPages map[string]int) (*frontend.Text, error) {
+	cb.textRunning = map[string]bool{}
 	h := &HTMLItem{Dir: ModeVertical}
 	cb.css.GetHTMLItemFromHTMLNode(n, ModeVertical, h)
 	return Output(cb, h, ss, df, anchorPages)

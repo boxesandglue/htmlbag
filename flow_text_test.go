@@ -13,6 +13,7 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"golang.org/x/net/html"
 )
 
 // testRegions hands out regions of the given sizes, the last one as often
@@ -651,5 +652,30 @@ func TestFlowTextKeepsEarlierRunningElements(t *testing.T) {
 	}
 	if _, ok := cb.runningElements["foot"]; ok {
 		t.Error("FlowText kept the running element of its own Text")
+	}
+}
+
+// A Text built by ParseHTMLFromNode, the path XTS takes, drops its running
+// elements in FlowText as HTMLToText's does.
+func TestFlowTextParseHTMLFromNodeRunning(t *testing.T) {
+	var buf bytes.Buffer
+	old := bag.Logger
+	bag.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	defer func() { bag.Logger = old }()
+
+	cb, _ := newFlowBuilder(t, `.foot { position: running(foot) }`)
+	doc, err := html.Parse(strings.NewReader(`<html><body><p>Aq</p><div class="foot">Fq</div></body></html>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	te, err := cb.ParseHTMLFromNode(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.FlowText(te, &testRegions{sizes: []Region{wide("1000pt")}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "does not support running elements") || len(cb.runningElements) > 0 {
+		t.Errorf("warning logged: %v, running elements left: %d", strings.Contains(buf.String(), "does not support running elements"), len(cb.runningElements))
 	}
 }
