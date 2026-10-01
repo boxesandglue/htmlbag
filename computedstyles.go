@@ -212,6 +212,16 @@ func borderShorthand(toks tokenstream) (width, style, color StyleValue) {
 	return width, style, color
 }
 
+// hasKeyword reports whether one of the component values of toks is kw.
+func hasKeyword(toks tokenstream, kw string) bool {
+	for _, part := range componentValues(toks) {
+		if part.String() == kw {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveDeclarations turns the cascaded declarations of one element into the
 // computed style map, expanding every shorthand into its longhands. This
 // replaces the former attribute round trip: the declarations arrive as tokens
@@ -293,10 +303,13 @@ func resolveDeclarations(decls []declaration) StyleMap {
 			set("font-style", textValue("normal"))
 			set("font-weight", textValue("normal"))
 			set("line-height", textValue("normal"))
+			set("font-variant-caps", textValue("normal"))
 			for _, part := range parts[:sizeIdx] {
 				switch txt := part.String(); txt {
 				case "italic", "oblique":
 					set("font-style", part)
+				case "small-caps":
+					set("font-variant-caps", part)
 				case "bold", "bolder", "lighter":
 					set("font-weight", part)
 				default:
@@ -315,6 +328,21 @@ func resolveDeclarations(decls []declaration) StyleMap {
 				family = append(family, part.String())
 			}
 			set("font-family", textValue(strings.Join(family, " ")))
+		case "font-variant":
+			// Only the caps longhand is read; expanding here keeps a later
+			// font-variant-caps or font shorthand in the same rule in order.
+			caps := "normal"
+			if hasKeyword(decl.value, "small-caps") {
+				caps = "small-caps"
+			}
+			set("font-variant-caps", textValue(caps))
+		case "font-synthesis":
+			set(key, value)
+			synth := "none"
+			if hasKeyword(decl.value, "small-caps") {
+				synth = "auto"
+			}
+			set("font-synthesis-small-caps", textValue(synth))
 		case "text-decoration":
 			for _, part := range componentValues(decl.value) {
 				switch part.String() {

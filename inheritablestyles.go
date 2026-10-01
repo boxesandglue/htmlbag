@@ -686,11 +686,10 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			ih.synthesizeItalic = strings.TrimSpace(v) == "auto"
 		case "font-synthesis":
 			ih.synthesizeItalic = slices.Contains(strings.Fields(v), "style")
-			ih.smallCapsNoSynth = !slices.Contains(strings.Fields(v), "small-caps")
 		case "font-synthesis-small-caps":
 			ih.smallCapsNoSynth = strings.TrimSpace(v) == "none"
-		case "font-variant", "font-variant-caps":
-			ih.smallCaps = slices.Contains(strings.Fields(v), "small-caps")
+		case "font-variant-caps":
+			ih.smallCaps = strings.TrimSpace(v) == "small-caps"
 		case "initial-letter":
 			// CSS Inline Layout 3 dropcaps. v1 reads the size (number of
 			// lines the initial spans); the optional sink argument and
