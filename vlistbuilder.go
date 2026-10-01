@@ -703,6 +703,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				vls.Width = wd
 			}
 		}
+		// An explicit width is the box's width (CSS 2.1 §10.3.3), not the
+		// widest child: a child's margins do not count there, so an indented
+		// child left the box that much narrower than it was declared.
+		if _, ok := settings[frontend.SettingWidth]; ok && !hasBorderOrBg {
+			vls.Width = wd
+		}
 
 		// CSS padding-top/bottom on a box without border/background:
 		// HTMLBorder does not run, so reserve the vertical padding as
