@@ -1555,10 +1555,18 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 				break
 			}
 		}
-		// A box shifted by its margin-left keeps the shift only on a VList
-		// placed as a child; its bare lines would start at the left edge.
+		// The box's shift (margin-left) is dropped with it, so it moves onto
+		// its children; each placed node is wrapped in a fresh box, where a
+		// child's ShiftX takes effect.
 		if inner.ShiftX != 0 {
-			break
+			for n := inner.List; n != nil; n = n.Next() {
+				switch c := n.(type) {
+				case *node.VList:
+					c.ShiftX += inner.ShiftX
+				case *node.HList:
+					c.ShiftX += inner.ShiftX
+				}
+			}
 		}
 		propagateInsertsAttr(inner, inner.List)
 		propagateAnchorIndices(inner, inner.List)
