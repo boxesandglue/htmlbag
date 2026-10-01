@@ -462,12 +462,14 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					}
 					// CSS padding-left on the container shifts every
 					// child to the right. margin-left on the child
-					// itself stacks on top of that.
+					// itself stacks on top of that. A negative margin
+					// moves the child left past the content edge (CSS 2.1
+					// §8.3), as the width it added above assumes.
 					shift := childMarginLeft
 					if !hasBorderOrBg {
 						shift += paddingLeft
 					}
-					if shift > 0 {
+					if shift != 0 {
 						vl.ShiftX += shift
 					}
 					// CSS position: relative offsets — htmlbag's
