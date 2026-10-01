@@ -2508,6 +2508,19 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 					remainingLines++
 				}
 			}
+			// Both cannot be kept, so there is no break inside the block
+			// here: it moves on whole, as it would between blocks, unless
+			// the page holds nothing else.
+			if remainingLines < fl.widows && isFirst && cb.pageBufHeight > 0 {
+				if err := fc.breakTo("", blockVL); err != nil {
+					return err
+				}
+				i = 0
+				if nc := rebuildRemainder(0); nc != nil {
+					children = nc
+				}
+				continue
+			}
 		}
 
 		// A float at the end of the batch would be parted from the child
