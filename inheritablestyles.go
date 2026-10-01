@@ -2307,7 +2307,11 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue Styl
 		}
 		txt := frontend.NewText()
 		cb.applySettings(txt.Settings, sty)
-		txt.Items = append(txt.Items, s)
+		if sty.smallCaps {
+			txt.Items = append(txt.Items, cb.smallCapsItems(cb.frontend, sty, s)...)
+		} else {
+			txt.Items = append(txt.Items, s)
+		}
 		te.Items = append(te.Items, txt)
 	}
 	var buf strings.Builder

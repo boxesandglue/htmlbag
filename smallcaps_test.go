@@ -92,6 +92,10 @@ func TestSmallCaps(t *testing.T) {
 			[]string{"K@10", "İŞİ@7"}},
 		{"Greek accents", `p{font-family:monospace;font-size:10pt;font-variant:small-caps}`, `<span lang="el">ἀρχή</span>`,
 			[]string{"ΑΡΧΗ@7"}},
+		{"generated content", `p{font-family:monospace;font-size:10pt;font-variant:small-caps} p::before{content:"pre "} p::after{content:" Post"}`, "X",
+			[]string{"PRE@7", " @10", "X@10", " P@10", "OST@7"}},
+		{"generated content, inline", `p{font-family:monospace;font-size:10pt;font-variant:small-caps} span::before{content:"in"}`, "<span>X</span>",
+			[]string{"IN@7", "X@10"}},
 		{"only capitals", `p{font-family:monospace;font-size:10pt;font-variant:small-caps}`, "AB 12",
 			[]string{"AB 12@10"}},
 	} {
