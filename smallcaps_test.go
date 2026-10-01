@@ -86,6 +86,12 @@ func TestSmallCaps(t *testing.T) {
 			[]string{"A@7"}},
 		{"font-synthesis without small-caps", `p{font-family:monospace;font-size:10pt;font-variant:small-caps;font-synthesis-small-caps:auto;font-synthesis:none}`, "a",
 			[]string{"a@10"}},
+		{"sharp s", `p{font-family:monospace;font-size:10pt;font-variant:small-caps}`, `<span lang="de">Straße</span>`,
+			[]string{"S@10", "TRASSE@7"}},
+		{"Turkish i", `p{font-family:monospace;font-size:10pt;font-variant:small-caps}`, `<span lang="tr">Kişi</span>`,
+			[]string{"K@10", "İŞİ@7"}},
+		{"Greek accents", `p{font-family:monospace;font-size:10pt;font-variant:small-caps}`, `<span lang="el">ἀρχή</span>`,
+			[]string{"ΑΡΧΗ@7"}},
 		{"only capitals", `p{font-family:monospace;font-size:10pt;font-variant:small-caps}`, "AB 12",
 			[]string{"AB 12@10"}},
 	} {

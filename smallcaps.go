@@ -1,12 +1,12 @@
 package htmlbag
 
 import (
-	"strings"
-	"unicode"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/textshape/ot"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // smallCapsScale is the size of a synthesised small capital as a fraction of
@@ -45,7 +45,8 @@ func (cb *CSSBuilder) faceHasSmcp(df *frontend.Document, sty *FormattingStyles) 
 
 // smallCapsItems is text s in small capitals (CSS Fonts 4 §6.4): the face's
 // own through smcp when it has them, else synthesised, each lowercase letter
-// as its capital at a reduced size.
+// as its capital at a reduced size. The capitals follow the full, language
+// sensitive case mapping, so ß becomes SS and a Turkish i becomes İ.
 func (cb *CSSBuilder) smallCapsItems(df *frontend.Document, sty *FormattingStyles, s string) []any {
 	if cb.faceHasSmcp(df, sty) {
 		t := frontend.NewText()
@@ -57,7 +58,8 @@ func (cb *CSSBuilder) smallCapsItems(df *frontend.Document, sty *FormattingStyle
 		return []any{s}
 	}
 	small := bag.ScaledPoint(float64(sty.Fontsize) * smallCapsScale)
-	shrinks := func(r rune) bool { return unicode.ToUpper(r) != r }
+	upper := cases.Upper(language.Make(sty.language))
+	shrinks := func(r rune) bool { return upper.String(string(r)) != string(r) }
 	type piece struct {
 		s     string
 		small bool
@@ -87,7 +89,7 @@ func (cb *CSSBuilder) smallCapsItems(df *frontend.Document, sty *FormattingStyle
 		}
 		if p.small {
 			t.Settings[frontend.SettingSize] = small
-			p.s = strings.ToUpper(p.s)
+			p.s = upper.String(p.s)
 		}
 		t.Items = []any{p.s}
 		out[i] = t
