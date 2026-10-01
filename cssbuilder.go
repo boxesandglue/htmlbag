@@ -1555,6 +1555,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 				break
 			}
 		}
+		// A box shifted by its margin-left keeps the shift only on a VList
+		// placed as a child; its bare lines would start at the left edge.
+		if inner.ShiftX != 0 {
+			break
+		}
 		propagateInsertsAttr(inner, inner.List)
 		propagateAnchorIndices(inner, inner.List)
 		contentList = inner.List
