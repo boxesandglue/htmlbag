@@ -233,3 +233,32 @@ func TestPageBackgroundPageCascade(t *testing.T) {
 		t.Errorf("explicit -bag-background-page = %q, want 1 (pseudo wins)", got)
 	}
 }
+
+// A page background image that cannot be loaded is reported through
+// bag.Logger, so a caller that set its own logger with bag.SetLogger sees it.
+func TestPageBackgroundImageWarnsThroughBagLogger(t *testing.T) {
+	buf, restore := captureLog()
+	defer restore()
+	fe, err := frontend.NewForWriter(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("frontend.NewForWriter: %v", err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatalf("LoadIncludedFonts: %v", err)
+	}
+	cb, err := New(fe, NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatalf("htmlbag.New: %v", err)
+	}
+	missing := filepath.Join(t.TempDir(), "missing.png")
+	cb.css.FileFinder = func(string) (string, error) { return missing, nil }
+	if err := cb.AddCSS(`@page { size: 200pt 200pt; background-image: url(missing.png); }`); err != nil {
+		t.Fatalf("AddCSS: %v", err)
+	}
+	if err := cb.InitPage(); err != nil {
+		t.Fatalf("InitPage: %v", err)
+	}
+	if !strings.Contains(buf.String(), "page background-image could not be loaded") {
+		t.Errorf("bag.Logger got %q, want the background-image warning", buf.String())
+	}
+}

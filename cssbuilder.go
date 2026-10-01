@@ -2,7 +2,6 @@ package htmlbag
 
 import (
 	"fmt"
-	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -839,7 +838,7 @@ func (cb *CSSBuilder) drawPageBackgroundImage(res StyleMap, wd, ht bag.ScaledPoi
 	}
 	imgf, err := cb.frontend.Doc.LoadImageFileWithBox(filename, "/MediaBox", pageno)
 	if err != nil {
-		slog.Warn("page background-image could not be loaded", "filename", filename, "page", pageno, "error", err)
+		bag.Logger.Warn("page background-image could not be loaded", "filename", filename, "page", pageno, "error", err)
 		return nil
 	}
 	imgNode := cb.frontend.Doc.CreateImageNodeFromImagefile(imgf, pageno, "/MediaBox")
@@ -2107,7 +2106,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			splitTe.Settings[settingLangTag] = lt
 		}
 		if err != nil || tailVL == nil {
-			slog.Debug("width reflow of splittable block failed, keeping built width", "error", err)
+			bag.Logger.Debug("width reflow of splittable block failed, keeping built width", "error", err)
 			return nil
 		}
 
@@ -2209,7 +2208,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		vl, err := cb.CreateVlist(wrapper, containerWd)
 		cb.reflowRebuild = false
 		if err != nil || vl == nil {
-			slog.Debug("rebuild of split container failed, keeping built children", "error", err)
+			bag.Logger.Debug("rebuild of split container failed, keeping built children", "error", err)
 			return nil
 		}
 		var rebuilt []node.Node
@@ -2789,10 +2788,10 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 									row = rows[i]
 									h = vlistNodeHeight(row)
 								} else {
-									slog.Debug("width reflow of split table failed: row count mismatch", "old", len(rows), "new", len(newRows))
+									bag.Logger.Debug("width reflow of split table failed: row count mismatch", "old", len(rows), "new", len(newRows))
 								}
 							} else if err != nil {
-								slog.Debug("width reflow of split table failed", "error", err)
+								bag.Logger.Debug("width reflow of split table failed", "error", err)
 							}
 						}
 					}
@@ -3256,7 +3255,7 @@ type pageMarginBox struct {
 // ReadCSSFile reads the given file name and tries to parse the CSS contents
 // from the file.
 func (cb *CSSBuilder) ReadCSSFile(filename string) error {
-	slog.Debug("Read file", "filename", filename)
+	bag.Logger.Debug("Read file", "filename", filename)
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err

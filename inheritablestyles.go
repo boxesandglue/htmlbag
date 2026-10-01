@@ -2,7 +2,6 @@ package htmlbag
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -802,7 +801,7 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 				ih.fontexpansion = &fe
 			}
 		default:
-			slog.Debug("unresolved attribute", k, v)
+			bag.Logger.Debug("unresolved attribute", k, v)
 		}
 	}
 
