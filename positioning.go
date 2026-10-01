@@ -70,8 +70,12 @@ func (cb *CSSBuilder) captureRunningElement(name string, item *HTMLItem, ss Styl
 	if err != nil {
 		return err
 	}
-	if _, ok := cb.runningElements[name]; !ok {
+	_, had := cb.runningElements[name]
+	if !had {
 		cb.runningElements[name] = body
+	}
+	if cb.textRunning != nil {
+		cb.textRunning[name] = cb.textRunning[name] || !had
 	}
 	return nil
 }
