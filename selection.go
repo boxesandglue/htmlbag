@@ -42,15 +42,18 @@ const (
 	ModeVertical
 )
 
-// whiteSpaceStack tracks the CSS white-space value in force, so a text node
-// knows whether its whitespace collapses. Only `pre` used to be recognised;
-// `pre-line` — collapse the spaces, keep the newlines — now has a mode of its
-// own, which is what lets a hard break survive in ordinary prose.
-var whiteSpaceStack = []frontend.WhiteSpace{frontend.WhiteSpaceNormal}
-
-// tabStopsStack tracks whether -bag-tab-stops is in force. A tab then
-// positions text, so it survives white-space collapsing (see collapseTabs).
-var tabStopsStack = []bool{false}
+// inheritedText is what a text node inherits from the elements around it
+// while GetHTMLItemFromHTMLNode walks the tree.
+type inheritedText struct {
+	// whiteSpace is the CSS white-space value in force, so a text node knows
+	// whether its whitespace collapses. Only `pre` used to be recognised;
+	// `pre-line` — collapse the spaces, keep the newlines — now has a mode of
+	// its own, which is what lets a hard break survive in ordinary prose.
+	whiteSpace frontend.WhiteSpace
+	// tabStops tells whether -bag-tab-stops is in force. A tab then positions
+	// text, so it survives white-space collapsing (see collapseTabs).
+	tabStops bool
+}
 
 var (
 	// A newline plus any horizontal space hugging it, which pre-line collapses
@@ -154,6 +157,10 @@ func isCustomVoidElement(name string) bool {
 // DocumentNodes are ignored. The receiver supplies the cascade result recorded
 // by ApplyCSS, which must have run on the node's document first.
 func (c *CSS) GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, firstItem *HTMLItem) error {
+	return c.getHTMLItem(thisNode, direction, firstItem, inheritedText{whiteSpace: frontend.WhiteSpaceNormal})
+}
+
+func (c *CSS) getHTMLItem(thisNode *html.Node, direction Mode, firstItem *HTMLItem, inherited inheritedText) error {
 	newDir := direction
 	for {
 		if thisNode == nil {
@@ -164,10 +171,9 @@ func (c *CSS) GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, first
 			// ignore
 		case html.TextNode:
 			itm := &HTMLItem{}
-			ws := whiteSpaceStack[len(whiteSpaceStack)-1]
-			collapse, keepNL := collapsesSpaces(ws), keepsNewlines(ws)
+			collapse, keepNL := collapsesSpaces(inherited.whiteSpace), keepsNewlines(inherited.whiteSpace)
 			txt := thisNode.Data
-			if collapse && tabStopsStack[len(tabStopsStack)-1] && strings.ContainsRune(txt, '\t') {
+			if collapse && inherited.tabStops && strings.ContainsRune(txt, '\t') {
 				txt = collapseTabs(txt, keepNL, direction == ModeVertical)
 				if txt != "" && !isSpace.MatchString(txt) && direction == ModeVertical {
 					newDir = ModeHorizontal
@@ -213,8 +219,8 @@ func (c *CSS) GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, first
 			itm.Typ = html.TextNode
 			firstItem.Children = append(firstItem.Children, itm)
 		case html.ElementNode:
-			ws := whiteSpaceStack[len(whiteSpaceStack)-1]
-			tabs := tabStopsStack[len(tabStopsStack)-1]
+			ws := inherited.whiteSpace
+			tabs := inherited.tabStops
 			eltname := thisNode.Data
 			switch eltname {
 			case "body", "address", "article", "aside", "blockquote", "canvas", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
@@ -312,22 +318,14 @@ func (c *CSS) GetHTMLItemFromHTMLNode(thisNode *html.Node, direction Mode, first
 					// recognized as self-closing by the HTML5 parser,
 					// so subsequent siblings get incorrectly nested as
 					// children. Promote them back to the parent level.
-					whiteSpaceStack = append(whiteSpaceStack, ws)
-					tabStopsStack = append(tabStopsStack, tabs)
-					c.GetHTMLItemFromHTMLNode(thisNode.FirstChild, direction, firstItem)
-					whiteSpaceStack = whiteSpaceStack[:len(whiteSpaceStack)-1]
-					tabStopsStack = tabStopsStack[:len(tabStopsStack)-1]
+					c.getHTMLItem(thisNode.FirstChild, direction, firstItem, inheritedText{ws, tabs})
 				} else {
-					whiteSpaceStack = append(whiteSpaceStack, ws)
-					tabStopsStack = append(tabStopsStack, tabs)
-					c.GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, itm)
-					whiteSpaceStack = whiteSpaceStack[:len(whiteSpaceStack)-1]
-					tabStopsStack = tabStopsStack[:len(tabStopsStack)-1]
+					c.getHTMLItem(thisNode.FirstChild, newDir, itm, inheritedText{ws, tabs})
 				}
 			}
 		case html.DocumentNode:
 			// just passthrough
-			if err := c.GetHTMLItemFromHTMLNode(thisNode.FirstChild, newDir, firstItem); err != nil {
+			if err := c.getHTMLItem(thisNode.FirstChild, newDir, firstItem, inherited); err != nil {
 				return err
 			}
 		default:
