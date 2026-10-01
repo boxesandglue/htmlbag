@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/document"
@@ -585,6 +586,43 @@ func TestFlowTextRebuildsABlockPartedFromItsFloat(t *testing.T) {
 			}
 			if n != 1 {
 				t.Errorf("the block beside the float takes %d lines in region 2, want 1 at full width", n)
+			}
+		})
+	}
+}
+
+// An inside float takes its side from the region's page, not from the pages
+// of the document: on a right (odd) page it sits at the left edge and the
+// lines beside it are indented, on a left (even) one at the right edge.
+// A mismatch between the two used to rebuild the block without end.
+func TestFlowTextInsideFloatTakesTheRegionsParity(t *testing.T) {
+	for _, pn := range []int{0, 1, 2, 3} {
+		t.Run(fmt.Sprint("PageNum ", pn), func(t *testing.T) {
+			cb, _ := newFlowBuilder(t, "")
+			body := `<div><div style="float: inside; width: 60pt; height: 40pt">Fq</div><p>` + strings.Repeat("alpha beta ", 30) + `</p></div><p>Zq</p>`
+			r := wide("1000pt")
+			r.PageNum = pn
+			te, err := cb.HTMLToText(`<html><body>` + body + `</body></html>`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := &testRegions{sizes: []Region{r}}
+			done := make(chan error, 1)
+			go func() { done <- cb.FlowText(te, tr) }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("FlowText: %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("FlowText did not finish")
+			}
+			indented := false
+			for _, ind := range lineIndents(tr.filled[0].Box) {
+				indented = indented || ind > 0
+			}
+			if right := pn%2 == 1; indented != right {
+				t.Errorf("lines beside the float indented: %v, want %v", indented, right)
 			}
 		})
 	}

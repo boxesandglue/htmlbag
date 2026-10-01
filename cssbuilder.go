@@ -295,6 +295,9 @@ type CSSBuilder struct {
 	fragLines map[*frontend.Text]fragLines
 	// flowing is set while OutputPagesFromText or FlowText runs.
 	flowing bool
+	// callerFlow is FlowText's cursor while it runs: the build takes the
+	// page parity from its region, as the paginator checks it there.
+	callerFlow *flowCursor
 	// FootnoteSeparatorHeight overrides the default footnote rule thickness.
 	// Zero falls back to the package default (0.4pt).
 	FootnoteSeparatorHeight bag.ScaledPoint
@@ -452,8 +455,12 @@ func (cb *CSSBuilder) recordAnchorSnapshot(id string, ss StylesStack) {
 // page: the first page is, and the parity alternates from there. An open page
 // is already in the document's page list; before the first one exists, the
 // page about to be made is page one. Counting the list alone made every even
-// page a right one from page two on.
+// page a right one from page two on. In FlowText it is the current region's
+// page.
 func (cb *CSSBuilder) pageIsRight() bool {
+	if cb.callerFlow != nil {
+		return cb.callerFlow.cur.isRight()
+	}
 	n := len(cb.frontend.Doc.Pages)
 	if cb.frontend.Doc.CurrentPage == nil {
 		n++
@@ -1226,6 +1233,7 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 
 		items := group
 		rebuild := false
+		fc.rebuiltIn = 0
 		var carry map[int]node.H
 		for {
 			// Create a wrapper Text with the body's settings for this group.
@@ -1275,6 +1283,7 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 			}
 			items = items[restart:]
 			rebuild = true
+			fc.rebuiltIn = fc.serial
 		}
 	}
 	return marginAfter, nil
@@ -1573,6 +1582,12 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		}
 		idx, ok := nvl.Attributes["_groupItemIdx"].(int)
 		if !ok {
+			return 0, false
+		}
+		// The first item of a rebuild was built for this very region. Should
+		// it still not fit the checks below, it is placed as it is: another
+		// rebuild would come out the same and never end.
+		if idx == 0 && fc.rebuiltIn == fc.serial {
 			return 0, false
 		}
 		if fc.cur.width != builtWidth {

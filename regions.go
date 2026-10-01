@@ -36,7 +36,8 @@ type Region struct {
 	MarginBefore bag.ScaledPoint
 	// PageNum is the 1-based number of the caller's page the region lies
 	// on: headings and anchors take their page from it, and inside/outside
-	// floats their side, odd being right.
+	// floats their side, odd being right. 0, the zero value, counts as an
+	// even page, so a region that leaves it unset lies on a left page.
 	PageNum int
 	// Left and Top are the region's top-left corner in PDF coordinates on
 	// the caller's page, where the caller places Filled.Box. Heading
@@ -101,6 +102,8 @@ func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 	}()
 	cb.dropPageLevelContent()
 	fc := &flowCursor{regions: &callerRegions{cb: cb, r: r}, caller: true}
+	cb.callerFlow = fc
+	defer func() { cb.callerFlow = nil }()
 	marginAfter, err := cb.flowText(te, fc)
 	if err != nil {
 		return err
@@ -439,6 +442,9 @@ type flowCursor struct {
 	// serial numbers the regions from 1, as pages cannot: a caller's
 	// regions may share one.
 	serial int
+	// rebuiltIn is the serial of the region the current group's items were
+	// last rebuilt for, 0 before a rebuild.
+	rebuiltIn int
 }
 
 // start takes the first region.
