@@ -598,7 +598,12 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 			// to its children. Wrap it in one, as on the page. The block
 			// would apply its vertical margins too, which a cell's plain
 			// paragraph never had, so the copy it wraps goes without them.
-			if isBox, _ := t.Settings[frontend.SettingBox].(bool); !isBox && hasSideMargin(t) {
+			// Its background and borders are the same: only a block draws a
+			// child's, so a shaded paragraph in a cell came out plain. The
+			// cell's own text run carries the cell's decoration but no tag,
+			// and the cell already draws that.
+			_, hasTag := t.Settings[frontend.SettingDebug]
+			if isBox, _ := t.Settings[frontend.SettingBox].(bool); !isBox && (hasSideMargin(t) || hasTag && hasVisibleDecoration(t.Settings)) {
 				p := &frontend.Text{Settings: maps.Clone(t.Settings), Items: t.Items}
 				delete(p.Settings, frontend.SettingMarginTop)
 				delete(p.Settings, frontend.SettingMarginBottom)
