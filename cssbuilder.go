@@ -1548,6 +1548,12 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if o, _ := inner.Attributes["origin"].(string); o == "table" && (vlistNodeHeight(inner) > fc.cur.height || hasRowSplitter(inner)) {
 				break
 			}
+			// A box with a border or background splits in outputBlockSplit,
+			// which needs its _splittable VList; unwrapped, the HTMLBorder
+			// parts would be placed whole (#35). Transparent boxes unwrap.
+			if hv, ok := inner.Attributes["_splittableHv"].(HTMLValues); ok && (hv.hasBorder() || hv.BackgroundColor != nil) {
+				break
+			}
 		}
 		propagateInsertsAttr(inner, inner.List)
 		propagateAnchorIndices(inner, inner.List)
