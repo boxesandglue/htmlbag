@@ -2802,6 +2802,8 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 										newRows[i] = row
 									}
 									rows = newRows
+									// The rebuilt table is still the same flow child.
+									propagateFlowChild(tableVL, newVL)
 									tableVL = newVL
 									tableWidth = newVL.Width
 									if bh, ok := newVL.Attributes["_buildHeaders"].(func() ([]*node.HList, error)); ok {

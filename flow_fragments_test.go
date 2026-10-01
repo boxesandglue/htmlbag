@@ -189,3 +189,25 @@ func TestFlowTextTableIDBoxIsTheTablesWidth(t *testing.T) {
 		})
 	}
 }
+
+// A table rebuilt for a narrower region keeps reporting its fragments.
+func TestFlowTextFragmentsOfATableRebuiltAtAnotherWidth(t *testing.T) {
+	var rows strings.Builder
+	for i := range 8 {
+		fmt.Fprintf(&rows, `<tr><td>R%dq</td></tr>`, i)
+	}
+	cb, _ := newFlowBuilder(t, "")
+	narrow := Region{Width: sp("100pt"), Height: sp("36pt")}
+	tr := flow(t, cb, `<table id="tbl"><thead><tr><th>Hq</th></tr></thead><tbody>`+rows.String()+`</tbody></table>`, Region{Width: sp("160pt"), Height: sp("36pt")}, narrow)
+	if len(tr.filled) < 3 {
+		t.Fatalf("filled %d regions, want three or more", len(tr.filled))
+	}
+	for i, f := range tr.filled {
+		if len(f.Fragments) != 1 || f.Fragments[0].ID != "tbl" || f.Fragments[0].Continued != (i > 0) || f.Fragments[0].Continues != (i < len(tr.filled)-1) {
+			t.Errorf("region %d fragments %s, want the table's, continued %v, continuing %v", i+1, fragmentsString(f.Fragments), i > 0, i < len(tr.filled)-1)
+		}
+		if n := boxIDs(f)["tbl"]; n != 1 {
+			t.Errorf("region %d: %d boxes carry the id, want 1", i+1, n)
+		}
+	}
+}
