@@ -686,6 +686,11 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			ih.synthesizeItalic = strings.TrimSpace(v) == "auto"
 		case "font-synthesis":
 			ih.synthesizeItalic = slices.Contains(strings.Fields(v), "style")
+			ih.smallCapsNoSynth = !slices.Contains(strings.Fields(v), "small-caps")
+		case "font-synthesis-small-caps":
+			ih.smallCapsNoSynth = strings.TrimSpace(v) == "none"
+		case "font-variant", "font-variant-caps":
+			ih.smallCaps = slices.Contains(strings.Fields(v), "small-caps")
 		case "initial-letter":
 			// CSS Inline Layout 3 dropcaps. v1 reads the size (number of
 			// lines the initial spans); the optional sink argument and
@@ -904,6 +909,8 @@ type FormattingStyles struct {
 	initialLetterLines int
 	italicCorrection   bool
 	synthesizeItalic   bool // font-synthesis-style: auto
+	smallCaps          bool
+	smallCapsNoSynth   bool // font-synthesis-small-caps: none, so the zero value is auto
 	indentRows         int
 	language           string     // BCP47 tag (e.g. "en", "ar", "de-DE")
 	langPattern        *lang.Lang // resolved hyphenator for {language, hyphens}; nil = use parent / doc default
@@ -1070,6 +1077,8 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		variationSettings:  newVariationSettings,
 		italicCorrection:   is.italicCorrection,
 		synthesizeItalic:   is.synthesizeItalic,
+		smallCaps:          is.smallCaps,
+		smallCapsNoSynth:   is.smallCapsNoSynth,
 		Fontsize:           is.Fontsize,
 		fontstyle:          is.fontstyle,
 		Fontweight:         is.Fontweight,
@@ -2323,7 +2332,11 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue Styl
 func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, ss StylesStack, currentFontsize bag.ScaledPoint, defaultFontsize bag.ScaledPoint, df *frontend.Document, anchorPages map[string]int) error {
 	switch item.Typ {
 	case html.TextNode:
-		te.Items = append(te.Items, item.Data)
+		if cs := ss.CurrentStyle(); cs.smallCaps {
+			te.Items = append(te.Items, cb.smallCapsItems(df, cs, item.Data)...)
+		} else {
+			te.Items = append(te.Items, item.Data)
+		}
 	case html.ElementNode:
 		// display:none removes the element and its subtree entirely,
 		// mirroring the styles.Hide check in the block path. Checked

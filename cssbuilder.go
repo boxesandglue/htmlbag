@@ -156,6 +156,7 @@ type CSSBuilder struct {
 	frontend              *frontend.Document
 	css                   *CSS
 	stylesStack           StylesStack
+	smcpFaces             map[*frontend.FontSource]bool
 	structureRoot         *document.StructureElement
 	structureCurrent      *document.StructureElement
 	enableTagging         bool
