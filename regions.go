@@ -400,7 +400,7 @@ func (s *regionSink) filled(width, flowMargin bag.ScaledPoint) Filled {
 }
 
 // attrMarginTop is the margin-top of the block after a collapsed-margin kern
-// between two siblings.
+// between two siblings, floats between them included.
 const attrMarginTop = "_marginTop"
 
 // marginKern returns n as a collapsed-margin kern.

@@ -210,6 +210,9 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// float has already laid out below the previous child (see the
 		// float branch); the next in-flow child adds only the rest.
 		var floatSpentMargin bag.ScaledPoint
+		// floatMarginKern is the margin kern laid out before a float, until
+		// the next in-flow child says which margin-top it ends in.
+		var floatMarginKern *node.Kern
 
 		// The band a float left behind, if the container is inside one. See
 		// float.go: the float itself is painted and leaves the vertical flow;
@@ -296,10 +299,11 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					if i > 0 && prevMarginBottom > floatSpentMargin {
 						k := node.NewKern()
 						k.Kern = prevMarginBottom - floatSpentMargin
-						k.Attributes = node.H{"origin": "margin"}
+						k.Attributes = node.H{"origin": "margin", attrMarginTop: bag.ScaledPoint(0)}
 						vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
 						vls.Height += k.Kern
 						floatSpentMargin = prevMarginBottom
+						floatMarginKern = k
 					}
 					// The float, not the item it arrived in: a replaced element
 					// comes wrapped in an anonymous inline run whose margins are
@@ -348,6 +352,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				// collapsed margin; only the rest is added here.
 				marginGlue -= floatSpentMargin
 				floatSpentMargin = 0
+				if floatMarginKern != nil {
+					floatMarginKern.Attributes[attrMarginTop] = curMarginTop
+					floatMarginKern = nil
+				}
 
 				// Insert margin kern if needed
 				if marginGlue > 0 {

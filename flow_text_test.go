@@ -304,6 +304,8 @@ func TestFlowTextMarginBefore(t *testing.T) {
 			[]Region{wide("1000pt"), withBefore(wide("1000pt"), "3pt")}, 2, "5pt"},
 		{"break-after, margin-bottom before it", `<p style="break-after: column; margin-bottom: 9pt">` + charLines("A", 3) + `</p><p style="margin-top: 5pt">` + charLines("B", 2) + `</p>`,
 			[]Region{wide("1000pt"), withBefore(wide("1000pt"), "3pt")}, 2, "5pt"},
+		{"break-after, float after it", `<p style="break-after: column; margin: 0 0 20pt 0">` + charLines("A", 3) + `</p><div style="float: left; width: 40pt">Fq</div><p style="margin-top: 5pt">` + charLines("B", 2) + `</p>`,
+			[]Region{wide("1000pt"), wide("1000pt")}, 2, "5pt"},
 		{"automatic break inside a split list", `<p>Zq</p><ul style="margin: 0; padding: 0; background: yellow; orphans: 1; widows: 1"><li>` + charLines("A", 3) + `</li><li style="margin-top: 5pt">` + charLines("B", 2) + `</li></ul>`,
 			[]Region{wide("52pt"), wide("1000pt")}, 2, "0pt"},
 	}
