@@ -475,6 +475,68 @@ func insertsOnNode(n node.Node) []*Insert {
 	return ins
 }
 
+// carryBoxMarks moves the heading index, anchor index and element id of a
+// VList that is being unwrapped onto its first VList/HList child, so the
+// outline, target-counter(…, page) and the id take their page from where the
+// box starts. A mark the child already has stays.
+func carryBoxMarks(from *node.VList, to node.Node) {
+	if from == nil || from.Attributes == nil {
+		return
+	}
+	if o, _ := from.Attributes["origin"].(string); o == "table" {
+		return
+	}
+	heading, hasHeading := from.Attributes["_heading_idx"].(int)
+	anchor, hasAnchor := from.Attributes["_anchor_idx"].(int)
+	id, hasID := from.Attributes["id"]
+	if !hasHeading && !hasAnchor && !hasID {
+		return
+	}
+	for cur := to; cur != nil; cur = cur.Next() {
+		var attrs node.H
+		switch t := cur.(type) {
+		case *node.VList:
+			if t.Attributes == nil {
+				t.Attributes = node.H{}
+			}
+			attrs = t.Attributes
+		case *node.HList:
+			if t.Attributes == nil {
+				t.Attributes = node.H{}
+			}
+			attrs = t.Attributes
+		default:
+			continue
+		}
+		if _, ok := attrs["_heading_idx"]; hasHeading && !ok {
+			attrs["_heading_idx"] = heading
+		}
+		if hasAnchor {
+			existing, _ := attrs["_anchor_indices"].([]int)
+			attrs["_anchor_indices"] = append([]int{anchor}, existing...)
+		}
+		if _, ok := attrs["id"]; hasID && !ok {
+			attrs["id"] = id
+		}
+		return
+	}
+}
+
+// headingIdxOn returns the _heading_idx stamped on n, or -1.
+func headingIdxOn(n node.Node) int {
+	var attrs node.H
+	switch t := n.(type) {
+	case *node.VList:
+		attrs = t.Attributes
+	case *node.HList:
+		attrs = t.Attributes
+	}
+	if idx, ok := attrs["_heading_idx"].(int); ok {
+		return idx
+	}
+	return -1
+}
+
 // propagateAnchorIndices moves the _anchor_indices of a VList that is being
 // unwrapped onto the next VList/HList carrier, as propagateInsertsAttr does
 // for inserts. A table is left alone: its rows carry their own.
