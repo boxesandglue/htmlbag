@@ -1,7 +1,6 @@
 package htmlbag
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/backend/document"
@@ -44,34 +43,61 @@ func TestLoneBlockKeepsItsHeadingAndID(t *testing.T) {
 	}
 }
 
-// A tall lone block still splits across pages, and its heading, anchor and id
-// stay on the page it starts on.
-func TestTallLoneBlockKeepsItsHeadingAndID(t *testing.T) {
-	lines := strings.TrimSuffix(strings.Repeat("line<br>", 80), "<br>")
-	for _, c := range []struct {
-		name, html string
-		boxID      bool
-	}{
-		{"heading", `<h1 id="x">` + lines + `</h1>`, true},
-		{"paragraph in a div", `<div><p id="x">` + lines + `</p></div>`, true},
-		// A div with one child is not _splittable, so placed whole it ran
-		// off the page. A div's id is not stamped on its box.
-		{"div with an id", `<div id="x"><p>` + lines + `</p></div>`, false},
+// pagesOf maps each heading's text and each anchor's id to its page.
+func pagesOf(cb *CSSBuilder) (headings, anchors map[string]int) {
+	headings, anchors = map[string]int{}, map[string]int{}
+	for _, h := range cb.Headings {
+		headings[h.Text] = h.Page
+	}
+	for _, a := range cb.Anchors {
+		anchors[a.ID] = a.Page
+	}
+	return headings, anchors
+}
+
+// A lone block taller than the region still splits across pages, and its
+// heading and anchor take the page it starts on. A box with one child is not
+// _splittable, so kept whole it would run off the page.
+func TestTallLoneBlockKeepsItsHeadingAndAnchor(t *testing.T) {
+	for _, c := range []struct{ name, html string }{
+		{"div with an id", `<div id="main"><p>` + lines(67) + `</p></div>`},
+		{"nested", `<section id="main"><div><p>` + lines(67) + `</p></div></section>`},
+		{"heading", `<h1 id="main">` + lines(67) + `</h1>`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			pages, cb := renderHTMLPagesCB(t, charCSS, c.html)
-			if len(pages) != 7 {
-				t.Errorf("%d pages, want 7", len(pages))
+			if len(pages) != 6 {
+				t.Errorf("%d pages, want 6", len(pages))
 			}
-			if c.name == "heading" && (len(cb.Headings) != 1 || cb.Headings[0].Page != 1) {
-				t.Errorf("headings %+v, want one on page 1", cb.Headings)
+			headings, anchors := pagesOf(cb)
+			if anchors["main"] != 1 || len(anchors) != 1 {
+				t.Errorf("anchors %v, want main on page 1", anchors)
 			}
-			if len(cb.Anchors) != 1 || cb.Anchors[0].Page != 1 {
-				t.Errorf("anchors %+v, want one on page 1", cb.Anchors)
-			}
-			if n := elementIDs(pages[:1])["x"]; c.boxID && n != 1 {
-				t.Errorf(`id "x" is on %d boxes of page 1, want 1`, n)
+			if c.name == "heading" && (len(headings) != 1 || cb.Headings[0].Page != 1) {
+				t.Errorf("headings %v, want one on page 1", headings)
 			}
 		})
+	}
+}
+
+// A tall lone container with headings is split between and inside its
+// children, and each heading and anchor keeps its own page.
+func TestTallLoneContainerKeepsItsChildrensPages(t *testing.T) {
+	html := `<div id="main"><h1 id="a">A</h1><p>` + lines(30) + `</p><h1 id="b">B</h1><p>` +
+		lines(40) + `</p><h1 id="c">C</h1><p>x</p></div>`
+	pages, cb := renderHTMLPagesCB(t, charCSS, html)
+	if len(pages) != 6 {
+		t.Errorf("%d pages, want 6", len(pages))
+	}
+	headings, anchors := pagesOf(cb)
+	for k, want := range map[string]int{"A": 1, "B": 3, "C": 6} {
+		if headings[k] != want {
+			t.Errorf("heading %s on page %d, want %d (%v)", k, headings[k], want, headings)
+		}
+	}
+	for k, want := range map[string]int{"main": 1, "a": 1, "b": 3, "c": 6} {
+		if anchors[k] != want {
+			t.Errorf("anchor %s on page %d, want %d (%v)", k, anchors[k], want, anchors)
+		}
 	}
 }

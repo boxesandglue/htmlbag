@@ -475,10 +475,22 @@ func insertsOnNode(n node.Node) []*Insert {
 	return ins
 }
 
-// carryBoxMarks moves the heading index, anchor index and element id of a
-// VList that is being unwrapped onto its first VList/HList child, so the
-// outline, target-counter(…, page) and the id take their page from where the
-// box starts. A mark the child already has stays.
+// hasBoxMarks reports whether vl carries a heading index, an anchor index or
+// an element id.
+func hasBoxMarks(vl *node.VList) bool {
+	for _, k := range []string{"_heading_idx", "_anchor_idx", "id"} {
+		if _, ok := vl.Attributes[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// carryBoxMarks moves the heading and anchor index of a VList that is being
+// unwrapped onto its first VList/HList child, so the outline and
+// target-counter(…, page) take the page the box starts on. The child keeps a
+// heading index of its own. The id stays behind: a split block has no single
+// box to carry it.
 func carryBoxMarks(from *node.VList, to node.Node) {
 	if from == nil || from.Attributes == nil {
 		return
@@ -488,8 +500,7 @@ func carryBoxMarks(from *node.VList, to node.Node) {
 	}
 	heading, hasHeading := from.Attributes["_heading_idx"].(int)
 	anchor, hasAnchor := from.Attributes["_anchor_idx"].(int)
-	id, hasID := from.Attributes["id"]
-	if !hasHeading && !hasAnchor && !hasID {
+	if !hasHeading && !hasAnchor {
 		return
 	}
 	for cur := to; cur != nil; cur = cur.Next() {
@@ -514,9 +525,6 @@ func carryBoxMarks(from *node.VList, to node.Node) {
 		if hasAnchor {
 			existing, _ := attrs["_anchor_indices"].([]int)
 			attrs["_anchor_indices"] = append([]int{anchor}, existing...)
-		}
-		if _, ok := attrs["id"]; hasID && !ok {
-			attrs["id"] = id
 		}
 		return
 	}

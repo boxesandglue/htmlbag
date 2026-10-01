@@ -1549,10 +1549,17 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if hv, ok := inner.Attributes["_splittableHv"].(HTMLValues); ok && (hv.hasBorder() || hv.BackgroundColor != nil) {
 				break
 			}
+			// The page and position of a heading, an anchor and an element
+			// id are taken from the box they are stamped on, so a box that
+			// fits is kept. A taller one must split: its marks move onto its
+			// first child.
+			if hasBoxMarks(inner) && vlistNodeHeight(inner) <= fc.cur.height {
+				break
+			}
 		}
-		carryBoxMarks(inner, inner.List)
 		propagateInsertsAttr(inner, inner.List)
 		propagateAnchorIndices(inner, inner.List)
+		carryBoxMarks(inner, inner.List)
 		contentList = inner.List
 		if inner.Width > 0 {
 			contentWidth = inner.Width
