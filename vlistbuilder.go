@@ -412,8 +412,16 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					}
 					wrapTable := hasTableBorderOrBg && !hasTheadOrTfoot
 					tableWidth := wd
+					// A table without a width takes the room its side
+					// margins leave (CSS 2.1 §10.3.3); a percentage still
+					// refers to the full width.
+					ml, _ := t.Settings[frontend.SettingMarginLeft].(bag.ScaledPoint)
+					if _, ok := t.Settings[frontend.SettingWidth]; !ok {
+						mr, _ := t.Settings[frontend.SettingMarginRight].(bag.ScaledPoint)
+						tableWidth -= ml + mr
+					}
 					if wrapTable {
-						tableWidth = wd - tableHv.BorderLeftWidth - tableHv.BorderRightWidth - tableHv.PaddingLeft - tableHv.PaddingRight
+						tableWidth -= tableHv.BorderLeftWidth + tableHv.BorderRightWidth + tableHv.PaddingLeft + tableHv.PaddingRight
 					}
 					var err error
 					vl, err = cb.buildTable(t, tableWidth)
@@ -431,6 +439,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 							vl.Attributes["_anchor_indices"] = idx
 						}
 					}
+					// margin-left moves the table as it moves any block.
+					vl.ShiftX += ml
 				} else {
 					// Two CSS shifts apply to every child of a block
 					// container: the parent's padding-left (an offset
