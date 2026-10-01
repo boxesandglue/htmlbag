@@ -28,3 +28,52 @@ func TestExplicitWidthIsTheBoxWidth(t *testing.T) {
 		}
 	}
 }
+
+// width: auto is the initial value, so declaring it keeps the width a box has
+// without it: a float as wide as its widest child, a block as wide as before.
+func TestWidthAutoChangesNothing(t *testing.T) {
+	var float func(n node.Node) *node.VList
+	float = func(n node.Node) *node.VList {
+		for e := n; e != nil; e = e.Next() {
+			switch c := e.(type) {
+			case *node.VList:
+				if origin, _ := c.Attributes["origin"].(string); origin == "float" {
+					return c
+				}
+				if f := float(c.List); f != nil {
+					return f
+				}
+			case *node.HList:
+				if f := float(c.List); f != nil {
+					return f
+				}
+			}
+		}
+		return nil
+	}
+	floatWidth := func(style string) bag.ScaledPoint {
+		vl := buildHTML(t, floatBuilder(t), `<div style="float:left`+style+`"><p style="margin:0 10pt">ab</p></div><p>beside the float</p>`)
+		f := float(vl.List)
+		if f == nil {
+			t.Fatalf("%q: no float", style)
+		}
+		return f.Width
+	}
+	if a, b := floatWidth(";width:auto"), floatWidth(""); a != b {
+		t.Errorf("a float with width:auto is %s wide, without width %s", a, b)
+	}
+
+	blockWidth := func(style string) bag.ScaledPoint {
+		vl := buildHTML(t, floatBuilder(t), `<div style="`+style+`"><p style="margin:0 60pt 0 40pt">Indented</p></div>`)
+		for n := vl.List; n != nil; n = n.Next() {
+			if box, ok := n.(*node.VList); ok {
+				return box.Width
+			}
+		}
+		t.Fatalf("%q: no box for the div", style)
+		return 0
+	}
+	if a, b := blockWidth("width:auto"), blockWidth(""); a != b {
+		t.Errorf("a block with width:auto is %s wide, without width %s", a, b)
+	}
+}
