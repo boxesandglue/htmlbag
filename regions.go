@@ -490,7 +490,11 @@ func (fc *flowCursor) regionEmpty(cb *CSSBuilder) bool {
 // truncated reports whether cur, the next node to place, is a margin at the
 // top of a caller's region after an automatic break, which is dropped.
 func (fc *flowCursor) truncated(cb *CSSBuilder, cur node.Node) bool {
-	if fc.top != topTruncated || !fc.regionEmpty(cb) {
+	if fc.top != topTruncated {
+		return false
+	}
+	if !fc.regionEmpty(cb) {
+		fc.top = topPlaced
 		return false
 	}
 	_, isMargin := marginKern(cur)
