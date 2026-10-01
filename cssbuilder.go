@@ -1554,6 +1554,17 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if hv, ok := inner.Attributes["_splittableHv"].(HTMLValues); ok && (hv.hasBorder() || hv.BackgroundColor != nil) {
 				break
 			}
+			// The page and position of a heading, an anchor and an element
+			// id are taken from the box they are stamped on.
+			if _, ok := inner.Attributes["_heading_idx"]; ok {
+				break
+			}
+			if _, ok := inner.Attributes["_anchor_idx"]; ok {
+				break
+			}
+			if _, ok := inner.Attributes["id"]; ok {
+				break
+			}
 		}
 		propagateInsertsAttr(inner, inner.List)
 		propagateAnchorIndices(inner, inner.List)
