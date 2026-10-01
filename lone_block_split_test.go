@@ -10,20 +10,22 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/node"
 )
 
-// A bordered block that is the body's only child splits across pages like
-// any other (CSS Fragmentation 3, box-decoration-break: slice), issue #35.
+// A block with a border or a background that is the body's only child
+// splits across pages like any other (CSS Fragmentation 3,
+// box-decoration-break: slice), issue #35.
 func TestLoneBorderedBlockSplits(t *testing.T) {
 	var sb strings.Builder
 	for i := 1; i <= 20; i++ {
 		fmt.Fprintf(&sb, "<p>Line %d</p>", i)
 	}
-	css := charCSS + ".box { border: 1pt solid black }"
-	for _, c := range []struct{ name, before string }{
-		{"only child", ""},
-		{"after a paragraph", "<p>Before</p>"},
+	css := charCSS + ".border { border: 1pt solid black } .bg { background-color: #eee }"
+	for _, c := range []struct{ name, before, class string }{
+		{"border, only child", "", "border"},
+		{"border, after a paragraph", "<p>Before</p>", "border"},
+		{"background, only child", "", "bg"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			pages := renderHTMLPages(t, css, c.before+`<div class="box">`+sb.String()+`</div>`)
+			pages := renderHTMLPages(t, css, c.before+`<div class="`+c.class+`">`+sb.String()+`</div>`)
 			if len(pages) != 2 {
 				t.Errorf("%d pages, want 2", len(pages))
 			}
