@@ -12,6 +12,7 @@ require (
 	github.com/speedata/barcode v1.1.1
 	github.com/speedata/css v1.0.5
 	golang.org/x/net v0.57.0
+	golang.org/x/text v0.40.0
 )
 
 require (
