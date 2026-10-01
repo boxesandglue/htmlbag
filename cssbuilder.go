@@ -1032,12 +1032,7 @@ func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
 		// Heading and anchor indices for page-number tracking happen at
 		// flush time, not here, so the page number reflects the page
 		// actually painted.
-		headingIdx := -1
-		if vl, ok := cur.(*node.VList); ok && vl.Attributes != nil {
-			if idx, ok := vl.Attributes["_heading_idx"].(int); ok {
-				headingIdx = idx
-			}
-		}
+		headingIdx := headingIdxOn(cur)
 		anchorIndices := anchorIndicesOn(cur)
 
 		cb.bufferBody(box, h, headingIdx, anchorIndices)
@@ -1554,6 +1549,13 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if hv, ok := inner.Attributes["_splittableHv"].(HTMLValues); ok && (hv.hasBorder() || hv.BackgroundColor != nil) {
 				break
 			}
+			// The page and position of a heading, an anchor and an element
+			// id are taken from the box they are stamped on, so a box that
+			// fits is kept. A taller one must split: its marks move onto its
+			// first child.
+			if hasBoxMarks(inner) && vlistNodeHeight(inner) <= fc.cur.height {
+				break
+			}
 		}
 		// The box's shift (margin-left) is dropped with it, so it moves onto
 		// its children; each placed node is wrapped in a fresh box, where a
@@ -1570,6 +1572,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		}
 		propagateInsertsAttr(inner, inner.List)
 		propagateAnchorIndices(inner, inner.List)
+		carryBoxMarks(inner, inner.List)
 		contentList = inner.List
 		if inner.Width > 0 {
 			contentWidth = inner.Width
@@ -1927,12 +1930,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		box.Width = contentWidth
 		box.Height = h
 
-		headingIdx := -1
-		if vl, ok := cur.(*node.VList); ok && vl.Attributes != nil {
-			if idx, ok := vl.Attributes["_heading_idx"].(int); ok {
-				headingIdx = idx
-			}
-		}
+		headingIdx := headingIdxOn(cur)
 		anchorIndices := anchorIndicesOn(cur)
 
 		cb.bufferBody(box, h, headingIdx, anchorIndices)
