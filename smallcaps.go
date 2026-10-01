@@ -1,7 +1,6 @@
 package htmlbag
 
 import (
-
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/textshape/ot"
@@ -47,6 +46,8 @@ func (cb *CSSBuilder) faceHasSmcp(df *frontend.Document, sty *FormattingStyles) 
 // own through smcp when it has them, else synthesised, each lowercase letter
 // as its capital at a reduced size. The capitals follow the full, language
 // sensitive case mapping, so ß becomes SS and a Turkish i becomes İ.
+// The synthesised capitals are what PDF text extraction sees; an /ActualText
+// span in bag carrying the original string would fix that.
 func (cb *CSSBuilder) smallCapsItems(df *frontend.Document, sty *FormattingStyles, s string) []any {
 	if cb.faceHasSmcp(df, sty) {
 		t := frontend.NewText()
