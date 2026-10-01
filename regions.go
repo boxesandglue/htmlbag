@@ -146,14 +146,21 @@ func (cb *CSSBuilder) restorePageState(s pageState) {
 
 // dropPageLevelContent drops the positioned and running elements HTMLToText
 // took out of the flow: they belong to a page, which FlowText does not make.
+// Of the running elements, only those the last HTMLToText added go: a name
+// an earlier Text captured first keeps serving that Text's pages.
 func (cb *CSSBuilder) dropPageLevelContent() {
 	if n := len(cb.positionedItems); n > 0 {
 		bag.Logger.Warn("FlowText does not support position: absolute or fixed, dropping the elements", "count", n)
 		cb.positionedItems = nil
 	}
-	if n := len(cb.runningElements); n > 0 {
+	if n := len(cb.textRunning); n > 0 {
 		bag.Logger.Warn("FlowText does not support running elements, dropping them", "count", n)
-		clear(cb.runningElements)
+		for name, added := range cb.textRunning {
+			if added {
+				delete(cb.runningElements, name)
+			}
+		}
+		cb.textRunning = nil
 	}
 }
 

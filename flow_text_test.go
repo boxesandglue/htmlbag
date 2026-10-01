@@ -629,3 +629,27 @@ func TestFlowTextInsideFloatTakesTheRegionsParity(t *testing.T) {
 		})
 	}
 }
+
+// FlowText drops the running elements of its own Text only: those an earlier
+// Text set for its pages stay, even when the flow names them again.
+func TestFlowTextKeepsEarlierRunningElements(t *testing.T) {
+	cb, _ := newFlowBuilder(t, runningFooterCSS+`.foot { position: running(foot) }`)
+	te, err := cb.HTMLToText(`<html><body>` + runningFooterHTML + fillerParagraphs(3) + `</body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.OutputPagesFromText(te); err != nil {
+		t.Fatal(err)
+	}
+	footer := cb.runningElements["pagefooter"]
+	if footer == nil {
+		t.Fatal("OutputPagesFromText's Text left no running footer")
+	}
+	flow(t, cb, `<p>Aq</p><div class="foot">Fq</div><div class="pagefooter">Pq</div>`, wide("1000pt"))
+	if cb.runningElements["pagefooter"] != footer {
+		t.Error("FlowText dropped the footer of the earlier Text")
+	}
+	if _, ok := cb.runningElements["foot"]; ok {
+		t.Error("FlowText kept the running element of its own Text")
+	}
+}

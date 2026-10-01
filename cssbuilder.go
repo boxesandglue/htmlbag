@@ -289,6 +289,9 @@ type CSSBuilder struct {
 	// same footer can repeat on every page. When the same name is
 	// captured more than once, the first occurrence wins (GCPM `first`).
 	runningElements map[string]*frontend.Text
+	// textRunning holds the running-element names the last HTMLToText met,
+	// true for those it added to runningElements, for FlowText to drop.
+	textRunning map[string]bool
 	// fragLines holds widows and orphans off the Settings: they inherit to
 	// every block, and a private setting would have to be stripped on each
 	// path that hands a Text to FormatParagraph (cells, footnotes, floats).
@@ -3153,6 +3156,7 @@ func (cb *CSSBuilder) HTMLToText(html string) (*frontend.Text, error) {
 		return nil, err
 	}
 
+	cb.textRunning = map[string]bool{}
 	var te *frontend.Text
 	if te, err = HTMLNodeToText(cb, n, cb.stylesStack, cb.frontend, cb.anchorPages); err != nil {
 		return nil, err
