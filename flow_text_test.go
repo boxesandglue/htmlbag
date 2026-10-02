@@ -339,6 +339,25 @@ func TestFlowTextPassesForcedBreaksToNext(t *testing.T) {
 	}
 }
 
+// The first Next gets the forced break-before of the first block, so the
+// caller can start the flow on a page or in a column of that kind.
+func TestFlowTextPassesFirstBlocksBreakToNext(t *testing.T) {
+	for _, c := range []struct{ body, want string }{
+		{`<p>A</p><p>B</p>`, ""},
+		{`<p style="break-before: page">A</p><p>B</p>`, "page"},
+		{`<p style="break-before: column">A</p><p>B</p>`, "column"},
+		{"\n  " + `<p style="break-before: left">A</p><p>B</p>`, "left"},
+		{`<div style="break-before: right"><p>A</p></div><p>B</p>`, "right"},
+		{`<p style="break-before: avoid">A</p><p>B</p>`, ""},
+	} {
+		cb, _ := newFlowBuilder(t, "")
+		tr := flow(t, cb, c.body, wide("1000pt"))
+		if len(tr.brks) != 1 || tr.brks[0] != c.want || len(tr.filled) != 1 {
+			t.Errorf("%s: Next got %q and filled %d regions, want [%q] and 1", c.body, tr.brks, len(tr.filled), c.want)
+		}
+	}
+}
+
 func TestFlowTextHeadingsAndAnchorsTakeTheRegionsPage(t *testing.T) {
 	cb, _ := newFlowBuilder(t, "")
 	r1 := Region{Width: sp("160pt"), Height: sp("30pt"), PageNum: 7, Left: sp("30pt"), Top: sp("500pt")}
