@@ -663,14 +663,7 @@ func propagateFlowChild(from, to node.Node) {
 // and flow child.
 func stampFragment(frag, blockVL *node.VList) {
 	if id, ok := blockVL.Attributes["id"]; ok {
-		// An indented block's fragment is wrapped around a box that carries
-		// the block's shift (buildFragment); the id goes there, where the
-		// fragment is drawn.
-		target := frag
-		if inner, ok := frag.List.(*node.VList); ok && frag.ShiftX == 0 && inner.Next() == nil && inner.ShiftX == blockVL.ShiftX {
-			target = inner
-		}
-		target.SetAttribute("id", id)
+		frag.SetAttribute("id", id)
 	}
 	propagateFlowChild(blockVL, frag)
 }

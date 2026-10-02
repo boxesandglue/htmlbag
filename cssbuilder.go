@@ -2336,25 +2336,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		// padding-left, stamped by the box branch of buildVlistInternal)
 		// sits on the original VList; every fragment must inherit it or
 		// an indented block (e.g. a blockquote) snaps to the left edge.
-		// The shift only takes effect on a VList seen as a child during
-		// rendering, so the fragment is nested one level deeper — the
-		// buffered box is placed by OutputAt, which ignores its own
-		// ShiftX. Same shape as the non-split path in outputGroupNodes.
-		shiftWrap := func(vl *node.VList) *node.VList {
-			if blockVL.ShiftX == 0 {
-				return vl
-			}
-			vl.ShiftX = blockVL.ShiftX
-			outer := node.NewVList()
-			outer.List = vl
-			outer.Width = vl.Width
-			outer.Height = vl.Height
-			outer.Depth = vl.Depth
-			return outer
-		}
 		if noWrapper {
-			out := shiftWrap(innerVL)
-			return out, vlistNodeHeight(out)
+			innerVL.ShiftX = blockVL.ShiftX
+			return innerVL, vlistNodeHeight(innerVL)
 		}
 		fragHv := hv
 		if kind != fragTop && kind != fragOnly {
@@ -2378,8 +2362,8 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 				}
 			}
 		}
-		out := shiftWrap(wrapped)
-		return out, vlistNodeHeight(out)
+		wrapped.ShiftX = blockVL.ShiftX
+		return wrapped, vlistNodeHeight(wrapped)
 	}
 
 	availOnPage := func() bag.ScaledPoint {
@@ -2641,20 +2625,13 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		rows = append(rows, n)
 	}
 	dataEnd := len(rows) - footerCount
-	// A row is placed in a box of the table's width; the table's own shift
-	// (margin-left) goes on a box around it, as output places at x 0. It is
-	// taken here, as a table rebuilt at another width below has none.
+	// A row is placed in a box of the table's width, shifted by the
+	// table's margin-left. It is taken here, as a table rebuilt at another
+	// width below has none.
 	shiftX := tableVL.ShiftX
 	shifted := func(box *node.VList) *node.VList {
-		if shiftX == 0 {
-			return box
-		}
 		box.ShiftX = shiftX
-		outer := node.NewVList()
-		outer.List = box
-		outer.Width, outer.Height, outer.Depth = box.Width, box.Height, box.Depth
-		outer.Attributes = box.Attributes
-		return outer
+		return box
 	}
 
 	placeFooters := func() error {
