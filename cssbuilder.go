@@ -1766,12 +1766,13 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		// that do fit in the remaining space fall through to the normal
 		// pageBuf path, which composes them with adjacent paragraphs.
 		// A table without a header takes this path too when a row may break
-		// inside, since only outputTableRows splits rows.
+		// inside or a rowspan joins rows, since only outputTableRows splits
+		// rows and keeps joined rows together.
 		if tableVL, ok := cur.(*node.VList); ok && tableVL.Attributes != nil {
 			buildHeadersFn, tok := tableVL.Attributes["_buildHeaders"]
 			if !tok {
 				o, _ := tableVL.Attributes["origin"].(string)
-				tok = o == "table" && hasRowSplitter(tableVL)
+				tok = o == "table" && (hasRowSplitter(tableVL) || hasJoinedRows(tableVL))
 			}
 			if tok {
 				tableIncoming := fc.insertsOn(cur)
@@ -2927,6 +2928,16 @@ func keepGroupHeight(rows []node.Node, i int) bag.ScaledPoint {
 		h += vlistNodeHeight(rows[j+1])
 	}
 	return h
+}
+
+// hasJoinedRows reports whether a rowspan joins rows of the table.
+func hasJoinedRows(tableVL *node.VList) bool {
+	for n := tableVL.List; n != nil; n = n.Next() {
+		if keepsWithNext(n) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasRowSplitter reports whether a row of the table may break inside.
