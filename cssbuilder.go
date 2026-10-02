@@ -1557,19 +1557,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 				break
 			}
 		}
-		// The box's shift (margin-left) is dropped with it, so it moves onto
-		// its children; each placed node is wrapped in a fresh box, where a
-		// child's ShiftX takes effect.
-		if inner.ShiftX != 0 {
-			for n := inner.List; n != nil; n = n.Next() {
-				switch c := n.(type) {
-				case *node.VList:
-					c.ShiftX += inner.ShiftX
-				case *node.HList:
-					c.ShiftX += inner.ShiftX
-				}
-			}
-		}
+		shiftChildren(inner)
 		propagateInsertsAttr(inner, inner.List)
 		propagateAnchorIndices(inner, inner.List)
 		carryBoxMarks(inner, inner.List)
@@ -1806,6 +1794,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 				// Move any cell inserts onto the first row so they are still
 				// reserved once the wrapper VList is dropped.
 				propagateInsertsAttr(tableVL, tableVL.List)
+				shiftChildren(tableVL)
 				first := tableVL.List
 				last := node.Tail(first)
 				last.SetNext(next)
@@ -2636,6 +2625,21 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		rows = append(rows, n)
 	}
 	dataEnd := len(rows) - footerCount
+	// A row is placed in a box of the table's width; the table's own shift
+	// (margin-left) goes on a box around it, as output places at x 0. It is
+	// taken here, as a table rebuilt at another width below has none.
+	shiftX := tableVL.ShiftX
+	shifted := func(box *node.VList) *node.VList {
+		if shiftX == 0 {
+			return box
+		}
+		box.ShiftX = shiftX
+		outer := node.NewVList()
+		outer.List = box
+		outer.Width, outer.Height, outer.Depth = box.Width, box.Height, box.Depth
+		outer.Attributes = box.Attributes
+		return outer
+	}
 
 	placeFooters := func() error {
 		if footerCount == 0 {
@@ -2653,7 +2657,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 			box.List = ft
 			box.Width = tableWidth
 			box.Height = h
-			fc.cur.output(*y, box, h)
+			fc.cur.output(*y, shifted(box), h)
 			*y -= h
 		}
 		*pageHasContent = true
@@ -2820,7 +2824,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 					box.List = hdr
 					box.Width = tableWidth
 					box.Height = hdrH
-					fc.cur.output(*y, box, hdrH)
+					fc.cur.output(*y, shifted(box), hdrH)
 					*y -= hdrH
 				}
 				*pageHasContent = true
@@ -2838,7 +2842,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		box.Width = tableWidth
 		box.Height = h
 
-		fc.cur.output(*y, box, h)
+		fc.cur.output(*y, shifted(box), h)
 		for _, idx := range anchorIndicesOn(row) {
 			if idx >= 0 && idx < len(cb.Anchors) {
 				cb.Anchors[idx].Page = fc.cur.pageNum
@@ -3274,4 +3278,21 @@ func (cb *CSSBuilder) ReadCSSFile(filename string) error {
 	cb.css.PushDir(abs)
 	defer cb.css.PopDir()
 	return cb.css.AddCSSText(string(data))
+}
+
+// shiftChildren moves the shift (margin-left) of a box that is being
+// unwrapped onto its children, as it is dropped with the box; each placed
+// node is wrapped in a fresh box, where a child's ShiftX takes effect.
+func shiftChildren(vl *node.VList) {
+	if vl.ShiftX == 0 {
+		return
+	}
+	for n := vl.List; n != nil; n = n.Next() {
+		switch c := n.(type) {
+		case *node.VList:
+			c.ShiftX += vl.ShiftX
+		case *node.HList:
+			c.ShiftX += vl.ShiftX
+		}
+	}
 }
