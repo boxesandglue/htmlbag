@@ -441,6 +441,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					}
 					// margin-left moves the table as it moves any block.
 					vl.ShiftX += ml
+					// The table's own box carries its id, as a paragraph's does.
+					if id, ok := t.Settings[frontend.SettingElementID].(string); ok && id != "" {
+						vl.SetAttribute("id", id)
+					}
 				} else {
 					// Two CSS shifts apply to every child of a block
 					// container: the parent's padding-left (an offset

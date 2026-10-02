@@ -59,6 +59,26 @@ type Filled struct {
 	// below Used: the last block's margin-bottom at the end of the flow,
 	// the margin spent at the foot of the region at an automatic break.
 	MarginAfter bag.ScaledPoint
+	// Fragments lists the parts of the flow's children in the region, top
+	// to bottom.
+	Fragments []Fragment
+}
+
+// Fragment is the part of one flow child that landed in a region. The flow's
+// children are the blocks of the body. Only they get an id per fragment: an
+// id nested inside a child that splits is not on that region's boxes.
+type Fragment struct {
+	// ID is the child's id attribute, "" without one.
+	ID string
+	// Index is the child's position among the flow's children. Loose text
+	// between blocks counts as an anonymous child of its own.
+	Index int
+	// Top is the fragment's top edge, measured from the region's top edge,
+	// and Height its height, both without the child's margins.
+	Top, Height bag.ScaledPoint
+	// Continued is set when the child began in an earlier region, Continues
+	// when it goes on in the next one.
+	Continued, Continues bool
 }
 
 // FlowText pours the blocks of te into the regions r hands out. It is the
@@ -202,6 +222,9 @@ type filled struct {
 	// marginAfter is the margin-bottom that ends the flow, set for the last
 	// region only.
 	marginAfter bag.ScaledPoint
+	// next is the flow child the next region starts with, nil at the end
+	// of the flow or when it is not known.
+	next *flowChild
 }
 
 // regions hands out the rectangles the paginator fills and takes each back
@@ -278,6 +301,8 @@ type callerRegions struct {
 	cur     region
 	started bool
 	count   int
+	// seen holds the flow children placed in an earlier region.
+	seen map[*flowChild]bool
 }
 
 func (cr *callerRegions) next(brk string) (region, error) {
@@ -309,7 +334,10 @@ func (cr *callerRegions) filled(f filled) error {
 	if err := cr.cb.flushInsertsIn(cr.cur); err != nil {
 		return err
 	}
-	return cr.r.Filled(cr.cur.sink.filled(cr.cur.width, f.marginAfter))
+	if cr.seen == nil {
+		cr.seen = map[*flowChild]bool{}
+	}
+	return cr.r.Filled(cr.cur.sink.filled(cr.cur.width, f, cr.seen))
 }
 
 // regionSink collects the boxes of a caller's region, each at its offset
@@ -324,6 +352,7 @@ type sinkEntry struct {
 	floats bag.ScaledPoint
 	box    *node.VList
 	margin bool
+	child  *flowChild
 }
 
 func (s *regionSink) empty() bool { return len(s.entries) == 0 }
@@ -335,7 +364,11 @@ func (s *regionSink) add(off bag.ScaledPoint, box *node.VList, h bag.ScaledPoint
 	}
 	_, margin := marginKern(box.List)
 	margin = margin && box.List.Next() == nil
-	s.entries = append(s.entries, sinkEntry{off: off, height: h, floats: floatsBottom(box), box: box, margin: margin})
+	child := flowChildOf(box)
+	if child == nil && box.List != nil {
+		child = flowChildOf(box.List)
+	}
+	s.entries = append(s.entries, sinkEntry{off: off, height: h, floats: floatsBottom(box), box: box, margin: margin, child: child})
 }
 
 // floatsBottom is how far below the top of n the side floats in it paint: a
@@ -358,52 +391,288 @@ func floatsBottom(n node.Node) bag.ScaledPoint {
 	return bottom
 }
 
-// filled assembles the boxes into the region's Box. Margins below the last
-// box are left out and reported as MarginAfter, collapsed with flowMargin.
-// A side float that paints below the last box extends Used to its bottom.
-func (s *regionSink) filled(width, flowMargin bag.ScaledPoint) Filled {
+// filled assembles the boxes into the region's Box, the boxes of each
+// fragment in a box of their own. Margins below the last box are left out and
+// reported as MarginAfter, collapsed with the flow's. A side float that
+// paints below the last box extends Used to its bottom. seen holds the flow
+// children of earlier regions and takes this region's.
+func (s *regionSink) filled(width bag.ScaledPoint, f filled, seen map[*flowChild]bool) Filled {
 	n := len(s.entries)
 	var trailing bag.ScaledPoint
 	for n > 0 && s.entries[n-1].margin {
 		trailing += s.entries[n-1].height
 		n--
 	}
+	entries := s.entries[:n]
+	s.entries = nil
 	box := node.NewVList()
 	box.Width = width
+	var frags []Fragment
 	var cursor, floats bag.ScaledPoint
 	var tail node.Node
-	appendNode := func(nd node.Node) {
-		if tail == nil {
-			box.List = nd
+	for i := 0; i < len(entries); {
+		j := i + 1
+		child := entries[i].child
+		for child != nil && j < len(entries) && entries[j].child == child {
+			j++
+		}
+		run := entries[i:j]
+		i = j
+		top := run[0].off
+		var nd *node.VList
+		if child == nil {
+			nd = run[0].box
 		} else {
-			tail.SetNext(nd)
-			nd.SetPrev(tail)
+			nd = stackEntries(run, width)
+			if child.id != "" && !carriesID(run, child.id) {
+				nd.SetAttribute("id", child.id)
+			}
+			if fr, ok := fragmentOf(run, child, seen); ok {
+				frags = append(frags, fr)
+			}
 		}
-		tail = nd
-	}
-	for _, e := range s.entries[:n] {
-		if gap := e.off - cursor; gap != 0 {
-			k := node.NewKern()
-			k.Kern = gap
-			appendNode(k)
+		tail = appendAt(box, tail, cursor, top, nd)
+		cursor = top + vlistNodeHeight(nd)
+		for _, e := range run {
+			floats = max(floats, e.off+e.floats)
 		}
-		e.box.SetPrev(nil)
-		e.box.SetNext(nil)
-		appendNode(e.box)
-		cursor = e.off + e.height
-		floats = max(floats, e.off+e.floats)
 	}
-	margin := max(trailing, flowMargin)
+	margin := max(trailing, f.marginAfter)
 	if floats > cursor {
 		k := node.NewKern()
 		k.Kern = floats - cursor
-		appendNode(k)
+		appendAt(box, tail, 0, 0, k)
 		margin = max(0, margin-k.Kern)
 		cursor = floats
 	}
 	box.Height = cursor
-	s.entries = nil
-	return Filled{Box: box, Used: cursor, MarginAfter: margin}
+	for _, e := range entries {
+		if e.child != nil {
+			seen[e.child] = true
+		}
+	}
+	if k := len(frags); k > 0 && f.next != nil && entries[len(entries)-1].child == f.next {
+		frags[k-1].Continues = true
+	}
+	return Filled{Box: box, Used: cursor, MarginAfter: margin, Fragments: frags}
+}
+
+// appendAt appends nd to the list of box after tail, with a kern from cursor
+// down to top, and returns the new tail.
+func appendAt(box *node.VList, tail node.Node, cursor, top bag.ScaledPoint, nd node.Node) node.Node {
+	nd.SetPrev(nil)
+	nd.SetNext(nil)
+	if gap := top - cursor; gap != 0 {
+		k := node.NewKern()
+		k.Kern = gap
+		tail = appendAt(box, tail, 0, 0, k)
+	}
+	if tail == nil {
+		box.List = nd
+	} else {
+		tail.SetNext(nd)
+		nd.SetPrev(tail)
+	}
+	return nd
+}
+
+// stackEntries stacks the boxes of one fragment in a box of its own that
+// spans what they draw, from the leftmost edge (the rows of a table narrower
+// than the region, an indented block), or the region's width without any.
+func stackEntries(run []sinkEntry, width bag.ScaledPoint) *node.VList {
+	vl := node.NewVList()
+	top := run[0].off
+	var tail node.Node
+	var left, right bag.ScaledPoint
+	found := false
+	for _, e := range run {
+		if !e.margin {
+			l, w := drawnExtent(e.box)
+			if !found || l < left {
+				left = l
+			}
+			if !found || l+w > right {
+				right = l + w
+			}
+			found = true
+		}
+		tail = appendAt(vl, tail, top+vl.Height, e.off, e.box)
+		vl.Height = e.off + e.height - top
+	}
+	if right <= left {
+		vl.Width = width
+		return vl
+	}
+	vl.ShiftX = left
+	vl.Width = right - left
+	for _, e := range run {
+		// The shift comes off the box, or off its only child that carries it.
+		e.box.ShiftX -= left
+		if e.box.ShiftX >= 0 || e.box.List == nil || e.box.List.Next() != nil {
+			continue
+		}
+		switch c := e.box.List.(type) {
+		case *node.VList:
+			c.ShiftX += e.box.ShiftX
+			e.box.ShiftX = 0
+		case *node.HList:
+			c.ShiftX += e.box.ShiftX
+			e.box.ShiftX = 0
+		}
+	}
+	return vl
+}
+
+// drawnExtent is the left edge and width of what box draws: box itself, or
+// its only child (a table row placed on its own sits in a box of the region's
+// width), shifted by both.
+func drawnExtent(box *node.VList) (left, width bag.ScaledPoint) {
+	if box.List != nil && box.List.Next() == nil {
+		switch c := box.List.(type) {
+		case *node.VList:
+			return box.ShiftX + c.ShiftX, c.Width
+		case *node.HList:
+			return box.ShiftX + c.ShiftX, c.Width
+		}
+	}
+	return box.ShiftX, box.Width
+}
+
+// carriesID reports whether a box of the run already carries id: an unsplit
+// paragraph, or a fragment of a split one.
+func carriesID(run []sinkEntry, id string) bool {
+	for _, e := range run {
+		if v, _ := e.box.GetAttribute("id"); v == id {
+			return true
+		}
+		if e.box.List != nil {
+			if v, _ := e.box.List.GetAttribute("id"); v == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// fragmentOf is the Fragment of child that run holds. Margins take no part
+// in its extent, side floats all they paint; a run of margins alone is no
+// fragment.
+func fragmentOf(run []sinkEntry, child *flowChild, seen map[*flowChild]bool) (Fragment, bool) {
+	fr := Fragment{ID: child.id, Index: child.index, Continued: seen[child]}
+	found := false
+	for _, e := range run {
+		if e.margin {
+			continue
+		}
+		if !found {
+			fr.Top, found = e.off, true
+		}
+		fr.Height = max(fr.Height, e.off+max(e.height, e.floats)-fr.Top)
+	}
+	return fr, found
+}
+
+// attrFlowChild marks a node with the flow child it belongs to.
+const attrFlowChild = "_flowChild"
+
+// flowChild is one child of a caller's flow, a block of the body.
+type flowChild struct {
+	index int
+	id    string
+}
+
+// flowChildren gives every block of a body its flowChild, the same one for
+// every build of it.
+type flowChildren struct {
+	items []any
+	// ordinal is the position of items[i] among the blocks, -1 for text
+	// between them.
+	ordinal []int
+	byItem  map[int]*flowChild
+}
+
+func newFlowChildren(body *frontend.Text) *flowChildren {
+	fcs := &flowChildren{items: body.Items, ordinal: make([]int, len(body.Items)), byItem: map[int]*flowChild{}}
+	n := 0
+	for i, itm := range body.Items {
+		fcs.ordinal[i] = -1
+		t, ok := itm.(*frontend.Text)
+		if !ok {
+			continue
+		}
+		// The whitespace the box branch skips (see stampItemIndices).
+		if _, hasTag := t.Settings[frontend.SettingDebug]; !hasTag && isWhitespaceOnly(t) {
+			continue
+		}
+		fcs.ordinal[i] = n
+		n++
+	}
+	return fcs
+}
+
+// stamp marks the item boxes of vl, built from the body items from base on,
+// with their flow child.
+func (fcs *flowChildren) stamp(vl *node.VList, base int) {
+	for n := vl.List; n != nil; n = n.Next() {
+		child, ok := n.(*node.VList)
+		if !ok || child.Attributes == nil {
+			continue
+		}
+		k, ok := child.Attributes["_groupItemIdx"].(int)
+		if !ok || base+k >= len(fcs.items) || fcs.ordinal[base+k] < 0 {
+			continue
+		}
+		i := base + k
+		fch := fcs.byItem[i]
+		if fch == nil {
+			fch = &flowChild{index: fcs.ordinal[i]}
+			if t, ok := fcs.items[i].(*frontend.Text); ok {
+				fch.id, _ = t.Settings[frontend.SettingElementID].(string)
+			}
+			fcs.byItem[i] = fch
+		}
+		child.Attributes[attrFlowChild] = fch
+	}
+}
+
+// flowChildOf returns the flow child n belongs to, or nil.
+func flowChildOf(n node.Node) *flowChild {
+	if n == nil {
+		return nil
+	}
+	v, _ := n.GetAttribute(attrFlowChild)
+	fch, _ := v.(*flowChild)
+	return fch
+}
+
+// propagateFlowChild marks the nodes of the list to that have no flow child
+// with the one of from, whose parts they are.
+func propagateFlowChild(from, to node.Node) {
+	fch := flowChildOf(from)
+	if fch == nil {
+		return
+	}
+	for n := to; n != nil; n = n.Next() {
+		if flowChildOf(n) == nil {
+			n.SetAttribute(attrFlowChild, fch)
+		}
+	}
+}
+
+// stampFragment gives a fragment of the split block blockVL the block's id
+// and flow child.
+func stampFragment(frag, blockVL *node.VList) {
+	if id, ok := blockVL.Attributes["id"]; ok {
+		// An indented block's fragment is wrapped around a box that carries
+		// the block's shift (buildFragment); the id goes there, where the
+		// fragment is drawn.
+		target := frag
+		if inner, ok := frag.List.(*node.VList); ok && frag.ShiftX == 0 && inner.Next() == nil && inner.ShiftX == blockVL.ShiftX {
+			target = inner
+		}
+		target.SetAttribute("id", id)
+	}
+	propagateFlowChild(blockVL, frag)
 }
 
 // attrMarginTop is the margin-top of the block after a collapsed-margin kern
@@ -464,9 +733,10 @@ func (fc *flowCursor) start() error {
 	return nil
 }
 
-// breakTo hands back the current region and moves on to the next one.
-func (fc *flowCursor) breakTo(brk string) error {
-	if err := fc.regions.filled(filled{}); err != nil {
+// breakTo hands back the current region and moves on to the next one. n is
+// the node the next region starts with, or a block it goes on with.
+func (fc *flowCursor) breakTo(brk string, n node.Node) error {
+	if err := fc.regions.filled(filled{next: flowChildOf(n)}); err != nil {
 		return err
 	}
 	reg, err := fc.regions.next(brk)

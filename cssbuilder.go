@@ -1214,7 +1214,15 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 	groups := splitTextAtPageBreaks(body, fc.forcedKeyword)
 
 	var marginAfter bag.ScaledPoint
+	var children *flowChildren
+	if fc.caller {
+		children = newFlowChildren(body)
+	}
+	groupStart := 0
 	for i, group := range groups {
+		if i > 0 {
+			groupStart += len(groups[i-1])
+		}
 		if i == 0 {
 			if err := fc.start(); err != nil {
 				return 0, err
@@ -1224,7 +1232,7 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 			if t, ok := group[0].(*frontend.Text); ok {
 				brk = fc.forcedKeyword(t.Settings[frontend.SettingPageBreakBefore])
 			}
-			if err := fc.breakTo(brk); err != nil {
+			if err := fc.breakTo(brk, nil); err != nil {
 				return 0, err
 			}
 		}
@@ -1253,6 +1261,9 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 				return 0, err
 			}
 			stampGroupItemIndices(wrapper, vl)
+			if children != nil {
+				children.stamp(vl, groupStart+len(group)-len(items))
+			}
 			if rebuild {
 				// The collapsed margin kern preceding the restart item was
 				// already buffered by the previous pass; the rebuilt chain
@@ -1561,6 +1572,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		propagateInsertsAttr(inner, inner.List)
 		propagateAnchorIndices(inner, inner.List)
 		carryBoxMarks(inner, inner.List)
+		propagateFlowChild(inner, inner.List)
 		contentList = inner.List
 		if inner.Width > 0 {
 			contentWidth = inner.Width
@@ -1689,6 +1701,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			spl, _ := wrap.Attributes["_splittable"].(bool)
 			if o != "table" && !spl && wrap.List != nil && hasTableChild(wrap.List) {
 				propagateInsertsAttr(wrap, wrap.List)
+				propagateFlowChild(wrap, wrap.List)
 				first := wrap.List
 				last := node.Tail(first)
 				last.SetNext(next)
@@ -1795,6 +1808,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 				// reserved once the wrapper VList is dropped.
 				propagateInsertsAttr(tableVL, tableVL.List)
 				shiftChildren(tableVL)
+				propagateFlowChild(tableVL, tableVL.List)
 				first := tableVL.List
 				last := node.Tail(first)
 				last.SetNext(next)
@@ -1835,7 +1849,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 						return -1, nil, err
 					}
 					if brk := fc.breakAfter(cur); brk != "" && next != nil {
-						if err := fc.breakTo(brk); err != nil {
+						if err := fc.breakTo(brk, next); err != nil {
 							return -1, nil, err
 						}
 					}
@@ -1852,7 +1866,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		// block beside it, or both move to the next page.
 		if fh, isFloat := floatBoxHeight(cur); isFloat && next != nil {
 			if need := floatKeepWithNext(fh, siblingsFrom(next)); trialPageHeight(incoming, need) > contentArea && cb.pageBufHeight > 0 {
-				if err := fc.breakTo(""); err != nil {
+				if err := fc.breakTo("", cur); err != nil {
 					return -1, nil, err
 				}
 				if idx, ok := restartIdx(cur); ok {
@@ -1874,7 +1888,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 				chained[n] = true
 			}
 			if trialPageHeight(incoming, need) > contentArea && cb.pageBufHeight > 0 {
-				if err := fc.breakTo(""); err != nil {
+				if err := fc.breakTo("", cur); err != nil {
 					return -1, nil, err
 				}
 				// The fresh page may use a different content width; if cur
@@ -1887,7 +1901,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		}
 
 		if trialPageHeight(incoming, h) > contentArea && cb.pageBufHeight > 0 {
-			if err := fc.breakTo(""); err != nil {
+			if err := fc.breakTo("", cur); err != nil {
 				return -1, nil, err
 			}
 			// Same width check as above: cur has not been buffered yet, so
@@ -1928,7 +1942,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		}
 
 		if brk := fc.breakAfter(cur); brk != "" && next != nil {
-			if err := fc.breakTo(brk); err != nil {
+			if err := fc.breakTo(brk, next); err != nil {
 				return -1, nil, err
 			}
 		}
@@ -2411,6 +2425,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 				items = append([]node.Node{colorStartNode()}, items...)
 			}
 			wrapped, h := buildFragment(items, kind)
+			stampFragment(wrapped, blockVL)
 			hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
 			if !isFirst {
 				hIdx, aIdx = -1, nil
@@ -2477,7 +2492,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		// applies when there's something already on the page — on an empty
 		// page even a single line has to land here.
 		if isFirst && cb.pageBufHeight > 0 && (countHL(batch) < fl.orphans && i < len(children) || overflow) {
-			if err := fc.breakTo(""); err != nil {
+			if err := fc.breakTo("", blockVL); err != nil {
 				return err
 			}
 			i = 0
@@ -2551,6 +2566,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			batch = append(batch, colorResetNode())
 		}
 		wrapped, h := buildFragment(batch, kind)
+		stampFragment(wrapped, blockVL)
 		hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
 		if !isFirst {
 			hIdx, aIdx = -1, nil
@@ -2561,7 +2577,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 
 		// More fragments to come: ship this page and start fresh.
 		if i < len(children) {
-			if err := fc.breakTo(""); err != nil {
+			if err := fc.breakTo("", blockVL); err != nil {
 				return err
 			}
 			// The fresh page may use a different content width (@page
@@ -2657,6 +2673,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 			box.List = ft
 			box.Width = tableWidth
 			box.Height = h
+			propagateFlowChild(tableVL, box)
 			fc.cur.output(*y, shifted(box), h)
 			*y -= h
 		}
@@ -2665,7 +2682,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 	}
 
 	breakTo := func() error {
-		if err := fc.breakTo(""); err != nil {
+		if err := fc.breakTo("", tableVL); err != nil {
 			return err
 		}
 		*y = fc.cur.top
@@ -2785,6 +2802,8 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 										newRows[i] = row
 									}
 									rows = newRows
+									// The rebuilt table is still the same flow child.
+									propagateFlowChild(tableVL, newVL)
 									tableVL = newVL
 									tableWidth = newVL.Width
 									if bh, ok := newVL.Attributes["_buildHeaders"].(func() ([]*node.HList, error)); ok {
@@ -2824,6 +2843,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 					box.List = hdr
 					box.Width = tableWidth
 					box.Height = hdrH
+					propagateFlowChild(tableVL, box)
 					fc.cur.output(*y, shifted(box), hdrH)
 					*y -= hdrH
 				}
@@ -2842,6 +2862,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		box.Width = tableWidth
 		box.Height = h
 
+		propagateFlowChild(tableVL, box)
 		fc.cur.output(*y, shifted(box), h)
 		for _, idx := range anchorIndicesOn(row) {
 			if idx >= 0 && idx < len(cb.Anchors) {
