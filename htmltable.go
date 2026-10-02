@@ -431,6 +431,10 @@ func (cb *CSSBuilder) buildTR(te *frontend.Text, tbl *frontend.Table) {
 		tr.MinHeight = h
 	}
 	delete(te.Settings, settingCSSHeight)
+	if h, ok := te.Settings[settingFixedHeight].(bag.ScaledPoint); ok {
+		tr.FixedHeight = h
+	}
+	delete(te.Settings, settingFixedHeight)
 	// break-inside: auto asks for a row that may break across pages; without
 	// it a row stays whole, as it always has.
 	if v, _ := te.Settings[settingPageBreakInside].(string); v == "auto" {

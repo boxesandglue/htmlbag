@@ -69,6 +69,10 @@ const settingCSSHeight frontend.SettingType = -3
 // tree (PDF 1.7 §14.9.2), so only actual switches are stamped.
 const settingLangTag frontend.SettingType = -4
 
+// settingFixedHeight carries the -bag-fixed-height of a <tr> to buildTR,
+// which moves it onto the row and deletes it, as with settingCSSHeight.
+const settingFixedHeight frontend.SettingType = -10
+
 // Sentinels for CSS floats that text flows beside (see float.go). They carry
 // state from style resolution and from the block container down to the
 // paragraph, and are consumed before FormatParagraph, whose settings switch
@@ -773,6 +777,12 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			ih.width = v
 		case "height":
 			ih.height = v
+		case "-bag-fixed-height":
+			if lv := strings.ToLower(strings.TrimSpace(v)); lv == "none" {
+				ih.fixedHeight = ""
+			} else {
+				ih.fixedHeight = lv
+			}
 		case "white-space":
 			// CSS Text 3 §3. Only `pre` was recognised, so `pre-line` — the
 			// value you want for prose that carries a hard break — collapsed
@@ -969,6 +979,7 @@ type FormattingStyles struct {
 	Valign          frontend.VerticalAlignment
 	width           string
 	height          string
+	fixedHeight     string // -bag-fixed-height (non-inherited; "" = none)
 	pageBreakAfter  string
 	pageBreakBefore string
 	pageBreakInside string
@@ -1048,6 +1059,32 @@ func parseOffsetValue(v string, cur, root bag.ScaledPoint) *bag.ScaledPoint {
 	}
 	val := ParseRelativeSize(v, cur, root)
 	return &val
+}
+
+// parseFixedHeight reads a -bag-fixed-height value. Unlike ParseRelativeSize
+// it takes lengths only, so a percentage or a bare number is not read
+// relative to the font size.
+func parseFixedHeight(v string, cur, root bag.ScaledPoint) (bag.ScaledPoint, bool) {
+	var h bag.ScaledPoint
+	if n, ok := strings.CutSuffix(v, "rem"); ok {
+		f, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			return 0, false
+		}
+		h = bag.MultiplyFloat(root, f)
+	} else if n, ok := strings.CutSuffix(v, "em"); ok {
+		f, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			return 0, false
+		}
+		h = bag.MultiplyFloat(cur, f)
+	} else {
+		var err error
+		if h, err = bag.SP(v); err != nil {
+			return 0, false
+		}
+	}
+	return h, h > 0
 }
 
 // parseZIndexValue turns a CSS z-index value into a *int. Returns nil
@@ -1718,6 +1755,14 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	if styles.height != "" {
 		elementCSSHeight = ParseRelativeSize(styles.height, styles.Fontsize, styles.DefaultFontSize)
 	}
+	elementFixedHeight := bag.ScaledPoint(0)
+	if styles.fixedHeight != "" && item.Data == "tr" {
+		if h, ok := parseFixedHeight(styles.fixedHeight, styles.Fontsize, styles.DefaultFontSize); ok {
+			elementFixedHeight = h
+		} else {
+			bag.Logger.Warn("-bag-fixed-height needs a positive length, ignoring it", "value", styles.fixedHeight)
+		}
+	}
 	// CSS 2.1 §9.4.3 position: relative — element stays in flow,
 	// reserving its original slot, but renders at an offset. v1
 	// supports horizontal offsets via SettingShiftX (consumed by
@@ -2296,6 +2341,9 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		// move it onto the frontend row/cell and delete it, so it never
 		// reaches the settings switch in frontend.FormatParagraph.
 		newte.Settings[settingCSSHeight] = elementCSSHeight
+	}
+	if elementFixedHeight > 0 {
+		newte.Settings[settingFixedHeight] = elementFixedHeight
 	}
 	// CSS initial-letter: carve the paragraph's first letter out as a
 	// dropcap spanning several lines.
