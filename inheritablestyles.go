@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -800,6 +801,12 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 				fe := f / 100
 				ih.fontexpansion = &fe
 			}
+		case "-bag-horizontal-scale":
+			if hs, ok := parseHorizontalScale(v); ok {
+				ih.horizontalScale = &hs
+			} else {
+				bag.Logger.Warn("-bag-horizontal-scale needs a positive number or percentage, ignoring it", "value", v)
+			}
 		default:
 			bag.Logger.Debug("unresolved attribute", k, v)
 		}
@@ -894,6 +901,7 @@ type FormattingStyles struct {
 	fontstyle          frontend.FontStyle
 	Fontweight         frontend.FontWeight
 	fontexpansion      *float64
+	horizontalScale    *float64 // -bag-horizontal-scale; nil writes no setting, so documents without it are unchanged
 	Halign             frontend.HorizontalAlignment
 	hangingPunctuation frontend.HangingPunctuation
 	direction          string  // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
@@ -1037,6 +1045,21 @@ func parseOffsetValue(v string, cur, root bag.ScaledPoint) *bag.ScaledPoint {
 // parseZIndexValue turns a CSS z-index value into a *int. Returns nil
 // for empty / "auto" so the caller can distinguish "no stacking
 // intent" from "explicit z-index: 0".
+// parseHorizontalScale reads a -bag-horizontal-scale value, a percentage or a
+// number as the CSS scale property takes them, so 90% and 0.9 are the same.
+func parseHorizontalScale(v string) (float64, bool) {
+	v = strings.TrimSpace(v)
+	div := 1.0
+	if p, ok := strings.CutSuffix(v, "%"); ok {
+		v, div = p, 100
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 || math.IsInf(f, 0) || math.IsNaN(f) {
+		return 0, false
+	}
+	return f / div, true
+}
+
 func parseZIndexValue(v string) *int {
 	v = strings.TrimSpace(v)
 	if v == "" || v == "auto" {
@@ -1069,6 +1092,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		DefaultFontSize:    is.DefaultFontSize,
 		DefaultFontFamily:  is.DefaultFontFamily,
 		fontexpansion:      is.fontexpansion,
+		horizontalScale:    is.horizontalScale,
 		fontfamily:         is.fontfamily,
 		fontfamilyStack:    is.fontfamilyStack,
 		fontfeatures:       newFontFeatures,
@@ -1270,6 +1294,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		settings[frontend.SettingFontExpansion] = *ih.fontexpansion
 	} else {
 		settings[frontend.SettingFontExpansion] = 0.05
+	}
+	if ih.horizontalScale != nil {
+		settings[frontend.SettingHorizontalScale] = *ih.horizontalScale
 	}
 	settings[frontend.SettingFontFamily] = ih.fontfamily
 	settings[frontend.SettingSynthesizeStyle] = ih.synthesizeItalic
