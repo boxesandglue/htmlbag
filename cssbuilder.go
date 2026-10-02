@@ -1605,6 +1605,12 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if hasBoxMarks(inner) && vlistNodeHeight(inner) <= fc.cur.height {
 				break
 			}
+			// Unwrapped, a paragraph's lines are placed one by one, without
+			// orphans and widows. Those only matter in a region that holds
+			// something, which at the start of a flow is an occupied one.
+			if _, leaf := inner.Attributes["_splittableTe"]; leaf && fc.cur.occupied {
+				break
+			}
 		}
 		shiftChildren(inner)
 		propagateInsertsAttr(inner, inner.List)
@@ -1787,12 +1793,12 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 					// current page with the correct y cursor.
 					flushedBodyH := cb.pageBufHeight
 					topFloatH := cb.pageInsertHeight[InsertFloatTop]
+					phc := fc.holdsContent(cb) || topFloatH > 0
 					if err := cb.flushInsertsIn(fc.cur); err != nil {
 						return -1, nil, err
 					}
 					yLocal := fc.cur.top - topFloatH - flushedBodyH
 					yLimitLocal := fc.cur.bottom()
-					phc := flushedBodyH > 0 || topFloatH > 0
 					if err := cb.outputTableRows(tableVL, buildHeadersFn, &yLocal, &yLimitLocal, &phc, fc); err != nil {
 						return -1, nil, err
 					}
@@ -1904,8 +1910,8 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		// page has to hold the float's painted extent and a foothold of the
 		// block beside it, or both move to the next page.
 		if fh, isFloat := floatBoxHeight(cur); isFloat && next != nil {
-			if need := floatKeepWithNext(fh, siblingsFrom(next)); trialPageHeight(incoming, need) > contentArea && cb.pageBufHeight > 0 {
-				if err := fc.breakTo("", cur); err != nil {
+			if need := floatKeepWithNext(fh, siblingsFrom(next)); trialPageHeight(incoming, need) > contentArea && fc.holdsContent(cb) {
+				if err := fc.moveOn(cb, cur); err != nil {
 					return -1, nil, err
 				}
 				if idx, ok := restartIdx(cur); ok {
@@ -1926,8 +1932,8 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			for _, n := range rest {
 				chained[n] = true
 			}
-			if trialPageHeight(incoming, need) > contentArea && cb.pageBufHeight > 0 {
-				if err := fc.breakTo("", cur); err != nil {
+			if trialPageHeight(incoming, need) > contentArea && fc.holdsContent(cb) {
+				if err := fc.moveOn(cb, cur); err != nil {
 					return -1, nil, err
 				}
 				// The fresh page may use a different content width; if cur
@@ -1939,8 +1945,8 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			}
 		}
 
-		if trialPageHeight(incoming, h) > contentArea && cb.pageBufHeight > 0 {
-			if err := fc.breakTo("", cur); err != nil {
+		if trialPageHeight(incoming, h) > contentArea && fc.holdsContent(cb) {
+			if err := fc.moveOn(cb, cur); err != nil {
 				return -1, nil, err
 			}
 			// Same width check as above: cur has not been buffered yet, so
@@ -1953,6 +1959,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		// A break above may have left cur, a margin, at the top of a region.
 		if fc.truncated(cb, cur) {
 			cur = next
+			continue
+		}
+		// In an occupied one, the margin is kept: the top of the loop
+		// collapses it with MarginBefore and weighs cur again.
+		if fc.top == topKept && fc.regionEmpty(cb) {
 			continue
 		}
 
@@ -2514,8 +2525,8 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		// the block restarts on a fresh page with full available space. Only
 		// applies when there's something already on the page — on an empty
 		// page even a single line has to land here.
-		if isFirst && cb.pageBufHeight > 0 && (countHL(batch) < fl.orphans && i < len(children) || overflow) {
-			if err := fc.breakTo("", blockVL); err != nil {
+		if isFirst && fc.holdsContent(cb) && (countHL(batch) < fl.orphans && i < len(children) || overflow) {
+			if err := fc.moveOn(cb, blockVL); err != nil {
 				return err
 			}
 			i = 0
@@ -2550,8 +2561,8 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			// Both cannot be kept, so there is no break inside the block
 			// here: it moves on whole, as it would between blocks, unless
 			// the page holds nothing else.
-			if splitTe != nil && remainingLines < fl.widows && isFirst && cb.pageBufHeight > 0 {
-				if err := fc.breakTo("", blockVL); err != nil {
+			if splitTe != nil && remainingLines < fl.widows && isFirst && fc.holdsContent(cb) {
+				if err := fc.moveOn(cb, blockVL); err != nil {
 					return err
 				}
 				i = 0
