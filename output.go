@@ -395,6 +395,11 @@ func (cb *CSSBuilder) outputMarginBoxes(dimensions PageDimensions) error {
 					}
 				}
 
+				for _, tok := range contentTokens {
+					if tok.Type == ContentCounter && tok.Value == "pages" {
+						cb.previousPassReads.Pages = true
+					}
+				}
 				c := evaluateContent(contentTokens, cb.Counters)
 				if vl.List != nil {
 					// Image or running-element content: skip text rendering.

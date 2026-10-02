@@ -1809,6 +1809,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			attrLookup := func(name string) string {
 				return item.Attributes[name]
 			}
+			cb.notePreviousPassReads(tokens, attrLookup)
 			return evaluateContentWithStack(tokens, ss, anchorPages, cb.anchorTexts, cb.anchorCounters, attrLookup)
 		}
 		if markerContent, ok := item.Styles["marker::content"]; ok {
@@ -2326,6 +2327,7 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue Styl
 			continue
 		}
 		single[0] = tok
+		cb.notePreviousPassReads(single, attrLookup)
 		buf.WriteString(evaluateContentWithStack(single, ss, anchorPages, cb.anchorTexts, cb.anchorCounters, attrLookup))
 	}
 	flushString(buf.String())

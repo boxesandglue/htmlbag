@@ -205,6 +205,9 @@ type CSSBuilder struct {
 	// *previous* render pass (CSS target-counter() / target-counters()
 	// with counters other than "page"). Same lifecycle as anchorPages.
 	anchorCounters map[string]map[string][]int
+	// previousPassReads collects what this pass read of anchorPages,
+	// anchorTexts, anchorCounters and Counters["pages"].
+	previousPassReads PreviousPassReads
 	// anchorSnapshots carries counter snapshots for block-level anchors
 	// within the *current* pass, from the HTML walk (where the styles
 	// stack with its counters is live) to the VList builder (which runs
@@ -438,6 +441,43 @@ func (cb *CSSBuilder) SetAnchorTexts(m map[string]string) {
 // than "page". Pass nil to clear.
 func (cb *CSSBuilder) SetAnchorCounters(m map[string]map[string][]int) {
 	cb.anchorCounters = m
+}
+
+// PreviousPassReads is what a render pass read of the data a caller
+// installs from the previous pass.
+type PreviousPassReads struct {
+	// Pages is set when a page margin box evaluated counter(pages), which
+	// the caller sets in Counters.
+	Pages bool
+	// Anchors holds the ids whose page, text or counters a
+	// target-counter(), target-counters() or target-text() looked up, also
+	// when the lookup found nothing.
+	Anchors map[string]bool
+}
+
+// PreviousPassReads returns what the CSSBuilder read so far of the data
+// installed with SetAnchorPages, SetAnchorTexts, SetAnchorCounters and the
+// "pages" counter. A multi-pass caller needs another pass only when one of
+// these values changed; a document that reads none of them comes out the
+// same in every pass.
+func (cb *CSSBuilder) PreviousPassReads() PreviousPassReads {
+	return cb.previousPassReads
+}
+
+// notePreviousPassReads records the anchors that the target functions in
+// tokens look up (see PreviousPassReads).
+func (cb *CSSBuilder) notePreviousPassReads(tokens []ContentToken, attrLookup func(string) string) {
+	for _, tok := range tokens {
+		switch tok.Type {
+		case ContentTargetCounter, ContentTargetCounters, ContentTargetText:
+			if id := resolveTargetID(tok, attrLookup); id != "" {
+				if cb.previousPassReads.Anchors == nil {
+					cb.previousPassReads.Anchors = make(map[string]bool)
+				}
+				cb.previousPassReads.Anchors[id] = true
+			}
+		}
+	}
 }
 
 // recordAnchorSnapshot stores the current counter state for a block
