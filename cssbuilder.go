@@ -2548,6 +2548,19 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 					remainingLines++
 				}
 			}
+			// Both cannot be kept, so there is no break inside the block
+			// here: it moves on whole, as it would between blocks, unless
+			// the page holds nothing else.
+			if splitTe != nil && remainingLines < fl.widows && isFirst && cb.pageBufHeight > 0 {
+				if err := fc.breakTo("", blockVL); err != nil {
+					return err
+				}
+				i = 0
+				if nc := rebuildRemainder(0); nc != nil {
+					children = nc
+				}
+				continue
+			}
 		}
 
 		// A float at the end of the batch would be parted from the child
@@ -3089,7 +3102,22 @@ func splittablePeekHeight(n node.Node) (bag.ScaledPoint, bool) {
 		return 0, false
 	}
 	hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
-	orphans := fragLinesOf(vl).orphans
+	fl := fragLinesOf(vl)
+	orphans := fl.orphans
+	// A paragraph that cannot leave `orphans` lines here and `widows` on
+	// the next page is not split but moved on whole (see outputBlockSplit),
+	// so it offers no foothold.
+	if _, leaf := vl.Attributes["_splittableTe"].(*frontend.Text); leaf {
+		lines := 0
+		for _, c := range children {
+			if isContentNode(c) {
+				lines++
+			}
+		}
+		if lines < fl.orphans+fl.widows {
+			return 0, false
+		}
+	}
 	// Reserve room for `orphans` content children (HList lines or
 	// VList blocks), not just the first one: outputBlockSplit refuses to
 	// start a block that would leave fewer than that on the current page

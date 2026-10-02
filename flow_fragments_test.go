@@ -293,3 +293,29 @@ func TestSplitIndentedParagraphIDBoxX(t *testing.T) {
 		t.Errorf("%d boxes carry the id, want one on each of the %d pages", n, len(pages))
 	}
 }
+
+// A paragraph moved on whole, because its widows and orphans clash, is one
+// fragment in the next region, not continued, and the region it left holds
+// no fragment of it.
+func TestFlowTextFragmentsOfAParagraphMovedOnWhole(t *testing.T) {
+	cases := []struct {
+		name, after string
+		want        [][]Fragment
+	}{
+		{"last block", ``, [][]Fragment{
+			{{"", 0, 0, sp("36pt"), false, false}},
+			{{"b", 1, 0, sp("36pt"), false, false}},
+		}},
+		{"block after it", `<p id="c">Cq</p>`, [][]Fragment{
+			{{"", 0, 0, sp("36pt"), false, false}},
+			{{"b", 1, 0, sp("36pt"), false, false}, {"c", 2, sp("36pt"), charLine, false, false}},
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cb, _ := newFlowBuilder(t, "")
+			tr := flow(t, cb, `<p>`+charLines("A", 3)+`</p><p id="b">`+charLines("B", 3)+`</p>`+c.after, wide("60pt"), wide("1000pt"))
+			checkFragments(t, tr, c.want)
+		})
+	}
+}
