@@ -211,3 +211,85 @@ func TestFlowTextFragmentsOfATableRebuiltAtAnotherWidth(t *testing.T) {
 		}
 	}
 }
+
+type idBox struct{ x, wd bag.ScaledPoint }
+
+// idBoxes lists where the boxes in a region's box that carry id are drawn,
+// as --dumpoutput reports them: x plus every ShiftX on the way down.
+func idBoxes(f Filled, id string) []idBox {
+	var boxes []idBox
+	var walk func(n node.Node, x bag.ScaledPoint)
+	walk = func(n node.Node, x bag.ScaledPoint) {
+		for ; n != nil; n = n.Next() {
+			switch v := n.(type) {
+			case *node.VList:
+				if got, _ := v.GetAttribute("id"); got == id {
+					boxes = append(boxes, idBox{x + v.ShiftX, v.Width})
+				}
+				walk(v.List, x+v.ShiftX)
+			case *node.HList:
+				if got, _ := v.GetAttribute("id"); got == id {
+					boxes = append(boxes, idBox{x + v.ShiftX, v.Width})
+				}
+				walk(v.List, x+v.ShiftX)
+			}
+		}
+	}
+	walk(f.Box, 0)
+	return boxes
+}
+
+// Each fragment of an indented block carries its id on a box at the block's
+// margin-left, where its content is drawn, not at the region's left edge.
+func TestFlowTextIndentedFragmentsIDBoxX(t *testing.T) {
+	var rows strings.Builder
+	for i := range 8 {
+		fmt.Fprintf(&rows, `<tr><td>R%dq</td></tr>`, i)
+	}
+	cases := []struct {
+		name, body string
+		want       idBox
+	}{
+		{"paragraph", `<p id="d" style="margin-left: 20pt">` + charLines("B", 8) + `</p>`, idBox{sp("20pt"), sp("140pt")}},
+		{"table", `<table id="d" style="width: 80pt; margin-left: 30pt">` + rows.String() + `</table>`, idBox{sp("30pt"), sp("80pt")}},
+		{"div", `<div id="d" style="margin-left: 20pt"><p>` + charLines("A", 3) + `</p><p>` + charLines("B", 3) + `</p><p>` + charLines("C", 3) + `</p></div>`, idBox{sp("20pt"), sp("140pt")}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cb, _ := newFlowBuilder(t, "")
+			tr := flow(t, cb, c.body, wide("60pt"), wide("60pt"), wide("60pt"), wide("60pt"))
+			if len(tr.filled) < 2 {
+				t.Fatalf("filled %d regions, want the block split", len(tr.filled))
+			}
+			for i, f := range tr.filled {
+				if got := idBoxes(f, "d"); len(got) != 1 || got[0] != c.want {
+					t.Errorf("region %d: id boxes %v, want one at x=%s wd=%s", i+1, got, c.want.x, c.want.wd)
+				}
+			}
+		})
+	}
+}
+
+// On pages too, each fragment of an indented paragraph carries its id where
+// it is drawn.
+func TestSplitIndentedParagraphIDBoxX(t *testing.T) {
+	pages := renderHTMLPages(t, charCSS, `<html><body><p>Aq</p><p id="d" style="margin-left: 20pt">`+charLines("B", 30)+`</p></body></html>`)
+	if len(pages) < 2 {
+		t.Fatalf("got %d pages, want the paragraph split", len(pages))
+	}
+	for i, pg := range pages {
+		for _, obj := range pg.Objects {
+			if obj.Vlist == nil {
+				continue
+			}
+			for _, b := range idBoxes(Filled{Box: obj.Vlist}, "d") {
+				if b.x != sp("20pt") {
+					t.Errorf("page %d: id box at x=%s, want 20pt", i+1, b.x)
+				}
+			}
+		}
+	}
+	if n := elementIDs(pages)["d"]; n != len(pages) {
+		t.Errorf("%d boxes carry the id, want one on each of the %d pages", n, len(pages))
+	}
+}

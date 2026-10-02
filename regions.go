@@ -65,11 +65,13 @@ type Filled struct {
 }
 
 // Fragment is the part of one flow child that landed in a region. The flow's
-// children are the blocks of the body.
+// children are the blocks of the body. Only they get an id per fragment: an
+// id nested inside a child that splits is not on that region's boxes.
 type Fragment struct {
 	// ID is the child's id attribute, "" without one.
 	ID string
-	// Index is the child's position among the flow's children.
+	// Index is the child's position among the flow's children. Loose text
+	// between blocks counts as an anonymous child of its own.
 	Index int
 	// Top is the fragment's top edge, measured from the region's top edge,
 	// and Height its height, both without the child's margins.
@@ -474,38 +476,66 @@ func appendAt(box *node.VList, tail node.Node, cursor, top bag.ScaledPoint, nd n
 	return nd
 }
 
-// stackEntries stacks the boxes of one fragment in a box of its own, as wide
-// as the widest of them (the rows of a table narrower than the region), or
-// the region's width without any.
+// stackEntries stacks the boxes of one fragment in a box of its own that
+// spans what they draw, from the leftmost edge (the rows of a table narrower
+// than the region, an indented block), or the region's width without any.
 func stackEntries(run []sinkEntry, width bag.ScaledPoint) *node.VList {
 	vl := node.NewVList()
 	top := run[0].off
 	var tail node.Node
+	var left, right bag.ScaledPoint
+	found := false
 	for _, e := range run {
 		if !e.margin {
-			vl.Width = max(vl.Width, drawnWidth(e.box))
+			l, w := drawnExtent(e.box)
+			if !found || l < left {
+				left = l
+			}
+			if !found || l+w > right {
+				right = l + w
+			}
+			found = true
 		}
 		tail = appendAt(vl, tail, top+vl.Height, e.off, e.box)
 		vl.Height = e.off + e.height - top
 	}
-	if vl.Width == 0 {
+	if right <= left {
 		vl.Width = width
+		return vl
+	}
+	vl.ShiftX = left
+	vl.Width = right - left
+	for _, e := range run {
+		// The shift comes off the box, or off its only child that carries it.
+		e.box.ShiftX -= left
+		if e.box.ShiftX >= 0 || e.box.List == nil || e.box.List.Next() != nil {
+			continue
+		}
+		switch c := e.box.List.(type) {
+		case *node.VList:
+			c.ShiftX += e.box.ShiftX
+			e.box.ShiftX = 0
+		case *node.HList:
+			c.ShiftX += e.box.ShiftX
+			e.box.ShiftX = 0
+		}
 	}
 	return vl
 }
 
-// drawnWidth is the width of box, or of its only child: a table row placed
-// on its own sits in a box of the region's width.
-func drawnWidth(box *node.VList) bag.ScaledPoint {
+// drawnExtent is the left edge and width of what box draws: box itself, or
+// its only child (a table row placed on its own sits in a box of the region's
+// width), shifted by both.
+func drawnExtent(box *node.VList) (left, width bag.ScaledPoint) {
 	if box.List != nil && box.List.Next() == nil {
 		switch c := box.List.(type) {
 		case *node.VList:
-			return c.Width
+			return box.ShiftX + c.ShiftX, c.Width
 		case *node.HList:
-			return c.Width
+			return box.ShiftX + c.ShiftX, c.Width
 		}
 	}
-	return box.Width
+	return box.ShiftX, box.Width
 }
 
 // carriesID reports whether a box of the run already carries id: an unsplit
@@ -633,7 +663,14 @@ func propagateFlowChild(from, to node.Node) {
 // and flow child.
 func stampFragment(frag, blockVL *node.VList) {
 	if id, ok := blockVL.Attributes["id"]; ok {
-		frag.SetAttribute("id", id)
+		// An indented block's fragment is wrapped around a box that carries
+		// the block's shift (buildFragment); the id goes there, where the
+		// fragment is drawn.
+		target := frag
+		if inner, ok := frag.List.(*node.VList); ok && frag.ShiftX == 0 && inner.Next() == nil && inner.ShiftX == blockVL.ShiftX {
+			target = inner
+		}
+		target.SetAttribute("id", id)
 	}
 	propagateFlowChild(blockVL, frag)
 }
