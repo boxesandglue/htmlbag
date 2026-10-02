@@ -32,3 +32,40 @@ func TestShortParagraphMovesOnWhenWidowsAndOrphansClash(t *testing.T) {
 		}
 	})
 }
+
+// A heading kept with a paragraph that is moved on whole moves on with it:
+// the paragraph offers the break before the heading no foothold.
+func TestShortParagraphTakesKeptHeadingAlong(t *testing.T) {
+	// 10 lines leave 40pt, room for the heading and two lines.
+	body := `<p>` + charLines("A", 10) + `</p><h1 style="page-break-after: avoid">H</h1><p>` + charLines("B", 3) + `</p>`
+	lines := placedLines(renderHTMLPages(t, charCSS, body))
+	h, b := firstLine(t, lines, "H"), firstLine(t, lines, "B")
+	if h.page != 2 || h.top != charTop || b.page != 2 {
+		t.Errorf("heading on page %d at %s, paragraph on page %d; want both on page 2, the heading at %s", h.page, h.top, b.page, charTop)
+	}
+}
+
+// Widows and orphans count lines, so a box or a list whose children are
+// blocks still breaks between them.
+func TestBlockChildrenSplitDespiteWidows(t *testing.T) {
+	const css = charCSS + `
+div { border: 1pt solid black; }
+ul, li { margin: 0; padding: 0; font-size: 10pt; line-height: 12pt; }`
+	cases := []struct {
+		name, body, kept, moved string
+	}{
+		{"box", `<p>` + charLines("A", 2) + `</p><div><p>` + charLines("B", 4) + `</p><p>` + charLines("C", 4) + `</p><p>` + charLines("D", 4) + `</p></div>`, "C", "D"},
+		{"list", `<p>` + charLines("A", 11) + `</p><ul><li>B</li><li>C</li><li>D</li></ul>`, "C", "D"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			lines := placedLines(renderHTMLPages(t, css, c.body))
+			if k := firstLine(t, lines, c.kept); k.page != 1 {
+				t.Errorf("%s starts on page %d, want 1", c.kept, k.page)
+			}
+			if m := firstLine(t, lines, c.moved); m.page != 2 {
+				t.Errorf("%s starts on page %d, want 2", c.moved, m.page)
+			}
+		})
+	}
+}
