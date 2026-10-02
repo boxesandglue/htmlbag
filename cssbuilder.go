@@ -1263,18 +1263,16 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 		if i > 0 {
 			groupStart += len(groups[i-1])
 		}
+		var brk string
+		if t, ok := group[0].(*frontend.Text); ok {
+			brk = fc.forcedKeyword(t.Settings[frontend.SettingPageBreakBefore])
+		}
 		if i == 0 {
-			if err := fc.start(); err != nil {
+			if err := fc.start(brk); err != nil {
 				return 0, err
 			}
-		} else {
-			var brk string
-			if t, ok := group[0].(*frontend.Text); ok {
-				brk = fc.forcedKeyword(t.Settings[frontend.SettingPageBreakBefore])
-			}
-			if err := fc.breakTo(brk, nil); err != nil {
-				return 0, err
-			}
+		} else if err := fc.breakTo(brk, nil); err != nil {
+			return 0, err
 		}
 
 		items := group

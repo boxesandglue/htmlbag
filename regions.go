@@ -16,7 +16,8 @@ type Regions interface {
 	// Next returns the region to fill: once before the first block, then
 	// only when the content moves on. brk is "" for an automatic break, else
 	// the forced break-before or break-after keyword that caused it (page,
-	// column, left, right, …).
+	// column, left, right, …). Before the first block, it is that block's
+	// forced break-before, "" without one.
 	Next(brk string) (Region, error)
 	// Filled hands back every region exactly once, the last one included,
 	// before the Next that follows it. When FlowText returns an error, the
@@ -232,7 +233,8 @@ type filled struct {
 type regions interface {
 	// next returns the region to fill: once before the first block, then
 	// whenever the content moves on. brk is "" for an automatic break, else
-	// the forced break-before or break-after keyword that caused it.
+	// the forced break-before or break-after keyword that caused it, also
+	// before the first block.
 	next(brk string) (region, error)
 	// filled hands back every region exactly once, the last one included,
 	// before the next call to next.
@@ -716,9 +718,10 @@ type flowCursor struct {
 	rebuiltIn int
 }
 
-// start takes the first region.
-func (fc *flowCursor) start() error {
-	reg, err := fc.regions.next("")
+// start takes the first region, brk being the first block's forced
+// break-before.
+func (fc *flowCursor) start(brk string) error {
+	reg, err := fc.regions.next(brk)
 	if err != nil {
 		return err
 	}
