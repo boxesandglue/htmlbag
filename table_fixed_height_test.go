@@ -1,6 +1,7 @@
 package htmlbag
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
@@ -22,11 +23,18 @@ tbody.fixed { -bag-fixed-height: 16pt }`
 <tr><td style="-bag-fixed-height: 16pt">` + tall + `</td></tr>
 <tr style="-bag-fixed-height: 16pt"><td style="height: 3cm">` + tall + `</td></tr>
 <tr><td>` + tall + `</td></tr>
+<tr style="-bag-fixed-height: 50%"><td>` + tall + `</td></tr>
+<tr style="-bag-fixed-height: 0"><td>` + tall + `</td></tr>
 </table>
 <table><tbody class="fixed"><tr><td>` + tall + `</td></tr></tbody></table>`
+	buf, restore := captureLog()
 	heights := tableRowHeights(t, renderHTMLPages(t, css, html))
-	if len(heights) != 8 {
-		t.Fatalf("got %d rows, want 8", len(heights))
+	restore()
+	if len(heights) != 10 {
+		t.Fatalf("got %d rows, want 10", len(heights))
+	}
+	if n := strings.Count(buf.String(), "-bag-fixed-height needs a positive length"); n != 2 {
+		t.Errorf("got %d warnings, want 2 (50%% and 0): %s", n, buf.String())
 	}
 	sixteen := bag.MustSP("16pt")
 	natural := heights[6]
@@ -44,7 +52,9 @@ tbody.fixed { -bag-fixed-height: 16pt }`
 		{"none in a later rule", 3, natural},
 		{"on a cell", 4, natural},
 		{"cell height in a fixed row", 5, sixteen},
-		{"not inherited from tbody", 7, natural},
+		{"a percentage is ignored", 7, natural},
+		{"zero is ignored", 8, natural},
+		{"not inherited from tbody", 9, natural},
 	} {
 		if heights[tc.row] != tc.want {
 			t.Errorf("%s: row is %s, want %s", tc.name, heights[tc.row], tc.want)

@@ -1045,6 +1045,32 @@ func parseOffsetValue(v string, cur, root bag.ScaledPoint) *bag.ScaledPoint {
 	return &val
 }
 
+// parseFixedHeight reads a -bag-fixed-height value. Unlike ParseRelativeSize
+// it takes lengths only, so a percentage or a bare number is not read
+// relative to the font size.
+func parseFixedHeight(v string, cur, root bag.ScaledPoint) (bag.ScaledPoint, bool) {
+	var h bag.ScaledPoint
+	if n, ok := strings.CutSuffix(v, "rem"); ok {
+		f, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			return 0, false
+		}
+		h = bag.MultiplyFloat(root, f)
+	} else if n, ok := strings.CutSuffix(v, "em"); ok {
+		f, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			return 0, false
+		}
+		h = bag.MultiplyFloat(cur, f)
+	} else {
+		var err error
+		if h, err = bag.SP(v); err != nil {
+			return 0, false
+		}
+	}
+	return h, h > 0
+}
+
 // parseZIndexValue turns a CSS z-index value into a *int. Returns nil
 // for empty / "auto" so the caller can distinguish "no stacking
 // intent" from "explicit z-index: 0".
@@ -1696,7 +1722,11 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	}
 	elementFixedHeight := bag.ScaledPoint(0)
 	if styles.fixedHeight != "" && item.Data == "tr" {
-		elementFixedHeight = ParseRelativeSize(styles.fixedHeight, styles.Fontsize, styles.DefaultFontSize)
+		if h, ok := parseFixedHeight(styles.fixedHeight, styles.Fontsize, styles.DefaultFontSize); ok {
+			elementFixedHeight = h
+		} else {
+			bag.Logger.Warn("-bag-fixed-height needs a positive length, ignoring it", "value", styles.fixedHeight)
+		}
 	}
 	// CSS 2.1 §9.4.3 position: relative — element stays in flow,
 	// reserving its original slot, but renders at an offset. v1
