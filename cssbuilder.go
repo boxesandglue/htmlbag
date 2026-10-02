@@ -2433,6 +2433,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		// Doesn't all fit: collect a top/middle fragment that does fit.
 		var batch []node.Node
 		batchH := bag.ScaledPoint(0)
+		// overflow is set when the first child went in although it does not
+		// fit, which only an empty page may take.
+		overflow := false
 		for ; i < len(children); i++ {
 			ch := vlistNodeHeight(children[i])
 			// A float box has no height of its own; what has to fit is its
@@ -2441,8 +2444,11 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			if fh, isFloat := floatBoxHeight(children[i]); isFloat {
 				ch = floatKeepWithNext(fh, children[i+1:])
 			}
-			if topOverhead+batchH+ch > avail && len(batch) > 0 {
-				break
+			if topOverhead+batchH+ch > avail {
+				if len(batch) > 0 {
+					break
+				}
+				overflow = true
 			}
 			batch = append(batch, children[i])
 			batchH += vlistNodeHeight(children[i])
@@ -2476,11 +2482,12 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		}
 
 		// Orphan protection: if the first fragment of the block would leave
-		// fewer than `orphans` on the current page, break first so
+		// fewer than `orphans` on the current page, or its first line does
+		// not fit at all, break first so
 		// the block restarts on a fresh page with full available space. Only
 		// applies when there's something already on the page — on an empty
 		// page even a single line has to land here.
-		if isFirst && cb.pageBufHeight > 0 && countHL(batch) < fl.orphans && i < len(children) {
+		if isFirst && cb.pageBufHeight > 0 && (countHL(batch) < fl.orphans && i < len(children) || overflow) {
 			if err := fc.breakTo(""); err != nil {
 				return err
 			}
