@@ -2,10 +2,10 @@ package htmlbag
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 
+	"github.com/boxesandglue/boxesandglue/backend/bag"
 	scanner "github.com/speedata/css"
 )
 
@@ -128,7 +128,7 @@ func (c *CSS) tokenizeCSSFile(filename string) (tokenstream, error) {
 }
 
 func parseCSSBody(filename string) (tokenstream, error) {
-	slog.Debug("parse CSS file", "filename", filename)
+	bag.Logger.Debug("parse CSS file", "filename", filename)
 	b, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
