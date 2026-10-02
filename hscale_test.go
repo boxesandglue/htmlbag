@@ -75,6 +75,8 @@ func TestHorizontalScale(t *testing.T) {
 			[]string{"a@0.9", "b@0.9"}, true},
 		{"negative", `p{-bag-horizontal-scale:-90%}`, "a", []string{"a@-"}, true},
 		{"not a number", `p{-bag-horizontal-scale:narrow}`, "a", []string{"a@-"}, true},
+		{"inherit, unset and initial", `p{-bag-horizontal-scale:90%} i{-bag-horizontal-scale:inherit} b{-bag-horizontal-scale:unset} em{-bag-horizontal-scale:initial}`,
+			"a<i>i</i><b>b</b><em>e</em>", []string{"a@0.9", "i@0.9", "b@0.9", "e@1"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			buf, restore := captureLog()

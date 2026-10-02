@@ -802,10 +802,18 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 				ih.fontexpansion = &fe
 			}
 		case "-bag-horizontal-scale":
-			if hs, ok := parseHorizontalScale(v); ok {
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "inherit", "unset":
+				// The cloned parent styles already carry the inherited scale.
+			case "initial":
+				hs := 1.0
 				ih.horizontalScale = &hs
-			} else {
-				bag.Logger.Warn("-bag-horizontal-scale needs a positive number or percentage, ignoring it", "value", v)
+			default:
+				if hs, ok := parseHorizontalScale(v); ok {
+					ih.horizontalScale = &hs
+				} else {
+					bag.Logger.Warn("-bag-horizontal-scale needs a positive number or percentage, ignoring it", "value", v)
+				}
 			}
 		default:
 			bag.Logger.Debug("unresolved attribute", k, v)
@@ -1045,6 +1053,17 @@ func parseOffsetValue(v string, cur, root bag.ScaledPoint) *bag.ScaledPoint {
 // parseZIndexValue turns a CSS z-index value into a *int. Returns nil
 // for empty / "auto" so the caller can distinguish "no stacking
 // intent" from "explicit z-index: 0".
+func parseZIndexValue(v string) *int {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "auto" {
+		return nil
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return &n
+	}
+	return nil
+}
+
 // parseHorizontalScale reads a -bag-horizontal-scale value, a percentage or a
 // number as the CSS scale property takes them, so 90% and 0.9 are the same.
 func parseHorizontalScale(v string) (float64, bool) {
@@ -1058,17 +1077,6 @@ func parseHorizontalScale(v string) (float64, bool) {
 		return 0, false
 	}
 	return f / div, true
-}
-
-func parseZIndexValue(v string) *int {
-	v = strings.TrimSpace(v)
-	if v == "" || v == "auto" {
-		return nil
-	}
-	if n, err := strconv.Atoi(v); err == nil {
-		return &n
-	}
-	return nil
 }
 
 // Clone mimics style inheritance.
