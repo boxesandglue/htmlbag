@@ -895,12 +895,16 @@ func (fc *flowCursor) forcedKeyword(v any) string {
 	return breakKeyword(v)
 }
 
-// breakAfter is the forced break-after keyword of n, or "".
+// breakAfter is the forced break-after keyword of n or of its last block,
+// which passes it on to n, or "".
 func (fc *flowCursor) breakAfter(n node.Node) string {
-	if vl, ok := n.(*node.VList); ok && vl.Attributes != nil {
-		return fc.forcedKeyword(vl.Attributes["pageBreakAfter"])
-	}
-	return ""
+	return forcedAfter(n, fc.forcedKeyword)
+}
+
+// breakBefore is the forced break-before keyword of n or of its first
+// block, or "".
+func (fc *flowCursor) breakBefore(n node.Node) string {
+	return forcedBefore(n, fc.forcedKeyword)
 }
 
 // breakKeyword is the forced break keyword of a break-before or break-after
