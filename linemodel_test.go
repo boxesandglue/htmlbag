@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/backend/font"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
@@ -130,8 +131,13 @@ func TestARegisteredLineModelSetsTheLines(t *testing.T) {
 		t.Fatal("the model's function was never called")
 	}
 	want := LineModelStyles{Name: "fixed", FontSize: bag.MustSP("11pt"), LineHeight: bag.MustSP("15pt"), Language: "de"}
+	gotFont := got[0].Font
+	got[0].Font = nil
 	if got[0] != want {
 		t.Errorf("the function got %+v, want %+v", got[0], want)
+	}
+	if gotFont == nil || gotFont.Size != want.FontSize {
+		t.Errorf("the function got the font %+v, want one at %s", gotFont, want.FontSize)
 	}
 	if shift != bag.MustSP("3pt") {
 		t.Errorf("the model saw a largest line shift of %s, want the nested 2pt + 1pt", shift)
@@ -291,5 +297,109 @@ func TestRegisteredLineModelsLeaveOtherDocumentsAlone(t *testing.T) {
 	})
 	if len(plain) == 0 || !bytes.Equal(plain, registered) {
 		t.Error("registering a line model changed a document that does not name it")
+	}
+}
+
+// strutModel sets a line from the ascent and descent of the fonts on it, and
+// a line without glyphs from those of the paragraph's font, its strut.
+type strutModel struct {
+	strut *font.Font
+}
+
+func (m strutModel) LineBox(hl *node.HList, _ *node.LinebreakSettings) (bag.ScaledPoint, bag.ScaledPoint) {
+	var h, d bag.ScaledPoint
+	glyphs := false
+	for n := hl.List; n != nil; n = n.Next() {
+		if g, ok := n.(*node.Glyph); ok && g.Font != nil {
+			h, d = max(h, g.Font.Ascent), max(d, g.Font.Descent)
+			glyphs = true
+		}
+	}
+	if !glyphs && m.strut != nil {
+		h, d = m.strut.Ascent, m.strut.Descent
+	}
+	return h, d
+}
+
+func (strutModel) Leading(*node.HList, *node.LinebreakSettings) *node.Glue { return nil }
+
+// LineModelStyles.Font lets a model give a line without glyphs, the one
+// between two <br>, the height of the paragraph's font (CSS 2.1 §10.8.1).
+func TestLineModelStylesFontIsTheStrut(t *testing.T) {
+	register := func(cb *CSSBuilder) {
+		if err := cb.RegisterLineModel("strut", func(s LineModelStyles) node.LineModel {
+			return strutModel{s.Font}
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := lineModelLines(t, `p { -bag-leading-model: strut; font-size: 11pt; line-height: 1.15 }`,
+		`<p>Text<br><br>Text</p>`, register)
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+	for i, hl := range lines {
+		if hl.Height != lines[0].Height || hl.Depth != lines[0].Depth || hl.Height == 0 {
+			t.Errorf("line %d is %s + %s, want the text lines' %s + %s", i+1, hl.Height, hl.Depth, lines[0].Height, lines[0].Depth)
+		}
+	}
+}
+
+// keepModel keeps the LineModelStyles.Font it was made with and sets lines
+// as the built-in leading would not, which is enough to be called.
+type keepModel struct{ fixedModel }
+
+// strutFont builds the paragraph's font by the frontend's rules, which are
+// unexported: LineModelStyles.Font has the face, size and vertical metrics of
+// the glyphs' own font, for a plain face, a size-adjusted one and one with
+// metric overrides, so that a change on either side shows here.
+func TestLineModelStylesFontMatchesTheGlyphs(t *testing.T) {
+	const src = `src: url("fontsource/crimsonpro/CrimsonPro-Regular.ttf");`
+	cases := map[string]string{
+		"plain":       ``,
+		"size-adjust": `size-adjust: 120%;`,
+		"ascent":      `ascent-override: 90%;`,
+		"descent":     `descent-override: 30%;`,
+		"line gap":    `line-gap-override: 10%;`,
+		"all of them": `size-adjust: 120%; ascent-override: 90%; descent-override: 30%; line-gap-override: 10%;`,
+	}
+	for name, descriptors := range cases {
+		t.Run(name, func(t *testing.T) {
+			var kept []*font.Font
+			var shift bag.ScaledPoint
+			register := func(cb *CSSBuilder) {
+				if err := cb.RegisterLineModel("keep", func(s LineModelStyles) node.LineModel {
+					kept = append(kept, s.Font)
+					return keepModel{fixedModel{&shift}}
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			css := `@font-face { font-family: "Probe"; ` + src + ` ` + descriptors + ` }
+p { font-family: "Probe"; font-size: 11pt; -bag-leading-model: keep }`
+			lines := lineModelLines(t, css, `<p>Text</p>`, register)
+			var g *node.Glyph
+			for n := lines[0].List; n != nil && g == nil; n = n.Next() {
+				g, _ = n.(*node.Glyph)
+			}
+			if g == nil || g.Font == nil {
+				t.Fatal("no glyph on the first line")
+			}
+			if len(kept) == 0 || kept[0] == nil {
+				t.Fatal("the model got no font")
+			}
+			s, want := kept[0], g.Font
+			// The face is the probe's, with its descriptors applied.
+			if adjusted := strings.Contains(descriptors, "size-adjust"); adjusted == (want.Size == bag.MustSP("11pt")) {
+				t.Fatalf("the glyphs are set at %s, the @font-face did not apply", want.Size)
+			}
+			if strings.Contains(descriptors, "ascent-override") && want.Ascent != bag.ScaledPointFromFloat(want.Size.ToPT()*0.9) {
+				t.Fatalf("the glyphs' ascent is %s at %s, the override did not apply", want.Ascent, want.Size)
+			}
+			if s.Face != want.Face || s.Size != want.Size || s.Ascent != want.Ascent || s.Descent != want.Descent || s.LineGap != want.LineGap {
+				t.Errorf("strut font: face %p, size %s, ascent %s, descent %s, line gap %s; glyph font: face %p, size %s, ascent %s, descent %s, line gap %s",
+					s.Face, s.Size, s.Ascent, s.Descent, s.LineGap, want.Face, want.Size, want.Ascent, want.Descent, want.LineGap)
+			}
+		})
 	}
 }
