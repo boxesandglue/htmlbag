@@ -202,3 +202,83 @@ func TestFlowTextOccupiedRegionKeepsMargin(t *testing.T) {
 		})
 	}
 }
+
+// The rest of a paragraph or of a table with a header, split in the region
+// before, does not go into an occupied region too small for it: it moves on
+// once, and the occupied region stays empty.
+func TestFlowTextOccupiedRegionTakesNoRestThatDoesNotFit(t *testing.T) {
+	cases := []struct {
+		name, body, first string
+		lines             int // lines or rows in all
+		head              string
+	}{
+		{"paragraph", `<p>` + charLines("A", 12) + `</p><p>y</p>`, "60pt", 13, "x"},
+		{"table", tableWithHead(12), "36pt", 14, "Hq"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cb, _ := newFlowBuilder(t, "")
+			tr := flowCapped(t, cb, c.body, wide(c.first), occupied(wide("6pt")), wide("1000pt"))
+			if len(tr.filled) != 3 {
+				t.Fatalf("filled %d regions, want 3", len(tr.filled))
+			}
+			if lines := boxLines(tr.filled[1]); len(lines) != 0 || tr.filled[1].Used != 0 {
+				t.Errorf("the occupied region holds %d lines, Used %s; want it empty", len(lines), tr.filled[1].Used)
+			}
+			third := boxLines(tr.filled[2])
+			if len(third) == 0 || third[0].top != 0 || !strings.Contains(third[0].text, c.head) {
+				t.Errorf("region 3 starts with %+v, want %q at its top", third, c.head)
+			}
+			if got := len(boxLines(tr.filled[0])) + len(third); got != c.lines {
+				t.Errorf("regions 1 and 3 hold %d lines, want %d", got, c.lines)
+			}
+		})
+	}
+}
+
+// With every region occupied and too small, the rest of a split block still
+// moves on only once from each: a line or a row lands in every second region
+// and the flow ends. The paragraph's first line moves on from region 1, the
+// table's header and first row fill it.
+func TestFlowTextOccupiedRegionsEndForTheRest(t *testing.T) {
+	cases := []struct {
+		name, body, height string
+		lines              int
+	}{
+		{"paragraph", `<p>` + charLines("A", 6) + `</p><p>y</p>`, "6pt", 7},
+		{"table", tableWithHead(6), "20pt", 6},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cb, _ := newFlowBuilder(t, "")
+			tr := flowCapped(t, cb, c.body, occupied(wide(c.height)))
+			got, parity := 0, -1
+			for i, f := range tr.filled {
+				n := 0
+				for _, l := range boxLines(f) {
+					if !strings.Contains(l.text, "Hq") {
+						n++
+					}
+				}
+				if n > 0 && parity < 0 {
+					parity = i % 2
+					if want := map[string]int{"paragraph": 1, "table": 0}[c.name]; parity != want {
+						t.Errorf("the first line or row is in region %d, want %d", i+1, want+1)
+					}
+				}
+				if parity >= 0 && (n > 0) != (i%2 == parity) {
+					t.Errorf("region %d holds %d lines or rows, want them in every second region only", i+1, n)
+				}
+				got += n
+			}
+			if got != c.lines {
+				t.Errorf("the regions hold %d lines or rows, want %d", got, c.lines)
+			}
+		})
+	}
+}
+
+// tableWithHead is a table with a header row Hq and n rows Rq.
+func tableWithHead(n int) string {
+	return `<table><thead><tr><th>Hq</th></tr></thead><tbody>` + strings.Repeat(`<tr><td>Rq</td></tr>`, n) + `</tbody></table>`
+}

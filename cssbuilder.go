@@ -2474,6 +2474,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		// overflow is set when the first child went in although it does not
 		// fit, which only an empty page may take.
 		overflow := false
+		batchStart := i
 		for ; i < len(children); i++ {
 			ch := vlistNodeHeight(children[i])
 			// A float box has no height of its own; what has to fit is its
@@ -2517,6 +2518,20 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 				}
 			}
 			return n
+		}
+
+		// The rest of a split block that reaches an occupied region weighs
+		// it as a block that starts there does: it moves on once when its
+		// first child does not fit or it would leave fewer than orphans.
+		if !isFirst && fc.holdsContent(cb) && (countHL(batch) < fl.orphans && i < len(children) || overflow) {
+			if err := fc.moveOn(cb, blockVL); err != nil {
+				return err
+			}
+			i = batchStart
+			if nc := rebuildRemainder(i); nc != nil {
+				children = nc
+			}
+			continue
 		}
 
 		// Orphan protection: if the first fragment of the block would leave
@@ -2721,14 +2736,21 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		return nil
 	}
 
-	breakTo := func() error {
-		if err := fc.breakTo("", tableVL); err != nil {
-			return err
+	// breakTo goes on in the next region. An occupied one takes the table
+	// only when need, the repeated headers and the next rows, fits there;
+	// otherwise the table moves on from it once, as a block does.
+	breakTo := func(need bag.ScaledPoint) error {
+		for moved := false; ; moved = true {
+			if err := fc.breakTo("", tableVL); err != nil {
+				return err
+			}
+			*y = fc.cur.top
+			*yLimit = fc.cur.bottom()
+			*pageHasContent = false
+			if moved || !fc.cur.occupied || *y-need >= *yLimit+footerHeight {
+				return nil
+			}
 		}
-		*y = fc.cur.top
-		*yLimit = fc.cur.bottom()
-		*pageHasContent = false
-		return nil
 	}
 
 	// carry is set when rows[i] is the rest of a row split at the end of the
@@ -2810,7 +2832,16 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 					return err
 				}
 			}
-			if err := breakTo(); err != nil {
+			need := fitH
+			if carry {
+				need = h
+			}
+			if i >= headerCount {
+				for j := 0; j < headerCount; j++ {
+					need += vlistNodeHeight(rows[j])
+				}
+			}
+			if err := breakTo(need); err != nil {
 				return err
 			}
 
