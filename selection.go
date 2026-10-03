@@ -132,6 +132,8 @@ type HTMLItem struct {
 	Attributes map[string]string
 	Styles     StyleMap
 	Children   []*HTMLItem
+	// Node is the node of the document the item comes from.
+	Node *html.Node
 }
 
 func (itm *HTMLItem) String() string {
@@ -179,7 +181,7 @@ func (c *CSS) getHTMLItem(thisNode *html.Node, direction Mode, firstItem *HTMLIt
 					newDir = ModeHorizontal
 				}
 				if txt != "" {
-					firstItem.Children = append(firstItem.Children, &HTMLItem{Typ: html.TextNode, Data: txt})
+					firstItem.Children = append(firstItem.Children, &HTMLItem{Typ: html.TextNode, Data: txt, Node: thisNode})
 				}
 				break
 			}
@@ -217,6 +219,7 @@ func (c *CSS) getHTMLItem(thisNode *html.Node, direction Mode, firstItem *HTMLIt
 			}
 			itm.Data = txt
 			itm.Typ = html.TextNode
+			itm.Node = thisNode
 			firstItem.Children = append(firstItem.Children, itm)
 		case html.ElementNode:
 			ws := inherited.whiteSpace
@@ -236,6 +239,7 @@ func (c *CSS) getHTMLItem(thisNode *html.Node, direction Mode, firstItem *HTMLIt
 				Data:       thisNode.Data,
 				Dir:        newDir,
 				Attributes: map[string]string{},
+				Node:       thisNode,
 			}
 			firstItem.Children = append(firstItem.Children, itm)
 			itm.Styles = c.ComputedStyles(thisNode)
@@ -370,6 +374,7 @@ func cloneNode(n *html.Node) *html.Node {
 // Pass nil for anchorPages on a clean first pass.
 func HTMLNodeToText(cb *CSSBuilder, n *html.Node, ss StylesStack, df *frontend.Document, anchorPages map[string]int) (*frontend.Text, error) {
 	cb.textRunning = map[string]bool{}
+	cb.sourceNodes = map[*frontend.Text]*html.Node{}
 	h := &HTMLItem{Dir: ModeVertical}
 	cb.css.GetHTMLItemFromHTMLNode(n, ModeVertical, h)
 	return Output(cb, h, ss, df, anchorPages)

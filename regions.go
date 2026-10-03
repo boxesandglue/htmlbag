@@ -8,6 +8,7 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"golang.org/x/net/html"
 )
 
 // Regions hands out the rectangles FlowText fills and takes each back once
@@ -88,6 +89,12 @@ type Fragment struct {
 	// Continued is set when the child began in an earlier region, Continues
 	// when it goes on in the next one.
 	Continued, Continues bool
+	// Node is the node of the document the child comes from: the element of
+	// a block, the first node of loose text. nil for content htmlbag makes
+	// up, such as a ::before between blocks. A node htmlbag sets no block
+	// for, such as an empty paragraph or one with display: none, is in no
+	// Fragment.
+	Node *html.Node
 }
 
 // FlowText pours the blocks of te into the regions r hands out. It is the
@@ -572,7 +579,7 @@ func carriesID(run []sinkEntry, id string) bool {
 // in its extent, side floats all they paint; a run of margins alone is no
 // fragment.
 func fragmentOf(run []sinkEntry, child *flowChild, seen map[*flowChild]bool) (Fragment, bool) {
-	fr := Fragment{ID: child.id, Index: child.index, Continued: seen[child]}
+	fr := Fragment{ID: child.id, Index: child.index, Continued: seen[child], Node: child.node}
 	found := false
 	for _, e := range run {
 		if e.margin {
@@ -593,6 +600,7 @@ const attrFlowChild = "_flowChild"
 type flowChild struct {
 	index int
 	id    string
+	node  *html.Node
 }
 
 // flowChildren gives every block of a body its flowChild, the same one for
@@ -603,10 +611,12 @@ type flowChildren struct {
 	// between them.
 	ordinal []int
 	byItem  map[int]*flowChild
+	// nodes is the node of the document each item comes from.
+	nodes map[*frontend.Text]*html.Node
 }
 
-func newFlowChildren(body *frontend.Text) *flowChildren {
-	fcs := &flowChildren{items: body.Items, ordinal: make([]int, len(body.Items)), byItem: map[int]*flowChild{}}
+func newFlowChildren(body *frontend.Text, nodes map[*frontend.Text]*html.Node) *flowChildren {
+	fcs := &flowChildren{items: body.Items, ordinal: make([]int, len(body.Items)), byItem: map[int]*flowChild{}, nodes: nodes}
 	n := 0
 	for i, itm := range body.Items {
 		fcs.ordinal[i] = -1
@@ -642,6 +652,7 @@ func (fcs *flowChildren) stamp(vl *node.VList, base int) {
 			fch = &flowChild{index: fcs.ordinal[i]}
 			if t, ok := fcs.items[i].(*frontend.Text); ok {
 				fch.id, _ = t.Settings[frontend.SettingElementID].(string)
+				fch.node = fcs.nodes[t]
 			}
 			fcs.byItem[i] = fch
 		}
