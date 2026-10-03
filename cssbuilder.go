@@ -14,6 +14,7 @@ import (
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
 	"github.com/boxesandglue/boxesandglue/backend/document"
+	"github.com/boxesandglue/boxesandglue/backend/font"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/boxesandglue/frontend/pdfdraw"
@@ -142,6 +143,12 @@ type LineModelStyles struct {
 	LineHeight bag.ScaledPoint
 	// Language is the paragraph's BCP 47 language tag, "" when unset.
 	Language string
+	// Font is the paragraph's own font at FontSize, with the face's
+	// vertical metrics as a glyph's font carries them, for the strut of a
+	// line (CSS 2.1 §10.8.1): a line without glyphs, such as one between two
+	// <br>, has no font of its own to take its height from. nil when the
+	// paragraph's font cannot be loaded.
+	Font *font.Font
 }
 
 // LineModelFunc makes the line model (node.LineModel) for a paragraph whose
@@ -161,9 +168,11 @@ type CSSBuilder struct {
 	structureCurrent      *document.StructureElement
 	enableTagging         bool
 	lineModels            map[string]LineModelFunc
-	warnedLineModels      map[string]bool
-	ElementCallback       ElementCallbackFunc
-	PageInitCallback      PageInitCallbackFunc
+	// strutFonts caches LineModelStyles.Font.
+	strutFonts       map[strutKey]*font.Font
+	warnedLineModels map[string]bool
+	ElementCallback  ElementCallbackFunc
+	PageInitCallback PageInitCallbackFunc
 	// Counters holds named counter values used when evaluating CSS content
 	// properties (e.g. "page" for the current page, "pages" for the total).
 	// The "page" counter is set automatically during shipout; other counters

@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	pdf "github.com/boxesandglue/baseline-pdf"
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
 	"github.com/boxesandglue/boxesandglue/backend/document"
@@ -1478,6 +1480,7 @@ func (cb *CSSBuilder) applySettings(settings frontend.TypesettingSettings, ih *F
 		FontSize:   ih.Fontsize,
 		LineHeight: lineHeight,
 		Language:   ih.language,
+		Font:       cb.strutFont(ih),
 	})
 	if lm != nil {
 		settings[frontend.SettingLineModel] = lm
@@ -3070,4 +3073,67 @@ func (cb *CSSBuilder) noteSource(te *frontend.Text, n *html.Node) {
 		return
 	}
 	cb.sourceNodes[te] = n
+}
+
+// strutKey identifies a strut font as the frontend identifies a glyph's.
+type strutKey struct {
+	face    *pdf.Face
+	size    bag.ScaledPoint
+	metrics frontend.MetricsOverride
+	slant   float64
+}
+
+// strutFont is the font the frontend sets the paragraph's glyphs in, for
+// LineModelStyles.Font: its source for the weight and style, at the size,
+// size-adjust and variations, with the source's metric overrides.
+func (cb *CSSBuilder) strutFont(ih *FormattingStyles) *font.Font {
+	if ih.fontfamily == nil || ih.Fontsize <= 0 {
+		return nil
+	}
+	fs, err := ih.fontfamily.GetFontSource(ih.Fontweight, ih.fontstyle)
+	if err != nil || fs == nil {
+		return nil
+	}
+	size := ih.Fontsize
+	if fs.SizeAdjust != 0 {
+		size = bag.ScaledPointFromFloat(size.ToPT() * (1 - fs.SizeAdjust))
+	}
+	var variations map[string]float64
+	if len(fs.VariationSettings) > 0 || len(ih.variationSettings) > 0 {
+		variations = maps.Clone(fs.VariationSettings)
+		if variations == nil {
+			variations = map[string]float64{}
+		}
+		maps.Copy(variations, ih.variationSettings)
+	}
+	face, err := cb.frontend.LoadFaceWithVariations(fs, variations)
+	if err != nil {
+		return nil
+	}
+	key := strutKey{face: face, size: size, metrics: frontend.MetricsOverride{Ascent: -1, Descent: -1, LineGap: -1}, slant: fs.Slant}
+	if fs.Metrics != nil {
+		key.metrics = *fs.Metrics
+	}
+	if fnt, ok := cb.strutFonts[key]; ok {
+		return fnt
+	}
+	fnt := font.NewFont(face, size)
+	fnt.Slant = fs.Slant
+	if m := fs.Metrics; m != nil {
+		em := size.ToPT()
+		if m.Ascent >= 0 {
+			fnt.Ascent = bag.ScaledPointFromFloat(em * m.Ascent)
+		}
+		if m.Descent >= 0 {
+			fnt.Descent = bag.ScaledPointFromFloat(em * m.Descent)
+		}
+		if m.LineGap >= 0 {
+			fnt.LineGap = bag.ScaledPointFromFloat(em * m.LineGap)
+		}
+	}
+	if cb.strutFonts == nil {
+		cb.strutFonts = map[strutKey]*font.Font{}
+	}
+	cb.strutFonts[key] = fnt
+	return fnt
 }
