@@ -2054,50 +2054,6 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		bandSettings = bandIndent.settings()
 	}
 
-	// Text color of the source paragraph. The node builder emits a single
-	// color instruction inside the first line and the reset inside the
-	// last one; a page's content stream starts with default black, so a
-	// fragment on a later page would silently lose the color. Every
-	// fragment after the first re-emits the color, and every fragment
-	// that continues on the next page resets it so floats/footnotes
-	// painted below the body keep their own colors. Black is skipped —
-	// it equals the content-stream default. Box-container splittables
-	// carry no source Text; their children hold self-contained color
-	// instructions already.
-	var fragColor *color.Color
-	if splitTe != nil {
-		switch t := splitTe.Settings[frontend.SettingColor].(type) {
-		case string:
-			fragColor = cb.frontend.GetColor(t)
-		case *color.Color:
-			fragColor = t
-		}
-		if fragColor != nil {
-			if black := cb.frontend.GetColor("black"); black != nil &&
-				fragColor.PDFStringNonStroking() == black.PDFStringNonStroking() {
-				fragColor = nil
-			}
-		}
-	}
-	// colorStartNode / colorResetNode build zero-height StartStop nodes
-	// whose shipout callbacks mirror the instructions the node builder
-	// emits for SettingColor.
-	colorStartNode := func() node.Node {
-		s := node.NewStartStop()
-		s.Position = node.PDFOutputPage
-		s.ShipoutCallback = func(n node.Node) string {
-			return fragColor.PDFStringNonStroking() + " "
-		}
-		return s
-	}
-	colorResetNode := func() node.Node {
-		s := node.NewStartStop()
-		s.Position = node.PDFOutputPage
-		s.ShipoutCallback = func(n node.Node) string {
-			return "0 0 0 RG 0 0 0 rg "
-		}
-		return s
-	}
 	// history records one step per successful rebuild so a later rebuild
 	// (e.g. alternating :left/:right widths) can reproduce every previous
 	// break to locate the remaining text.
@@ -2317,12 +2273,8 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		return reflowRemainder(i, bandRows > 0 && placedLines < bandRows)
 	}
 
-	// Nackter Absatz (kein Border/Background): HTMLBorder-Wrapper überspringen.
-	// vlistbuilder.go markiert solche Blöcke mit hv == HTMLValues{}.
-	noWrapper := !hv.hasBorder() && hv.BackgroundColor == nil
-
-	// Bookmarks/Anchors auf dem Original-VList müssen aufs erste Fragment
-	// wandern, sonst landet die Seitenreferenz auf der falschen Seite.
+	// The heading and the anchors on the original VList go onto the first
+	// fragment, or the page reference lands on the wrong page.
 	var firstHeadingIdx int = -1
 	var firstAnchorIndices []int
 	if blockVL.Attributes != nil {
@@ -2343,79 +2295,6 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		c.SetNext(nil)
 	}
 
-	const (
-		fragTop = iota
-		fragMiddle
-		fragBottom
-		fragOnly
-	)
-
-	// buildFragment wraps a slice of inner children with HTMLBorder using a
-	// per-fragment HTMLValues that drops paddings/borders on the cut sides.
-	// Bei noWrapper bleibt der innere VList unverpackt — kein extra Box-Frame.
-	buildFragment := func(items []node.Node, kind int) (*node.VList, bag.ScaledPoint) {
-		innerVL := node.NewVList()
-		innerVL.Width = innerWidth
-		var totalH bag.ScaledPoint
-		for i, n := range items {
-			if i == 0 {
-				innerVL.List = n
-			} else {
-				innerVL.List = node.InsertAfter(innerVL.List, node.Tail(innerVL.List), n)
-			}
-			totalH += vlistNodeHeight(n)
-		}
-		innerVL.Height = totalH
-		// Carry the PDF/UA StructureElement linkage onto the first
-		// fragment. tagVList stamps it on blockVL before splitting;
-		// without this copy the wrapped fragment would have no /K MCR
-		// entry and the StructElem would be structurally empty.
-		// Only the first fragment (Only / Top) gets the tag — later
-		// fragments would create duplicate MCID references.
-		if kind == fragOnly || kind == fragTop {
-			if blockVL.Attributes != nil {
-				if tag, ok := blockVL.Attributes["tag"]; ok {
-					if innerVL.Attributes == nil {
-						innerVL.Attributes = node.H{}
-					}
-					innerVL.Attributes["tag"] = tag
-				}
-			}
-		}
-		// The block's horizontal shift (margin-left plus the parent's
-		// padding-left, stamped by the box branch of buildVlistInternal)
-		// sits on the original VList; every fragment must inherit it or
-		// an indented block (e.g. a blockquote) snaps to the left edge.
-		if noWrapper {
-			innerVL.ShiftX = blockVL.ShiftX
-			return innerVL, vlistNodeHeight(innerVL)
-		}
-		fragHv := hv
-		if kind != fragTop && kind != fragOnly {
-			fragHv.PaddingTop = 0
-			fragHv.BorderTopWidth = 0
-		}
-		if kind != fragBottom && kind != fragOnly {
-			fragHv.PaddingBottom = 0
-			fragHv.BorderBottomWidth = 0
-		}
-		wrapped := cb.HTMLBorder(innerVL, fragHv)
-		// Same rationale for the bordered path: HTMLBorder produced a
-		// fresh outer VList, so the tag would otherwise be dropped.
-		if kind == fragOnly || kind == fragTop {
-			if blockVL.Attributes != nil {
-				if tag, ok := blockVL.Attributes["tag"]; ok {
-					if wrapped.Attributes == nil {
-						wrapped.Attributes = node.H{}
-					}
-					wrapped.Attributes["tag"] = tag
-				}
-			}
-		}
-		wrapped.ShiftX = blockVL.ShiftX
-		return wrapped, vlistNodeHeight(wrapped)
-	}
-
 	availOnPage := func() bag.ScaledPoint {
 		contentArea := fc.cur.height
 		used := cb.pageBufHeight +
@@ -2423,14 +2302,6 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			cb.pageInsertHeight[InsertFloatBottom] +
 			cb.pageInsertHeight[InsertFootnote]
 		return contentArea - used
-	}
-
-	totalH := func(items []node.Node) bag.ScaledPoint {
-		var s bag.ScaledPoint
-		for _, n := range items {
-			s += vlistNodeHeight(n)
-		}
-		return s
 	}
 
 	fl := fragLinesOf(blockVL)
@@ -2445,20 +2316,14 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			topOverhead = hv.PaddingTop + hv.BorderTopWidth
 		}
 		bottomOverhead := hv.PaddingBottom + hv.BorderBottomWidth
-		remaining := totalH(children[i:])
+		remaining := childrenHeight(children[i:])
 
 		if topOverhead+remaining+bottomOverhead <= avail {
 			kind := fragBottom
 			if isFirst {
 				kind = fragOnly
 			}
-			items := children[i:]
-			// A follow-up fragment re-establishes the paragraph color; the
-			// original reset still sits inside the last line.
-			if !isFirst && fragColor != nil {
-				items = append([]node.Node{colorStartNode()}, items...)
-			}
-			wrapped, h := buildFragment(items, kind)
+			wrapped, h := cb.buildFragment(blockVL, children[i:], kind, innerWidth)
 			stampFragment(wrapped, blockVL)
 			hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
 			if !isFirst {
@@ -2469,61 +2334,15 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		}
 
 		// Doesn't all fit: collect a top/middle fragment that does fit.
-		var batch []node.Node
-		batchH := bag.ScaledPoint(0)
-		// overflow is set when the first child went in although it does not
-		// fit, which only an empty page may take.
-		overflow := false
 		batchStart := i
-		for ; i < len(children); i++ {
-			ch := vlistNodeHeight(children[i])
-			// A float box has no height of its own; what has to fit is its
-			// painted extent together with the child beside it, or the
-			// float is parted from that child by the page break.
-			if fh, isFloat := floatBoxHeight(children[i]); isFloat {
-				ch = floatKeepWithNext(fh, children[i+1:])
-			}
-			if topOverhead+batchH+ch > avail {
-				if len(batch) > 0 {
-					break
-				}
-				overflow = true
-			}
-			batch = append(batch, children[i])
-			batchH += vlistNodeHeight(children[i])
-		}
-		if len(batch) == 0 {
-			// One child is taller than a full empty page. Place it anyway —
-			// truncation is unavoidable. Advance so the loop terminates.
-			batch = append(batch, children[i])
-			i++
-		}
-
-		// Widow / orphan protection: count content children. A splittable
-		// block has two shapes: line-level children (a <pre> is HList lines
-		// interleaved with Glue) and block-level children (a bordered card
-		// is VList paragraphs/divs interleaved with margin Kerns). Both an
-		// HList and a VList count as one unit of content here; only the
-		// Glue/Kern fillers between them are skipped. Counting VLists is
-		// load-bearing: without it a card whose children are all VLists
-		// reports zero "lines", so the orphan branch below fires on every
-		// page and shunts the whole card forward — orphaning a preceding
-		// page-break-after:avoid heading (it stays put while its card jumps).
-		// A float box is neither: it paints beside the content.
-		countHL := func(items []node.Node) int {
-			n := 0
-			for _, c := range items {
-				if isContentNode(c) {
-					n++
-				}
-			}
-			return n
-		}
+		var batch []node.Node
+		var overflow bool
+		batch, i, overflow = fitChildren(children, i, avail-topOverhead)
 
 		// The rest of a split block that reaches an occupied region weighs
 		// it as a block that starts there does: it moves on once when its
 		// first child does not fit or it would leave fewer than orphans.
-		if !isFirst && fc.holdsContent(cb) && (countHL(batch) < fl.orphans && i < len(children) || overflow) {
+		if !isFirst && fc.holdsContent(cb) && (countContent(batch) < fl.orphans && i < len(children) || overflow) {
 			if err := fc.moveOn(cb, blockVL); err != nil {
 				return err
 			}
@@ -2540,7 +2359,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		// the block restarts on a fresh page with full available space. Only
 		// applies when there's something already on the page — on an empty
 		// page even a single line has to land here.
-		if isFirst && fc.holdsContent(cb) && (countHL(batch) < fl.orphans && i < len(children) || overflow) {
+		if isFirst && fc.holdsContent(cb) && (countContent(batch) < fl.orphans && i < len(children) || overflow) {
 			if err := fc.moveOn(cb, blockVL); err != nil {
 				return err
 			}
@@ -2554,25 +2373,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			continue
 		}
 
-		// Widow protection: the next page must carry at least `widows`
-		// content children; otherwise pull items back from this batch until
-		// it does, while leaving at least `orphans` in the current batch
-		// (don't trade a widow for an orphan). A pulled-back VList counts
-		// like an HList — the same HList/VList duality as in countHL: only
-		// counting HLists never advances remainingLines for a box container
-		// (a <ul> whose children are <li> VLists), so the loop would drain
-		// the batch down to the orphan minimum and leave the page half empty.
 		if i < len(children) {
-			remainingLines := countHL(children[i:])
-			for remainingLines < fl.widows && countHL(batch) > fl.orphans {
-				last := batch[len(batch)-1]
-				batchH -= vlistNodeHeight(last)
-				batch = batch[:len(batch)-1]
-				i--
-				if isContentNode(last) {
-					remainingLines++
-				}
-			}
+			var remainingLines int
+			batch, i, remainingLines = pullBackForWidows(children, batch, i, fl)
 			// Both cannot be kept, so there is no break inside the block
 			// here: it moves on whole, as it would between blocks, unless
 			// the page holds nothing else.
@@ -2587,47 +2390,13 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 				continue
 			}
 		}
-
-		// A float at the end of the batch would be parted from the child
-		// beside it, which the pullback above may just have moved on. It
-		// goes with that child; when it is all the batch holds, the child
-		// comes along instead, whether the page has room for it or not.
-		for i < len(children) && len(batch) > 0 {
-			last := batch[len(batch)-1]
-			if _, isFloat := floatBoxHeight(last); !isFloat {
-				break
-			}
-			if countHL(batch) == 0 {
-				for i < len(children) {
-					c := children[i]
-					batch = append(batch, c)
-					batchH += vlistNodeHeight(c)
-					i++
-					if isContentNode(c) {
-						break
-					}
-				}
-				break
-			}
-			batch = batch[:len(batch)-1]
-			i--
-		}
+		batch, i = keepFloatWithChild(children, batch, i)
 
 		kind := fragTop
 		if !isFirst {
 			kind = fragMiddle
 		}
-		// The paragraph continues on the next page: re-emit the color at
-		// the top of follow-up fragments and reset it at the bottom of
-		// every continued fragment (the page ends mid-paragraph, and
-		// floats/footnotes paint after the body in the same stream).
-		if fragColor != nil {
-			if !isFirst {
-				batch = append([]node.Node{colorStartNode()}, batch...)
-			}
-			batch = append(batch, colorResetNode())
-		}
-		wrapped, h := buildFragment(batch, kind)
+		wrapped, h := cb.buildFragment(blockVL, batch, kind, innerWidth)
 		stampFragment(wrapped, blockVL)
 		hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
 		if !isFirst {
@@ -2656,6 +2425,246 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		}
 	}
 	return nil
+}
+
+// The kinds of fragment a split block is cut into (CSS Fragmentation 3,
+// box-decoration-break: slice):
+//   - fragTop keeps padding-top and border-top and drops the bottom side
+//   - fragMiddle drops both
+//   - fragBottom drops the top side and keeps padding-bottom and
+//     border-bottom
+//   - fragOnly is the whole block, both sides kept
+const (
+	fragTop = iota
+	fragMiddle
+	fragBottom
+	fragOnly
+)
+
+// childrenHeight is the vertical extent of items stacked.
+func childrenHeight(items []node.Node) bag.ScaledPoint {
+	var s bag.ScaledPoint
+	for _, n := range items {
+		s += vlistNodeHeight(n)
+	}
+	return s
+}
+
+// countContent counts the content children of items. A splittable block has
+// two shapes: line-level children (a <pre> is HList lines interleaved with
+// Glue) and block-level children (a bordered card is VList paragraphs/divs
+// interleaved with margin Kerns). Both an HList and a VList count as one
+// unit of content here; only the Glue/Kern fillers between them are skipped.
+// Counting VLists is load-bearing: without it a card whose children are all
+// VLists reports zero "lines", so the orphan branch fires on every page and
+// shunts the whole card forward — orphaning a preceding
+// page-break-after:avoid heading (it stays put while its card jumps). A
+// float box is neither: it paints beside the content.
+func countContent(items []node.Node) int {
+	n := 0
+	for _, c := range items {
+		if isContentNode(c) {
+			n++
+		}
+	}
+	return n
+}
+
+// fitChildren collects the children from i on that fit in room into a batch
+// and returns it with the index of the first child left out. The first child
+// goes in even when it does not fit, which only an empty page may take;
+// overflow reports that.
+func fitChildren(children []node.Node, i int, room bag.ScaledPoint) (batch []node.Node, next int, overflow bool) {
+	var batchH bag.ScaledPoint
+	for ; i < len(children); i++ {
+		ch := vlistNodeHeight(children[i])
+		// A float box has no height of its own; what has to fit is its
+		// painted extent together with the child beside it, or the float is
+		// parted from that child by the page break.
+		if fh, isFloat := floatBoxHeight(children[i]); isFloat {
+			ch = floatKeepWithNext(fh, children[i+1:])
+		}
+		if batchH+ch > room {
+			if len(batch) > 0 {
+				break
+			}
+			overflow = true
+		}
+		batch = append(batch, children[i])
+		batchH += vlistNodeHeight(children[i])
+	}
+	if len(batch) == 0 {
+		// One child is taller than a full empty page. Place it anyway —
+		// truncation is unavoidable. Advance so the loop terminates.
+		batch = append(batch, children[i])
+		i++
+	}
+	return batch, i, overflow
+}
+
+// pullBackForWidows is widow protection: the rest, children from i on, must
+// carry at least `widows` content children; otherwise children are pulled
+// back from the end of batch until it does, while leaving at least `orphans`
+// in batch (don't trade a widow for an orphan). A pulled-back VList counts
+// like an HList, as in countContent: only counting HLists never advances
+// remainingLines for a box container (a <ul> whose children are <li>
+// VLists), so the loop would drain the batch down to the orphan minimum and
+// leave the page half empty. It returns the batch, the index of the rest and
+// the content children the rest carries.
+func pullBackForWidows(children, batch []node.Node, i int, fl fragLines) ([]node.Node, int, int) {
+	remainingLines := countContent(children[i:])
+	for remainingLines < fl.widows && countContent(batch) > fl.orphans {
+		last := batch[len(batch)-1]
+		batch = batch[:len(batch)-1]
+		i--
+		if isContentNode(last) {
+			remainingLines++
+		}
+	}
+	return batch, i, remainingLines
+}
+
+// keepFloatWithChild keeps a float at the end of batch with the child beside
+// it, children[i], which the widow pullback may just have moved on. The
+// float goes with that child; when it is all the batch holds, the child
+// comes along instead, whether the page has room for it or not.
+func keepFloatWithChild(children, batch []node.Node, i int) ([]node.Node, int) {
+	for i < len(children) && len(batch) > 0 {
+		last := batch[len(batch)-1]
+		if _, isFloat := floatBoxHeight(last); !isFloat {
+			break
+		}
+		if countContent(batch) == 0 {
+			for i < len(children) {
+				c := children[i]
+				batch = append(batch, c)
+				i++
+				if isContentNode(c) {
+					break
+				}
+			}
+			break
+		}
+		batch = batch[:len(batch)-1]
+		i--
+	}
+	return batch, i
+}
+
+// splitColor is the text color of the paragraph a split leaf block was built
+// from, or nil. The node builder emits a single color instruction inside the
+// first line and the reset inside the last one; a page's content stream
+// starts with default black, so a fragment on a later page would silently
+// lose the color. Black is skipped, it equals the content-stream default.
+// Box-container splittables carry no source Text; their children hold
+// self-contained color instructions already.
+func (cb *CSSBuilder) splitColor(blockVL *node.VList) *color.Color {
+	splitTe, _ := blockVL.Attributes["_splittableTe"].(*frontend.Text)
+	if splitTe == nil {
+		return nil
+	}
+	var c *color.Color
+	switch t := splitTe.Settings[frontend.SettingColor].(type) {
+	case string:
+		c = cb.frontend.GetColor(t)
+	case *color.Color:
+		c = t
+	}
+	if c != nil {
+		if black := cb.frontend.GetColor("black"); black != nil &&
+			c.PDFStringNonStroking() == black.PDFStringNonStroking() {
+			return nil
+		}
+	}
+	return c
+}
+
+// colorStartNode and colorResetNode build zero-height StartStop nodes whose
+// shipout callbacks mirror the instructions the node builder emits for
+// SettingColor.
+func colorStartNode(c *color.Color) node.Node {
+	s := node.NewStartStop()
+	s.Position = node.PDFOutputPage
+	s.ShipoutCallback = func(n node.Node) string {
+		return c.PDFStringNonStroking() + " "
+	}
+	return s
+}
+
+func colorResetNode() node.Node {
+	s := node.NewStartStop()
+	s.Position = node.PDFOutputPage
+	s.ShipoutCallback = func(n node.Node) string {
+		return "0 0 0 RG 0 0 0 rg "
+	}
+	return s
+}
+
+// buildFragment builds a fragment of kind from items, children of the
+// splittable block blockVL, innerWidth wide. A block with a border or a
+// background is wrapped with HTMLBorder, its paddings and borders dropped on
+// the cut sides; a bare block (vlistbuilder.go marks it with
+// hv == HTMLValues{}) is not wrapped. A fragment after the first re-emits the
+// color of a split paragraph, and a fragment the paragraph continues after
+// resets it, as the page ends mid-paragraph and floats and footnotes paint
+// after the body in the same stream.
+func (cb *CSSBuilder) buildFragment(blockVL *node.VList, items []node.Node, kind int, innerWidth bag.ScaledPoint) (*node.VList, bag.ScaledPoint) {
+	hv, _ := blockVL.Attributes["_splittableHv"].(HTMLValues)
+	if c := cb.splitColor(blockVL); c != nil {
+		if kind == fragMiddle || kind == fragBottom {
+			items = append([]node.Node{colorStartNode(c)}, items...)
+		}
+		if kind == fragTop || kind == fragMiddle {
+			items = append(items, colorResetNode())
+		}
+	}
+	innerVL := node.NewVList()
+	innerVL.Width = innerWidth
+	var totalH bag.ScaledPoint
+	for i, n := range items {
+		if i == 0 {
+			innerVL.List = n
+		} else {
+			innerVL.List = node.InsertAfter(innerVL.List, node.Tail(innerVL.List), n)
+		}
+		totalH += vlistNodeHeight(n)
+	}
+	innerVL.Height = totalH
+	// Carry the PDF/UA StructureElement linkage onto the first fragment.
+	// tagVList stamps it on blockVL before splitting; without this copy the
+	// wrapped fragment would have no /K MCR entry and the StructElem would
+	// be structurally empty. Only the first fragment (Only / Top) gets the
+	// tag — later fragments would create duplicate MCID references.
+	tag, hasTag := blockVL.Attributes["tag"]
+	hasTag = hasTag && (kind == fragOnly || kind == fragTop)
+	if hasTag {
+		innerVL.SetAttribute("tag", tag)
+	}
+	// The block's horizontal shift (margin-left plus the parent's
+	// padding-left, stamped by the box branch of buildVlistInternal) sits on
+	// the original VList; every fragment must inherit it or an indented
+	// block (e.g. a blockquote) snaps to the left edge.
+	if !hv.hasBorder() && hv.BackgroundColor == nil {
+		innerVL.ShiftX = blockVL.ShiftX
+		return innerVL, vlistNodeHeight(innerVL)
+	}
+	fragHv := hv
+	if kind != fragTop && kind != fragOnly {
+		fragHv.PaddingTop = 0
+		fragHv.BorderTopWidth = 0
+	}
+	if kind != fragBottom && kind != fragOnly {
+		fragHv.PaddingBottom = 0
+		fragHv.BorderBottomWidth = 0
+	}
+	wrapped := cb.HTMLBorder(innerVL, fragHv)
+	// Same rationale for the bordered path: HTMLBorder produced a fresh
+	// outer VList, so the tag would otherwise be dropped.
+	if hasTag {
+		wrapped.SetAttribute("tag", tag)
+	}
+	wrapped.ShiftX = blockVL.ShiftX
+	return wrapped, vlistNodeHeight(wrapped)
 }
 
 // outputTableRows unpacks a table VList into individual rows and places them
