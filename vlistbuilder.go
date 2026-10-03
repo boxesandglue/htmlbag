@@ -761,7 +761,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				for n := vls.List; n != nil; n = n.Next() {
 					splittableInner = append(splittableInner, n)
 				}
-				if len(splittableInner) > 1 {
+				if len(splittableInner) > 0 {
 					vls.Attributes["_splittable"] = true
 					vls.Attributes["_splittableInner"] = splittableInner
 					vls.Attributes["_splittableHv"] = HTMLValues{}

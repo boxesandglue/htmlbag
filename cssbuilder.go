@@ -2337,12 +2337,26 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		batchStart := i
 		var batch []node.Node
 		var overflow bool
-		batch, i, overflow = fitChildren(children, i, avail-topOverhead)
+		var inner *splitPlan
+		batch, i, overflow, inner = cb.fitChildren(children, i, avail-topOverhead)
+		// A paragraph keeps orphans and widows lines (CSS Fragmentation 3
+		// §4.4); a container cuts between its blocks, or through one, as
+		// long as something goes before the cut and the cut does not fall
+		// between two blocks a break-after: avoid keeps together.
+		short := countContent(batch) < fl.orphans && i < len(children)
+		if splitTe == nil {
+			if inner == nil && i < len(children) {
+				if b, j := pullBackForAvoid(children, batch, i); countContent(b) > 0 || fc.holdsContent(cb) {
+					batch, i = b, j
+				}
+			}
+			short = countContent(batch) == 0 && inner == nil && i < len(children)
+		}
 
 		// The rest of a split block that reaches an occupied region weighs
 		// it as a block that starts there does: it moves on once when its
 		// first child does not fit or it would leave fewer than orphans.
-		if !isFirst && fc.holdsContent(cb) && (countContent(batch) < fl.orphans && i < len(children) || overflow) {
+		if !isFirst && fc.holdsContent(cb) && (short || overflow) {
 			if err := fc.moveOn(cb, blockVL); err != nil {
 				return err
 			}
@@ -2359,7 +2373,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		// the block restarts on a fresh page with full available space. Only
 		// applies when there's something already on the page — on an empty
 		// page even a single line has to land here.
-		if isFirst && fc.holdsContent(cb) && (countContent(batch) < fl.orphans && i < len(children) || overflow) {
+		if isFirst && fc.holdsContent(cb) && (short || overflow) {
 			if err := fc.moveOn(cb, blockVL); err != nil {
 				return err
 			}
@@ -2373,7 +2387,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			continue
 		}
 
-		if i < len(children) {
+		if splitTe != nil && i < len(children) {
 			var remainingLines int
 			batch, i, remainingLines = pullBackForWidows(children, batch, i, fl)
 			// Both cannot be kept, so there is no break inside the block
@@ -2390,7 +2404,16 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 				continue
 			}
 		}
-		batch, i = keepFloatWithChild(children, batch, i)
+		if inner == nil {
+			batch, i = keepFloatWithChild(children, batch, i)
+		} else {
+			// The cut runs through children[i]: its part before the cut
+			// ends this fragment, its rest takes its place.
+			head, rest := cb.cutBlock(inner)
+			batch = append(batch, head)
+			children = append([]node.Node(nil), children...)
+			children[i] = rest
+		}
 
 		kind := fragTop
 		if !isFirst {
@@ -2455,11 +2478,7 @@ func childrenHeight(items []node.Node) bag.ScaledPoint {
 // Glue) and block-level children (a bordered card is VList paragraphs/divs
 // interleaved with margin Kerns). Both an HList and a VList count as one
 // unit of content here; only the Glue/Kern fillers between them are skipped.
-// Counting VLists is load-bearing: without it a card whose children are all
-// VLists reports zero "lines", so the orphan branch fires on every page and
-// shunts the whole card forward — orphaning a preceding
-// page-break-after:avoid heading (it stays put while its card jumps). A
-// float box is neither: it paints beside the content.
+// A float box is neither: it paints beside the content.
 func countContent(items []node.Node) int {
 	n := 0
 	for _, c := range items {
@@ -2471,10 +2490,12 @@ func countContent(items []node.Node) int {
 }
 
 // fitChildren collects the children from i on that fit in room into a batch
-// and returns it with the index of the first child left out. The first child
-// goes in even when it does not fit, which only an empty page may take;
-// overflow reports that.
-func fitChildren(children []node.Node, i int, room bag.ScaledPoint) (batch []node.Node, next int, overflow bool) {
+// and returns it with the index of the first child left out. When that child
+// splits so that its first part fits in the room left, inner plans the cut
+// through it, and the batch ends before it. Otherwise the first child goes
+// in even when it does not fit, which only an empty page may take; overflow
+// reports that.
+func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPoint) (batch []node.Node, next int, overflow bool, inner *splitPlan) {
 	var batchH bag.ScaledPoint
 	for ; i < len(children); i++ {
 		ch := vlistNodeHeight(children[i])
@@ -2485,6 +2506,9 @@ func fitChildren(children []node.Node, i int, room bag.ScaledPoint) (batch []nod
 			ch = floatKeepWithNext(fh, children[i+1:])
 		}
 		if batchH+ch > room {
+			if p := cb.planSplit(children[i], room-batchH); p != nil {
+				return batch, i, false, p
+			}
 			if len(batch) > 0 {
 				break
 			}
@@ -2499,7 +2523,150 @@ func fitChildren(children []node.Node, i int, room bag.ScaledPoint) (batch []nod
 		batch = append(batch, children[i])
 		i++
 	}
-	return batch, i, overflow
+	return batch, i, overflow, nil
+}
+
+// pullBackForAvoid moves the cut before children[i] up while it falls between
+// two blocks that a break-after: avoid on the first or a break-before: avoid
+// on the second keeps together (CSS Fragmentation 3 §3.3). The batch it
+// returns may hold no block; the caller decides what that means.
+func pullBackForAvoid(children, batch []node.Node, i int) ([]node.Node, int) {
+	for i < len(children) && len(batch) > 0 {
+		var after node.Node
+		for _, c := range children[i:] {
+			if isContentNode(c) {
+				after = c
+				break
+			}
+		}
+		j := len(batch) - 1
+		for j >= 0 && !isContentNode(batch[j]) {
+			j--
+		}
+		if j < 0 || !avoidBreakAfter(batch[j]) && !avoidBreakBefore(after) {
+			break
+		}
+		i -= len(batch) - j
+		batch = batch[:j]
+	}
+	return batch, i
+}
+
+// avoidBreakBefore reports whether n has break-before: avoid.
+func avoidBreakBefore(n node.Node) bool {
+	vl, ok := n.(*node.VList)
+	return ok && vl.Attributes != nil && vl.Attributes["pageBreakBefore"] == "avoid"
+}
+
+// splitPlan is a cut through a splittable block that a block being split
+// cannot place whole: the first n of its children go into the fragment before
+// the cut, and with inner set, the cut runs through children[n], which inner
+// cuts in turn. It is worked out on heights alone and only built by cutBlock
+// once the cut is certain, as building links the children into the
+// fragments.
+type splitPlan struct {
+	vl       *node.VList
+	children []node.Node
+	n        int
+	inner    *splitPlan
+}
+
+// attrSplitRest marks the rest of a block cut by cutBlock: its first
+// fragment has no top padding or border.
+const attrSplitRest = "_splitRest"
+
+// planSplit plans a cut through n, a child of a block being split, so that
+// its part before the cut fits in room. It returns nil when n does not split
+// or no part of it fits: not its first line or block, fewer lines than
+// orphans, a rest of fewer lines than widows, or blocks that a break-after:
+// avoid keeps with the rest.
+func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint) *splitPlan {
+	vl, ok := n.(*node.VList)
+	if !ok || vl.Attributes == nil {
+		return nil
+	}
+	if spl, _ := vl.Attributes["_splittable"].(bool); !spl {
+		return nil
+	}
+	if pbi, _ := vl.Attributes["pageBreakInside"].(string); pbi == "avoid" {
+		return nil
+	}
+	children, _ := vl.Attributes["_splittableInner"].([]node.Node)
+	if len(children) == 0 {
+		return nil
+	}
+	if rest, _ := vl.Attributes[attrSplitRest].(bool); !rest {
+		hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
+		room -= hv.PaddingTop + hv.BorderTopWidth
+	}
+	batch, next, overflow, inner := cb.fitChildren(children, 0, room)
+	if overflow || next >= len(children) {
+		return nil
+	}
+	if _, leaf := vl.Attributes["_splittableTe"]; leaf {
+		fl := fragLinesOf(vl)
+		if countContent(batch) < fl.orphans {
+			return nil
+		}
+		var rest int
+		batch, next, rest = pullBackForWidows(children, batch, next, fl)
+		if rest < fl.widows {
+			return nil
+		}
+		batch, next = keepFloatWithChild(children, batch, next)
+	} else if inner == nil {
+		batch, next = pullBackForAvoid(children, batch, next)
+		batch, next = keepFloatWithChild(children, batch, next)
+	}
+	if countContent(batch) == 0 && inner == nil {
+		return nil
+	}
+	return &splitPlan{vl: vl, children: children, n: next, inner: inner}
+}
+
+// cutBlock builds the cut p plans: the fragment before it, which carries the
+// block's heading and anchors, and the rest of the block, which splits
+// again.
+func (cb *CSSBuilder) cutBlock(p *splitPlan) (head, rest *node.VList) {
+	vl := p.vl
+	headItems := append([]node.Node(nil), p.children[:p.n]...)
+	restItems := append([]node.Node(nil), p.children[p.n:]...)
+	if p.inner != nil {
+		h, r := cb.cutBlock(p.inner)
+		headItems = append(headItems, h)
+		restItems[0] = r
+	}
+	// The children are still linked as the block was built.
+	for _, c := range headItems {
+		c.SetPrev(nil)
+		c.SetNext(nil)
+	}
+	for _, c := range restItems {
+		c.SetPrev(nil)
+		c.SetNext(nil)
+	}
+	innerWidth, _ := vl.Attributes["_splittableInnerWidth"].(bag.ScaledPoint)
+	kind := fragTop
+	if r, _ := vl.Attributes[attrSplitRest].(bool); r {
+		kind = fragMiddle
+	}
+	head, _ = cb.buildFragment(vl, headItems, kind, innerWidth)
+	rest, _ = cb.buildFragment(vl, restItems, fragBottom, innerWidth)
+	for _, k := range []string{"_heading_idx", "_anchor_idx", "_anchor_indices"} {
+		if v, ok := vl.Attributes[k]; ok {
+			head.SetAttribute(k, v)
+		}
+	}
+	for _, k := range []string{"_splittable", "_splittableHv", "_splittableInnerWidth", "_splittableTe", attrFragLines, "pageBreakAfter"} {
+		if v, ok := vl.Attributes[k]; ok {
+			rest.SetAttribute(k, v)
+		}
+	}
+	rest.SetAttribute("_splittableInner", restItems)
+	rest.SetAttribute(attrSplitRest, true)
+	stampFragment(head, vl)
+	stampFragment(rest, vl)
+	return head, rest
 }
 
 // pullBackForWidows is widow protection: the rest, children from i on, must
@@ -3178,26 +3345,37 @@ func splittablePeekHeight(n node.Node) (bag.ScaledPoint, bool) {
 			return 0, false
 		}
 	}
-	// Reserve room for `orphans` content children (HList lines or
-	// VList blocks), not just the first one: outputBlockSplit refuses to
-	// start a block that would leave fewer than that on the current page
-	// and bumps the whole block to the next page instead. Promising the
-	// caller a one-line foothold would therefore orphan the very heading
-	// this relaxation exists to keep in place. Leading margin/padding
-	// kerns are counted towards the height but are not content.
-	// A block with fewer content children cannot be split at all — report
-	// it as unsplittable so the caller weighs its full height.
 	peek := hv.PaddingTop + hv.BorderTopWidth
-	seen := 0
-	for _, c := range children {
-		peek += vlistNodeHeight(c)
-		switch c.(type) {
-		case *node.HList, *node.VList:
-			seen++
-			if seen >= orphans {
-				return peek, true
+	if _, leaf := vl.Attributes["_splittableTe"].(*frontend.Text); leaf {
+		// Reserve room for `orphans` lines, not just the first one:
+		// outputBlockSplit refuses to start a paragraph that would leave
+		// fewer than that on the current page and moves it on whole.
+		// Promising the caller a one-line foothold would therefore orphan
+		// the very heading this relaxation exists to keep in place. Leading
+		// padding kerns are counted towards the height but are not content.
+		seen := 0
+		for _, c := range children {
+			peek += vlistNodeHeight(c)
+			if isContentNode(c) {
+				seen++
+				if seen >= orphans {
+					return peek, true
+				}
 			}
 		}
+		return 0, false
+	}
+	// A container splits after its first block, or through it: its
+	// foothold is the foothold of that block.
+	for _, c := range children {
+		if !isContentNode(c) {
+			peek += vlistNodeHeight(c)
+			continue
+		}
+		if p, ok := splittablePeekHeight(c); ok {
+			return peek + p, true
+		}
+		return peek + vlistNodeHeight(c), true
 	}
 	return 0, false
 }

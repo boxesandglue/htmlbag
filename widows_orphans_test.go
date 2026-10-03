@@ -95,7 +95,9 @@ func TestOrphansKeepAvoidHeading(t *testing.T) {
 	}
 }
 
-// A container counts its child blocks, and takes widows from its own style.
+// widows counts lines, not the blocks of a container (CSS Fragmentation 3
+// §4.4): a list with widows: 3 fills the page with its one-line items, and
+// each item inherits widows for its own lines.
 func TestWidowsOnList(t *testing.T) {
 	var sb strings.Builder
 	sb.WriteString(`<ul style="widows: 3">`)
@@ -104,8 +106,8 @@ func TestWidowsOnList(t *testing.T) {
 	}
 	sb.WriteString("</ul>")
 	got := linesPerPage(t, "ul, li { margin: 0; padding: 0 }", 3, sb.String())
-	if p1, p2 := split(got, 5); p1 != 2 || p2 != 3 {
-		t.Errorf("items on pages 1/2 = %d/%d, want 2/3 (%v)", p1, p2, got)
+	if p1, p2 := split(got, 5); p1 != 3 || p2 != 2 {
+		t.Errorf("items on pages 1/2 = %d/%d, want 3/2 (%v)", p1, p2, got)
 	}
 }
 
