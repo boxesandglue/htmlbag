@@ -64,7 +64,7 @@ func fragLinesOf(vl *node.VList) fragLines {
 }
 
 // HeadingEntry records a heading (h1–h6) or a bookmarked element found
-// during VList construction. Page and Y are filled later during OutputPages
+// during VList construction. Page and Y are filled later during OutputPagesFromText
 // when the element is placed on a page. SE is filled at SE-construction time
 // for tagged documents; consumers (PDF outline generator) use it to emit
 // structure destinations as required by PDF/UA-2 §8.8.
@@ -171,10 +171,10 @@ type CSSBuilder struct {
 	Counters     map[string]int
 	headingCount int
 	// Headings collects all h1–h6 headings encountered during VList
-	// construction. Page numbers are assigned during OutputPages.
+	// construction. Page numbers are assigned during OutputPagesFromText.
 	Headings []HeadingEntry
-	// GenerateOutline controls whether OutputPages / OutputPagesFromText
-	// emit a PDF outline (bookmarks) from the collected headings and
+	// GenerateOutline controls whether OutputPagesFromText
+	// emits a PDF outline (bookmarks) from the collected headings and
 	// -bag-bookmark elements. Defaults to true (set in New). Callers that
 	// build their own outline (e.g. glu's Markdown pipeline) set it to
 	// false to opt out.
@@ -908,202 +908,6 @@ func storePageDimensions(cb *CSSBuilder, pd PageDimensions) {
 		page.Userdata = make(map[any]any)
 	}
 	page.Userdata[PageDimensionsKey] = pd
-}
-
-// OutputPages distributes the content of a VList across pages, breaking
-// between child nodes whenever the next node would exceed the content height.
-// It ships out each page automatically and starts new pages as needed.
-// The final page is shipped out before returning.
-func (cb *CSSBuilder) OutputPages(vl *node.VList) error {
-	pd, err := cb.PageSize()
-	if err != nil {
-		return err
-	}
-
-	// Unwrap nested single-child VLists (html > body > content). Each unwrap
-	// step strips one VList; if it carried an inserts attribute, propagate
-	// it onto the next inner node so the page builder can still see it.
-	contentList := vl.List
-	contentWidth := vl.Width
-	if vl.Attributes != nil {
-		propagateInsertsAttr(vl, contentList)
-	}
-	for {
-		inner, ok := contentList.(*node.VList)
-		if !ok || inner.Next() != nil {
-			break
-		}
-		propagateInsertsAttr(inner, inner.List)
-		propagateAnchorIndices(inner, inner.List)
-		contentList = inner.List
-		if inner.Width > 0 {
-			contentWidth = inner.Width
-		}
-	}
-
-	// Store page dimensions as Userdata on the current page so callbacks
-	// can access margins.
-	storePageDimensions(cb, pd)
-
-	cur := contentList
-
-	// refreshPage re-reads page dimensions after a NewPage advanced the
-	// document. Phase 3 doesn't track a y-cursor here — the body cursor's
-	// position is computed at flushInserts time from the final float
-	// reservation.
-	refreshPage := func() error {
-		var err error
-		if pd, err = cb.PageSize(); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	// trialPageHeight estimates what the current page's total content
-	// footprint would be if `incoming` inserts were committed and a body
-	// box of height addBodyH were buffered: top-float stack + body buffer
-	// + addBodyH + footnote stack. The page builder uses this to decide
-	// whether the next node still fits.
-	trialPageHeight := func(incoming []*Insert, addBodyH bag.ScaledPoint) bag.ScaledPoint {
-		topFloatTrial := append([]*Insert{}, cb.pageInserts[InsertFloatTop]...)
-		topFloatTrial = append(topFloatTrial, filterInserts(incoming, InsertFloatTop)...)
-		bottomFloatTrial := append([]*Insert{}, cb.pageInserts[InsertFloatBottom]...)
-		bottomFloatTrial = append(bottomFloatTrial, filterInserts(incoming, InsertFloatBottom)...)
-		footnoteTrial := append([]*Insert{}, cb.pageInserts[InsertFootnote]...)
-		footnoteTrial = append(footnoteTrial, filterInserts(incoming, InsertFootnote)...)
-		return cb.totalFloatTopHeight(topFloatTrial) +
-			cb.pageBufHeight + addBodyH +
-			cb.totalFloatBottomHeight(bottomFloatTrial) +
-			cb.totalFootnoteHeight(footnoteTrial)
-	}
-
-	for cur != nil {
-		next := cur.Next()
-		h := vlistNodeHeight(cur)
-		incoming := insertsOnNode(cur)
-		contentArea := pd.ContentHeight
-
-		// page-break-before: always — only fires if the page has any
-		// buffered body (else it would create a leading blank page).
-		if forceBreakBefore(cur) && cb.pageBufHeight > 0 {
-			if err := cb.NewPage(); err != nil {
-				return err
-			}
-			if err := refreshPage(); err != nil {
-				return err
-			}
-		}
-
-		// page-break-after: avoid — if the next ~2 nodes wouldn't fit on
-		// the current page either, break before cur instead.
-		if avoidBreakAfter(cur) && next != nil {
-			peekH := h + vlistNodeHeight(next)
-			nn := next.Next()
-			if nn != nil {
-				peekH += vlistNodeHeight(nn)
-			}
-			fits := trialPageHeight(incoming, peekH) <= contentArea
-			// Relaxation for splittable nn (e.g. <pre>): the orphan-heading
-			// rule only requires the heading + at least one line of the
-			// following block on the same page. The rest can split off via
-			// outputBlockSplit. Without this, a long <pre> after a heading
-			// pushes the heading to the next page even though splitting
-			// would let it stay in place.
-			if !fits && nn != nil {
-				if reduced, ok := splittablePeekHeight(nn); ok {
-					relaxedH := h + vlistNodeHeight(next) + reduced
-					if trialPageHeight(incoming, relaxedH) <= contentArea {
-						fits = true
-					}
-				}
-			}
-			if !fits && cb.pageBufHeight > 0 {
-				if err := cb.NewPage(); err != nil {
-					return err
-				}
-				if err := refreshPage(); err != nil {
-					return err
-				}
-			}
-		}
-
-		// Overflow: cur (with its inserts) doesn't fit on the current
-		// page. Ship what's buffered and start fresh. Skip the break if
-		// the buffer is empty — cur is forcibly placed on the empty page
-		// (single-node-too-tall case, accept truncation).
-		//
-		// page-break-inside: avoid relaxes the "buffer empty" guard so
-		// an avoid-block lands on a fresh page even in edge cases where
-		// the body buffer is empty but inserts (footnotes, floats) have
-		// already eaten into the page. The fresh-page-fits gate
-		// (h <= contentArea) prevents infinite loops for blocks taller
-		// than a full page.
-		avoidForcesBreak := avoidBreakInside(cur) &&
-			trialPageHeight(incoming, h) > contentArea &&
-			cb.pageBufHeight == 0 &&
-			h <= contentArea
-		if (trialPageHeight(incoming, h) > contentArea && cb.pageBufHeight > 0) || avoidForcesBreak {
-			if err := cb.NewPage(); err != nil {
-				return err
-			}
-			if err := refreshPage(); err != nil {
-				return err
-			}
-		}
-
-		// Commit cur's inserts (both classes) to the current page's
-		// accumulators. Heights are kept in sync for trialPageHeight.
-		if len(incoming) > 0 {
-			for _, ins := range incoming {
-				cb.pageInserts[ins.Class] = append(cb.pageInserts[ins.Class], ins)
-			}
-			cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
-			cb.pageInsertHeight[InsertFloatBottom] = cb.totalFloatBottomHeight(cb.pageInserts[InsertFloatBottom])
-			cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
-		}
-
-		// Detach and wrap.
-		cur.SetPrev(nil)
-		cur.SetNext(nil)
-		box := node.NewVList()
-		box.List = cur
-		box.Width = contentWidth
-		box.Height = h
-
-		// Heading and anchor indices for page-number tracking happen at
-		// flush time, not here, so the page number reflects the page
-		// actually painted.
-		headingIdx := headingIdxOn(cur)
-		anchorIndices := anchorIndicesOn(cur)
-
-		cb.bufferBody(box, h, headingIdx, anchorIndices)
-
-		// page-break-after: always — ship the page now if more content
-		// follows.
-		if forceBreakAfter(cur) && next != nil {
-			if err := cb.NewPage(); err != nil {
-				return err
-			}
-			if err := refreshPage(); err != nil {
-				return err
-			}
-		}
-
-		cur = next
-	}
-
-	// Flush any inserts accumulated on the final page before its shipout.
-	if err := cb.flushInserts(); err != nil {
-		return err
-	}
-	if err := cb.BeforeShipout(); err != nil {
-		return err
-	}
-	cb.frontend.Doc.CurrentPage.Shipout()
-	if cb.GenerateOutline {
-		cb.appendOutline()
-	}
-	return nil
 }
 
 // headingLevel maps an HTML heading tag to its 1-based outline level
@@ -1868,7 +1672,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 							k.Kern = usedH
 							spacer := node.Vpack(k)
 							spacer.Attributes = node.H{"origin": "table continuation spacer"}
-							cb.bufferBody(spacer, usedH, -1, nil)
+							cb.bufferBody(spacer, usedH)
 						}
 					}
 					cur = next
@@ -2025,10 +1829,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		box.Width = contentWidth
 		box.Height = h
 
-		headingIdx := headingIdxOn(cur)
-		anchorIndices := anchorIndicesOn(cur)
-
-		cb.bufferBody(box, h, headingIdx, anchorIndices)
+		cb.bufferBody(box, h)
 		if _, isFloat := floatBoxHeight(cur); isFloat {
 			floatRegion = fc.serial
 		}
@@ -2315,22 +2116,6 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		return reflowRemainder(i, bandRows > 0 && placedLines < bandRows)
 	}
 
-	// The heading and the anchors on the original VList go onto the first
-	// fragment, or the page reference lands on the wrong page.
-	var firstHeadingIdx int = -1
-	var firstAnchorIndices []int
-	if blockVL.Attributes != nil {
-		if idx, ok := blockVL.Attributes["_heading_idx"].(int); ok {
-			firstHeadingIdx = idx
-		}
-		if idx, ok := blockVL.Attributes["_anchor_idx"].(int); ok {
-			firstAnchorIndices = append(firstAnchorIndices, idx)
-		}
-		if list, ok := blockVL.Attributes["_anchor_indices"].([]int); ok {
-			firstAnchorIndices = append(firstAnchorIndices, list...)
-		}
-	}
-
 	// Detach so children can be re-linked into per-fragment vlists.
 	for _, c := range children {
 		c.SetPrev(nil)
@@ -2367,11 +2152,10 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			}
 			wrapped, h := cb.buildFragment(blockVL, children[i:], kind, innerWidth)
 			stampFragment(wrapped, blockVL)
-			hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
-			if !isFirst {
-				hIdx, aIdx = -1, nil
+			if isFirst {
+				carryMarks(blockVL, wrapped)
 			}
-			cb.bufferBody(wrapped, h, hIdx, aIdx)
+			cb.bufferBody(wrapped, h)
 			return nil
 		}
 
@@ -2464,11 +2248,10 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		}
 		wrapped, h := cb.buildFragment(blockVL, batch, kind, innerWidth)
 		stampFragment(wrapped, blockVL)
-		hIdx, aIdx := firstHeadingIdx, firstAnchorIndices
-		if !isFirst {
-			hIdx, aIdx = -1, nil
+		if isFirst {
+			carryMarks(blockVL, wrapped)
 		}
-		cb.bufferBody(wrapped, h, hIdx, aIdx)
+		cb.bufferBody(wrapped, h)
 		isFirst = false
 		placedLines += countLines(batch)
 
@@ -2764,6 +2547,17 @@ func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint, forced func(a
 	return &splitPlan{vl: vl, children: children, n: next, inner: inner, brk: brk}
 }
 
+// carryMarks puts the heading and the anchors of the split block vl on frag,
+// its first fragment, where flushInsertsIn finds them: the page reference
+// is the page the block starts on.
+func carryMarks(vl, frag *node.VList) {
+	for _, k := range []string{"_heading_idx", "_anchor_idx", "_anchor_indices"} {
+		if v, ok := vl.Attributes[k]; ok {
+			frag.SetAttribute(k, v)
+		}
+	}
+}
+
 // cutBlock builds the cut p plans: the fragment before it, which carries the
 // block's heading and anchors, and the rest of the block, which splits
 // again.
@@ -2792,11 +2586,7 @@ func (cb *CSSBuilder) cutBlock(p *splitPlan) (head, rest *node.VList) {
 	}
 	head, _ = cb.buildFragment(vl, headItems, kind, innerWidth)
 	rest, _ = cb.buildFragment(vl, restItems, fragBottom, innerWidth)
-	for _, k := range []string{"_heading_idx", "_anchor_idx", "_anchor_indices"} {
-		if v, ok := vl.Attributes[k]; ok {
-			head.SetAttribute(k, v)
-		}
-	}
+	carryMarks(vl, head)
 	for _, k := range []string{"_splittable", "_splittableHv", "_splittableInnerWidth", "_splittableTe", attrFragLines, "pageBreakAfter"} {
 		if v, ok := vl.Attributes[k]; ok {
 			rest.SetAttribute(k, v)
@@ -3427,26 +3217,6 @@ func isForcedBreakValue(v any) bool {
 	switch s {
 	case "always", "all", "page", "left", "right", "recto", "verso":
 		return true
-	}
-	return false
-}
-
-// forceBreakAfter checks if a node has a forced break-after keyword.
-func forceBreakAfter(n node.Node) bool {
-	if vl, ok := n.(*node.VList); ok && vl.Attributes != nil {
-		if v, ok := vl.Attributes["pageBreakAfter"]; ok {
-			return isForcedBreakValue(v)
-		}
-	}
-	return false
-}
-
-// forceBreakBefore checks if a node has a forced break-before keyword.
-func forceBreakBefore(n node.Node) bool {
-	if vl, ok := n.(*node.VList); ok && vl.Attributes != nil {
-		if v, ok := vl.Attributes["pageBreakBefore"]; ok {
-			return isForcedBreakValue(v)
-		}
 	}
 	return false
 }

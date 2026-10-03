@@ -410,29 +410,20 @@ func footnoteBaseSize(s frontend.TypesettingSettings) bag.ScaledPoint {
 	return bag.MustSP("10pt")
 }
 
-// pageBufEntry is one body box awaiting placement at shipout time.
-// headingIdx is -1 if the box doesn't carry a heading anchor. The
-// anchorIndices slice carries every AnchorEntry index that lives in
-// this box — block anchors contribute one index, paragraphs with
-// inline `<span id="...">` etc. can carry several.
+// pageBufEntry is one body box awaiting placement at shipout time. The
+// headings and anchors inside it take their page when it is placed (see
+// recordMarks).
 type pageBufEntry struct {
-	box           *node.VList
-	height        bag.ScaledPoint
-	headingIdx    int
-	anchorIndices []int
+	box    *node.VList
+	height bag.ScaledPoint
 }
 
 // bufferBody appends a body box to the page buffer, updating the running
 // height. Called by the page builder in place of a direct OutputAt; the
 // buffered entries are painted at flushInserts time once the page's float
 // reservation is final.
-func (cb *CSSBuilder) bufferBody(box *node.VList, height bag.ScaledPoint, headingIdx int, anchorIndices []int) {
-	cb.pageBuf = append(cb.pageBuf, pageBufEntry{
-		box:           box,
-		height:        height,
-		headingIdx:    headingIdx,
-		anchorIndices: anchorIndices,
-	})
+func (cb *CSSBuilder) bufferBody(box *node.VList, height bag.ScaledPoint) {
+	cb.pageBuf = append(cb.pageBuf, pageBufEntry{box: box, height: height})
 	cb.pageBufHeight += height
 }
 
@@ -461,7 +452,8 @@ func (cb *CSSBuilder) recordAnchor(idx, pageNum int) {
 // being placed with its top edge at top. A block below the top level of the
 // body is placed inside its container's box, so its marks are not on the
 // page buffer's entry.
-func (cb *CSSBuilder) recordMarks(box *node.VList, pageNum int, top bag.ScaledPoint, seen map[int]bool) {
+func (cb *CSSBuilder) recordMarks(box *node.VList, pageNum int, top bag.ScaledPoint) {
+	seen := map[int]bool{}
 	mark := func(attrs node.H, y bag.ScaledPoint) {
 		if attrs == nil {
 			return
@@ -532,7 +524,7 @@ func filterInserts(ins []*Insert, class InsertClass) []*Insert {
 // nil if absent or of unexpected type. Used by the page builder.
 //
 // Recognises both *node.VList and *node.HList because the unwrap step in
-// outputGroupNodes / OutputPages strips outer VLists and propagates the
+// outputGroupNodes strips outer VLists and propagates the
 // attribute onto the first remaining node — which is typically the HList
 // of the paragraph's first line.
 func insertsOnNode(n node.Node) []*Insert {
@@ -609,21 +601,6 @@ func carryBoxMarks(from *node.VList, to node.Node) {
 	}
 }
 
-// headingIdxOn returns the _heading_idx stamped on n, or -1.
-func headingIdxOn(n node.Node) int {
-	var attrs node.H
-	switch t := n.(type) {
-	case *node.VList:
-		attrs = t.Attributes
-	case *node.HList:
-		attrs = t.Attributes
-	}
-	if idx, ok := attrs["_heading_idx"].(int); ok {
-		return idx
-	}
-	return -1
-}
-
 // propagateAnchorIndices moves the _anchor_indices of a VList that is being
 // unwrapped onto the next VList/HList carrier, as propagateInsertsAttr does
 // for inserts. A table is left alone: its rows carry their own.
@@ -664,7 +641,7 @@ func propagateAnchorIndices(from *node.VList, to node.Node) {
 // unwrapped onto the next VList/HList carrier in the linked list starting
 // at `to`. Walks past non-carrier nodes (Kerns from CSS margins, etc.)
 // because they don't survive the page-builder's per-node attribute lookup.
-// Used in the unwrap loops of OutputPages and outputGroupNodes.
+// Used in the unwrap loop of outputGroupNodes.
 func propagateInsertsAttr(from *node.VList, to node.Node) {
 	if from == nil || from.Attributes == nil || to == nil {
 		return
@@ -723,8 +700,7 @@ func (cb *CSSBuilder) makeFootnoteSeparator(width bag.ScaledPoint) *node.VList {
 // flushInserts paints the current page in four layers — top-floats,
 // buffered body, bottom-floats, footnotes — and clears the per-page
 // state. Called by cb.NewPage() before shipout, once at the end of the
-// final page in OutputPages, and through pageRegions for
-// OutputPagesFromText.
+// final page, and through pageRegions for OutputPagesFromText.
 //
 // Painting order:
 //  1. Top-floats at yStart, going down (placeFloatTopInserts).
@@ -767,12 +743,7 @@ func (cb *CSSBuilder) flushInsertsIn(reg region) error {
 		// its side of this page.
 		fixLogicalFloats(entry.box, reg.isRight())
 		reg.output(yCursor, entry.box, entry.height)
-		seen := map[int]bool{}
-		cb.recordHeading(entry.headingIdx, reg.pageNum, yCursor, seen)
-		for _, idx := range entry.anchorIndices {
-			cb.recordAnchor(idx, reg.pageNum)
-		}
-		cb.recordMarks(entry.box, reg.pageNum, yCursor, seen)
+		cb.recordMarks(entry.box, reg.pageNum, yCursor)
 		yCursor -= entry.height
 	}
 	cb.pageBuf = nil

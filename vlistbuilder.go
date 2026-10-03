@@ -551,7 +551,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					}
 				}
 
-				// Annotate heading / bookmarked VLists so OutputPages can
+				// Annotate heading / bookmarked VLists so the paginator can
 				// assign page numbers and the outline builder can find them.
 				// h1–h6 are recorded for the heading list / TOC unconditionally;
 				// the CSS -bag-bookmark property additionally lets any element

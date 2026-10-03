@@ -198,7 +198,7 @@ func TestFlowTextTwiceLeavesNothingBehind(t *testing.T) {
 	cb, fe := newFlowBuilder(t, css)
 	// A page in progress, which FlowText must keep as it is.
 	held := node.NewVList()
-	cb.bufferBody(held, sp("10pt"), -1, nil)
+	cb.bufferBody(held, sp("10pt"))
 	for run := 1; run <= 2; run++ {
 		got := flow(t, cb, body, sizes...)
 		if len(got.filled) != len(want.filled) {

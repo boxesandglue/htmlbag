@@ -784,7 +784,7 @@ func (fc *flowCursor) moveOn(cb *CSSBuilder, n node.Node) error {
 		k := node.NewKern()
 		k.Kern = max(margin, fc.cur.marginBefore)
 		k.Attributes = node.H{"origin": "margin"}
-		cb.bufferBody(node.Vpack(k), k.Kern, -1, nil)
+		cb.bufferBody(node.Vpack(k), k.Kern)
 		fc.top = topPlaced
 	}
 	return nil
