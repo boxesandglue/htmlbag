@@ -235,6 +235,8 @@ type CSSBuilder struct {
 	// sourceNodes holds the node of the document each Text of the last
 	// HTMLToText comes from (noteSource).
 	sourceNodes map[*frontend.Text]*html.Node
+	// autoMargins holds the Texts of blocks with an auto side margin.
+	autoMargins map[*frontend.Text]autoMargin
 	// pageInserts accumulates inserts (per class) whose marks have been
 	// placed on the current page. Flushed by flushInserts, which is called
 	// automatically from cb.NewPage() before shipout, and must also be
