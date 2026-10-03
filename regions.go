@@ -29,6 +29,14 @@ type Regions interface {
 type Region struct {
 	// Width and Height are the size of the rectangle.
 	Width, Height bag.ScaledPoint
+	// Occupied is set for a region that lies below content the caller
+	// placed itself. A block that does not fit moves on from it, as from a
+	// region that holds a block, where an empty region would take it anyway.
+	// A block moves on from an occupied region once: in the region after
+	// that move, it is placed as in an empty one, so a flow through regions
+	// that are all occupied ends. Margins at the top of an occupied region
+	// are kept, as in the first region.
+	Occupied bool
 	// MarginBefore is the margin still open above the region, such as the
 	// MarginAfter of a flow this one continues. It collapses with the first
 	// block's margin-top in the first region and in a region after a forced
@@ -95,8 +103,9 @@ type Fragment struct {
 // whole blocks at its width, and re-breaks the rest of a paragraph or a table
 // split across the two, as a page of another @page width does. What that
 // cannot rebuild keeps the width it was built at: the lines of a paragraph
-// that is the flow's only block, the children of a split box with a border
-// or background, and a paragraph whose rest fails to re-break.
+// that is the flow's only block and starts in a region that is not occupied,
+// the children of a split box with a border or background, and a paragraph
+// whose rest fails to re-break.
 //
 // Nothing of the flow is left in the builder when FlowText returns, and the
 // page content the builder holds is kept as it was. As with
@@ -198,6 +207,8 @@ type region struct {
 	pageNum int
 	// marginBefore is Region.MarginBefore.
 	marginBefore bag.ScaledPoint
+	// occupied is Region.Occupied.
+	occupied bool
 	// sink collects the boxes of a caller's region; nil for a page region,
 	// whose boxes are painted onto the page.
 	sink *regionSink
@@ -323,6 +334,7 @@ func (cr *callerRegions) next(brk string) (region, error) {
 		top:          rg.Top,
 		pageNum:      rg.PageNum,
 		marginBefore: rg.MarginBefore,
+		occupied:     rg.Occupied,
 		sink:         &regionSink{},
 	}
 	cr.started = true
@@ -716,6 +728,10 @@ type flowCursor struct {
 	// rebuiltIn is the serial of the region the current group's items were
 	// last rebuilt for, 0 before a rebuild.
 	rebuiltIn int
+	// movedOn is set when the block being placed moved on from an occupied
+	// region that held nothing else: the current region is then empty to
+	// it, whether occupied or not.
+	movedOn bool
 }
 
 // start takes the first region, brk being the first block's forced
@@ -741,11 +757,58 @@ func (fc *flowCursor) breakTo(brk string, n node.Node) error {
 	}
 	fc.cur = reg
 	fc.serial++
+	fc.movedOn = false
 	fc.top = topKept
-	if brk == "" {
+	if brk == "" && !reg.occupied {
 		fc.top = topTruncated
 	}
 	return nil
+}
+
+// moveOn breaks to the next region because n, the block being placed, does
+// not fit in this one. A margin-top of n spent at the foot of the region goes
+// with n when the next region is occupied.
+func (fc *flowCursor) moveOn(cb *CSSBuilder, n node.Node) error {
+	occupiedOnly := fc.cur.occupied && !fc.movedOn && fc.cur.sink.empty() && cb.marginsOnly()
+	var margin bag.ScaledPoint
+	if k := len(cb.pageBuf); k > 0 {
+		if mk, ok := marginKern(cb.pageBuf[k-1].box.List); ok && mk.Next() == nil {
+			margin, _ = mk.Attributes[attrMarginTop].(bag.ScaledPoint)
+		}
+	}
+	if err := fc.breakTo("", n); err != nil {
+		return err
+	}
+	fc.movedOn = occupiedOnly
+	if fc.cur.occupied && margin > 0 {
+		k := node.NewKern()
+		k.Kern = max(margin, fc.cur.marginBefore)
+		k.Attributes = node.H{"origin": "margin"}
+		cb.bufferBody(node.Vpack(k), k.Kern, -1, nil)
+		fc.top = topPlaced
+	}
+	return nil
+}
+
+// holdsContent reports whether a block that does not fit in the current
+// region moves on from it: the region holds a block, or it is occupied and
+// the block has not moved on from an occupied region yet. After that move,
+// a margin that came along is not something the region holds.
+func (fc *flowCursor) holdsContent(cb *CSSBuilder) bool {
+	if fc.movedOn {
+		return !cb.marginsOnly()
+	}
+	return cb.pageBufHeight > 0 || fc.cur.occupied
+}
+
+// marginsOnly reports whether the page buffer holds nothing but margins.
+func (cb *CSSBuilder) marginsOnly() bool {
+	for _, e := range cb.pageBuf {
+		if _, ok := marginKern(e.box.List); !ok || e.box.List.Next() != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // regionEmpty reports whether nothing is placed in a caller's region yet.
