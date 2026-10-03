@@ -2912,14 +2912,16 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		}
 		// A row that may break inside is split where the page ends, if a
 		// line of it fits there; the rest goes on after the next page's
-		// header rows.
+		// header rows. The limit is read when the split is made: after a
+		// break it is the foot of the region the rest goes on in.
 		var rest *node.HList
 		splitHere := func() {
-			if i < headerCount || *y-h >= effectiveLimit {
+			limit := *yLimit + footerHeight
+			if i < headerCount || *y-h >= limit {
 				return
 			}
 			if sp := rowSplitterOf(row); sp != nil {
-				if first, more, ok := sp(*y - effectiveLimit); ok {
+				if first, more, ok := sp(*y - limit); ok {
 					row, rest, h = first, more, vlistNodeHeight(first)
 				}
 			}
