@@ -53,6 +53,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		defer func() { settings[settingLangTag] = langTag }()
 	}
 
+	if vlid, ok := settings[frontend.SettingPrerenderedVListID].(string); ok && len(te.Items) == 0 {
+		return cb.placeholderBox(te, vlid), nil
+	}
+
 	// If a CSS width is specified, use it instead of the inherited width.
 	if sWd, ok := settings[frontend.SettingWidth]; ok {
 		if wdStr, ok := sWd.(string); ok {
@@ -1464,4 +1468,36 @@ func applyCSSHeight(vl *node.VList, h bag.ScaledPoint) {
 	k.Attributes = node.H{"origin": "css height"}
 	vl.List = node.InsertAfter(vl.List, node.Tail(vl.List), k)
 	vl.Height += k.Kern
+}
+
+// attrPlaceholder marks the box of a block-level data-vlist-id placeholder,
+// which the paginator places whole.
+const attrPlaceholder = "_placeholder"
+
+// placeholderBox is the block a data-vlist-id placeholder among blocks stands
+// for: the pre-rendered VList at its own width, never broken. It is a copy,
+// as a rebuild at another width builds the block again and the VList must
+// not be linked into two lists.
+func (cb *CSSBuilder) placeholderBox(te *frontend.Text, vlid string) *node.VList {
+	pending, ok := cb.PendingVLists[vlid]
+	if !ok || pending == nil {
+		bag.Logger.Warn("data-vlist-id has no pre-rendered box", "id", vlid)
+		return node.NewVList()
+	}
+	box := node.Vpack(pending.Copy())
+	box.Attributes = node.H{"origin": "data-vlist-id", attrPlaceholder: true}
+	if id, ok := te.Settings[frontend.SettingElementID].(string); ok && id != "" {
+		box.SetAttribute("id", id)
+	}
+	return box
+}
+
+// isPlaceholderBox reports whether n is the box of a data-vlist-id placeholder.
+func isPlaceholderBox(n node.Node) bool {
+	vl, ok := n.(*node.VList)
+	if !ok || vl.Attributes == nil {
+		return false
+	}
+	p, _ := vl.Attributes[attrPlaceholder].(bool)
+	return p
 }

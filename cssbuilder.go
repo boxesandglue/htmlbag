@@ -217,8 +217,12 @@ type CSSBuilder struct {
 	anchorSnapshots map[string]map[string][]int
 	// PendingVLists stores pre-rendered VLists keyed by a unique ID.
 	// Used to pass already-rendered content (e.g. group contents) through
-	// the HTML/CSS pipeline into table cells.
+	// the HTML/CSS pipeline: an element with data-vlist-id="ID" stands for
+	// the VList, in a table cell or as a block of its own.
 	PendingVLists map[string]*node.VList
+	// placeholderIDs holds the data-vlist-id values the HTML walk has met,
+	// each of which stands for one box.
+	placeholderIDs map[string]bool
 	// pageInserts accumulates inserts (per class) whose marks have been
 	// placed on the current page. Flushed by flushInserts, which is called
 	// automatically from cb.NewPage() before shipout, and must also be
@@ -1444,6 +1448,10 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if _, leaf := inner.Attributes["_splittableTe"]; leaf && fc.cur.occupied {
 				break
 			}
+			// A pre-rendered box is placed whole.
+			if isPlaceholderBox(inner) {
+				break
+			}
 		}
 		shiftChildren(inner)
 		propagateInsertsAttr(inner, inner.List)
@@ -1589,7 +1597,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		if wrap, ok := cur.(*node.VList); ok && wrap.Attributes != nil && cb.pageBufHeight+h > contentArea {
 			o, _ := wrap.Attributes["origin"].(string)
 			spl, _ := wrap.Attributes["_splittable"].(bool)
-			if o != "table" && !spl && wrap.List != nil && hasTableChild(wrap.List) {
+			if o != "table" && !spl && !isPlaceholderBox(wrap) && wrap.List != nil && hasTableChild(wrap.List) {
 				propagateInsertsAttr(wrap, wrap.List)
 				propagateFlowChild(wrap, wrap.List)
 				first := wrap.List

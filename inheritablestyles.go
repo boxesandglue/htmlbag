@@ -1793,9 +1793,10 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			cb.recordAnchorSnapshot(id, ss)
 		}
 	}
-	// A placeholder for a pre-rendered VList among a cell's contents; the
-	// td case below handles one on the cell itself.
+	// A placeholder for a pre-rendered VList among a cell's contents or
+	// among blocks; the td case below handles one on the cell itself.
 	if vlid, ok := item.Attributes["data-vlist-id"]; ok && item.Data != "td" && item.Data != "th" {
+		cb.notePlaceholder(vlid)
 		newte.Settings[frontend.SettingPrerenderedVListID] = vlid
 	}
 	switch item.Data {
@@ -1834,6 +1835,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			}
 		}
 		if vlid, ok := item.Attributes["data-vlist-id"]; ok {
+			cb.notePlaceholder(vlid)
 			newte.Settings[frontend.SettingPrerenderedVListID] = vlid
 		}
 	case "col":
@@ -2186,6 +2188,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 					return nil, err
 				}
 			} else {
+				warnInlinePlaceholders(itm)
 				if err := collectHorizontalNodes(cb, te, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 					return nil, err
 				}
@@ -2257,8 +2260,8 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			// and empty blocks that still paint something through a
 			// border or background (<hr> is a zero-content element
 			// whose whole rendering is its border), and a cell's
-			// placeholders for a pre-rendered VList.
-			isPlaceholder := (item.Data == "td" || item.Data == "th") && te.Settings[frontend.SettingPrerenderedVListID] != nil
+			// placeholders for a pre-rendered VList, and one among blocks.
+			isPlaceholder := te.Settings[frontend.SettingPrerenderedVListID] != nil
 			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" || te.Settings[settingCSSHeight] != nil || hasVisibleDecoration(te.Settings) || isPlaceholder {
 				newte.Items = append(newte.Items, te)
 			}
@@ -3029,5 +3032,31 @@ func cssFontFeatureSettings(v string) []string {
 func stampInlineID(vl *node.VList, item *HTMLItem) {
 	if id := item.Attributes["id"]; id != "" {
 		vl.Attributes["id"] = id
+	}
+}
+
+// notePlaceholder records a data-vlist-id the HTML walk meets. Each id stands
+// for one box, so a second placeholder with the same id is a caller's error.
+func (cb *CSSBuilder) notePlaceholder(vlid string) {
+	if cb.placeholderIDs == nil {
+		cb.placeholderIDs = map[string]bool{}
+	}
+	if cb.placeholderIDs[vlid] {
+		bag.Logger.Warn("data-vlist-id is used more than once, each id stands for one box", "id", vlid)
+	}
+	cb.placeholderIDs[vlid] = true
+}
+
+// warnInlinePlaceholders warns about data-vlist-id placeholders in the text of
+// a paragraph: only one among blocks or in a table cell is set.
+func warnInlinePlaceholders(item *HTMLItem) {
+	if item.Typ != html.ElementNode {
+		return
+	}
+	if vlid, ok := item.Attributes["data-vlist-id"]; ok {
+		bag.Logger.Warn("data-vlist-id inside the text of a paragraph is not set, it has to be a block", "id", vlid)
+	}
+	for _, c := range item.Children {
+		warnInlinePlaceholders(c)
 	}
 }
