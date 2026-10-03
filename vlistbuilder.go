@@ -443,8 +443,11 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 							vl.Attributes["_anchor_indices"] = idx
 						}
 					}
-					// margin-left moves the table as it moves any block.
-					vl.ShiftX += ml
+					// margin-left moves the table as it moves any block, and
+					// auto side margins share the room it leaves; a table
+					// without a width is as wide as its content.
+					mr, _ := t.Settings[frontend.SettingMarginRight].(bag.ScaledPoint)
+					vl.ShiftX += ml + cb.autoMarginShift(t, vl.Width, wd-ml-mr)
 					// The table's own box carries its id, as a paragraph's does.
 					if id, ok := t.Settings[frontend.SettingElementID].(string); ok && id != "" {
 						vl.SetAttribute("id", id)
@@ -486,6 +489,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					shift := childMarginLeft
 					if !hasBorderOrBg {
 						shift += paddingLeft
+					}
+					// Auto side margins share the room a block's width
+					// leaves, a pre-rendered box's its own; without a width
+					// a block fills the line.
+					if _, ok := t.Settings[frontend.SettingWidth]; ok || isPlaceholderBox(vl) {
+						shift += cb.autoMarginShift(t, vl.Width, childWidth)
 					}
 					if shift != 0 {
 						vl.ShiftX += shift

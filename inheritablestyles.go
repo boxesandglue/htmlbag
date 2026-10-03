@@ -561,13 +561,22 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 				ih.lineheightFactor = 0
 			}
 		case "margin-bottom":
-			ih.marginBottom = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			// auto is 0 above and below a block (CSS 2.1 §10.6.3).
+			if v != "auto" {
+				ih.marginBottom = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			}
 		case "margin-left":
-			ih.marginLeft = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			if ih.marginLeftAuto = v == "auto"; !ih.marginLeftAuto {
+				ih.marginLeft = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			}
 		case "margin-right":
-			ih.marginRight = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			if ih.marginRightAuto = v == "auto"; !ih.marginRightAuto {
+				ih.marginRight = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			}
 		case "margin-top":
-			ih.marginTop = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			if v != "auto" {
+				ih.marginTop = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			}
 		case "page-break-after", "break-after":
 			ih.pageBreakAfter = v
 		case "page-break-before", "break-before":
@@ -949,8 +958,11 @@ type FormattingStyles struct {
 	marginLeft         bag.ScaledPoint
 	marginRight        bag.ScaledPoint
 	marginTop          bag.ScaledPoint
-	paddingInlineStart bag.ScaledPoint
-	OlCounter          int
+	// marginLeftAuto and marginRightAuto are margin-left and margin-right
+	// auto, which take up the room a block's width leaves (autoMargins).
+	marginLeftAuto, marginRightAuto bool
+	paddingInlineStart              bag.ScaledPoint
+	OlCounter                       int
 	// LocalCounters holds CSS counter values defined in this element's
 	// scope. Children look up counter values by walking the StylesStack
 	// from the top down, so siblings share counters declared on the
@@ -1701,6 +1713,12 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	styles := ss.PushStyles()
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err
+	}
+	if styles.marginLeftAuto || styles.marginRightAuto {
+		if cb.autoMargins == nil {
+			cb.autoMargins = map[*frontend.Text]autoMargin{}
+		}
+		cb.autoMargins[newte] = autoMargin{left: styles.marginLeftAuto, right: styles.marginRightAuto}
 	}
 	// styles is re-assigned inside the children loop (each inline run
 	// pushes its own frame); keep the block element's own styles for the
@@ -3136,4 +3154,27 @@ func (cb *CSSBuilder) strutFont(ih *FormattingStyles) *font.Font {
 	}
 	cb.strutFonts[key] = fnt
 	return fnt
+}
+
+// autoMargin records which of a block's side margins are auto.
+type autoMargin struct {
+	left, right bool
+}
+
+// autoMarginShift is how far a block of width wd moves right in a line of
+// width avail when its side margins are auto (CSS 2.1 §10.3.3): both auto
+// center it, margin-left auto alone moves it to the right edge. A block that
+// fills the line, or is wider, does not move.
+func (cb *CSSBuilder) autoMarginShift(te *frontend.Text, wd, avail bag.ScaledPoint) bag.ScaledPoint {
+	am, ok := cb.autoMargins[te]
+	if !ok || wd >= avail {
+		return 0
+	}
+	switch {
+	case am.left && am.right:
+		return (avail - wd) / 2
+	case am.left:
+		return avail - wd
+	}
+	return 0
 }
