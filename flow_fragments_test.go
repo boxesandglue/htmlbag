@@ -41,12 +41,12 @@ func TestFlowTextFragmentsOfASplitParagraph(t *testing.T) {
 		want       [][]Fragment
 	}{
 		{"after another block", `<p>` + charLines("A", 1) + `</p><p id="long">` + charLines("B", 10) + `</p>`, [][]Fragment{
-			{{"", 0, 0, sp("12pt"), false, false}, {"long", 1, sp("12pt"), sp("48pt"), false, true}},
-			{{"long", 1, 0, sp("72pt"), true, false}},
+			{{"", 0, 0, sp("12pt"), false, false, nil}, {"long", 1, sp("12pt"), sp("48pt"), false, true, nil}},
+			{{"long", 1, 0, sp("72pt"), true, false, nil}},
 		}},
 		{"the only block", `<p id="long">` + charLines("B", 11) + `</p>`, [][]Fragment{
-			{{"long", 0, 0, sp("60pt"), false, true}},
-			{{"long", 0, 0, sp("72pt"), true, false}},
+			{{"long", 0, 0, sp("60pt"), false, true, nil}},
+			{{"long", 0, 0, sp("72pt"), true, false, nil}},
 		}},
 	}
 	for _, c := range cases {
@@ -100,8 +100,8 @@ func TestFlowTextFragmentsOfATableSplitByRows(t *testing.T) {
 				t.Fatalf("rows start at %s and %s, want 12pt and 0pt", top1, top2)
 			}
 			checkFragments(t, tr, [][]Fragment{
-				{{"", 0, 0, charLine, false, false}, {"tbl", 1, top1, h1, false, true}},
-				{{"tbl", 1, top2, h2, true, false}},
+				{{"", 0, 0, charLine, false, false, nil}, {"tbl", 1, top1, h1, false, true, nil}},
+				{{"tbl", 1, top2, h2, true, false, nil}},
 			})
 			for i, f := range tr.filled {
 				if n := boxIDs(f)["tbl"]; n != 1 {
@@ -118,9 +118,9 @@ func TestFlowTextFragmentsOverThreeRegions(t *testing.T) {
 	cb, _ := newFlowBuilder(t, "")
 	tr := flow(t, cb, `<p id="long">`+charLines("B", 10)+`</p><p id="z">Zq</p>`, wide("48pt"), wide("48pt"), wide("1000pt"))
 	checkFragments(t, tr, [][]Fragment{
-		{{"long", 0, 0, sp("48pt"), false, true}},
-		{{"long", 0, 0, sp("48pt"), true, true}},
-		{{"long", 0, 0, sp("24pt"), true, false}, {"z", 1, sp("24pt"), charLine, false, false}},
+		{{"long", 0, 0, sp("48pt"), false, true, nil}},
+		{{"long", 0, 0, sp("48pt"), true, true, nil}},
+		{{"long", 0, 0, sp("24pt"), true, false, nil}, {"z", 1, sp("24pt"), charLine, false, false, nil}},
 	})
 }
 
@@ -130,7 +130,7 @@ func TestFlowTextFragmentOfASideFloat(t *testing.T) {
 	cb, _ := newFlowBuilder(t, "")
 	tr := flow(t, cb, `<div id="f" style="float: left; width: 40pt; height: 20pt">Fq</div><p id="g">`+charLines("G", 3)+`</p>`, wide("1000pt"))
 	checkFragments(t, tr, [][]Fragment{
-		{{"f", 0, 0, sp("20pt"), false, false}, {"g", 1, 0, sp("36pt"), false, false}},
+		{{"f", 0, 0, sp("20pt"), false, false, nil}, {"g", 1, 0, sp("36pt"), false, false, nil}},
 	})
 }
 
@@ -303,12 +303,12 @@ func TestFlowTextFragmentsOfAParagraphMovedOnWhole(t *testing.T) {
 		want        [][]Fragment
 	}{
 		{"last block", ``, [][]Fragment{
-			{{"", 0, 0, sp("36pt"), false, false}},
-			{{"b", 1, 0, sp("36pt"), false, false}},
+			{{"", 0, 0, sp("36pt"), false, false, nil}},
+			{{"b", 1, 0, sp("36pt"), false, false, nil}},
 		}},
 		{"block after it", `<p id="c">Cq</p>`, [][]Fragment{
-			{{"", 0, 0, sp("36pt"), false, false}},
-			{{"b", 1, 0, sp("36pt"), false, false}, {"c", 2, sp("36pt"), charLine, false, false}},
+			{{"", 0, 0, sp("36pt"), false, false, nil}},
+			{{"b", 1, 0, sp("36pt"), false, false, nil}, {"c", 2, sp("36pt"), charLine, false, false, nil}},
 		}},
 	}
 	for _, c := range cases {

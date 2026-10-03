@@ -1694,6 +1694,7 @@ func isHexDigit(c byte) bool {
 func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Document, anchorPages map[string]int) (*frontend.Text, error) {
 	// item is guaranteed to be in vertical direction
 	newte := frontend.NewText()
+	cb.noteSource(newte, item.Node)
 	styles := ss.PushStyles()
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err
@@ -2147,6 +2148,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			}
 			if te == nil {
 				te = frontend.NewText()
+				cb.noteSource(te, itm.Node)
 				styles = ss.PushStyles()
 				cb.setFragLines(te, styles.fragLines())
 				// A pending block-level ::before joins the first inline
@@ -3059,4 +3061,13 @@ func warnInlinePlaceholders(item *HTMLItem) {
 	for _, c := range item.Children {
 		warnInlinePlaceholders(c)
 	}
+}
+
+// noteSource records the node of the document a Text comes from: the element
+// of a block, the first node of an anonymous run of text.
+func (cb *CSSBuilder) noteSource(te *frontend.Text, n *html.Node) {
+	if cb == nil || n == nil || cb.sourceNodes == nil {
+		return
+	}
+	cb.sourceNodes[te] = n
 }

@@ -223,6 +223,9 @@ type CSSBuilder struct {
 	// placeholderIDs holds the data-vlist-id values the HTML walk has met,
 	// each of which stands for one box.
 	placeholderIDs map[string]bool
+	// sourceNodes holds the node of the document each Text of the last
+	// HTMLToText comes from (noteSource).
+	sourceNodes map[*frontend.Text]*html.Node
 	// pageInserts accumulates inserts (per class) whose marks have been
 	// placed on the current page. Flushed by flushInserts, which is called
 	// automatically from cb.NewPage() before shipout, and must also be
@@ -1065,7 +1068,7 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 	var marginAfter bag.ScaledPoint
 	var children *flowChildren
 	if fc.caller {
-		children = newFlowChildren(body)
+		children = newFlowChildren(body, cb.sourceNodes)
 	}
 	groupStart := 0
 	for i, group := range groups {
