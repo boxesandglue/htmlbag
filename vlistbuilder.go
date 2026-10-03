@@ -415,7 +415,16 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						}
 					}
 					wrapTable := hasTableBorderOrBg && !hasTheadOrTfoot
-					tableWidth := wd
+					// The table sits in the container's content box, as
+					// every other child does (padding without a border or
+					// background is a shift, as in the branch below).
+					avail := childBaseWidth
+					var padShift bag.ScaledPoint
+					if !hasBorderOrBg {
+						avail -= paddingLeft + paddingRight
+						padShift = paddingLeft
+					}
+					tableWidth := avail
 					// A table without a width takes the room its side
 					// margins leave (CSS 2.1 §10.3.3); a percentage still
 					// refers to the full width.
@@ -443,8 +452,11 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 							vl.Attributes["_anchor_indices"] = idx
 						}
 					}
-					// margin-left moves the table as it moves any block.
-					vl.ShiftX += ml
+					// margin-left moves the table as it moves any block, and
+					// auto side margins share the room it leaves; a table
+					// without a width is as wide as its content.
+					mr, _ := t.Settings[frontend.SettingMarginRight].(bag.ScaledPoint)
+					vl.ShiftX += padShift + ml + cb.autoMarginShift(t, vl.Width, avail-ml-mr)
 					// The table's own box carries its id, as a paragraph's does.
 					if id, ok := t.Settings[frontend.SettingElementID].(string); ok && id != "" {
 						vl.SetAttribute("id", id)
@@ -486,6 +498,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					shift := childMarginLeft
 					if !hasBorderOrBg {
 						shift += paddingLeft
+					}
+					// Auto side margins share the room a block's width
+					// leaves, a pre-rendered box's its own; without a width
+					// a block fills the line.
+					if _, ok := t.Settings[frontend.SettingWidth]; ok || isPlaceholderBox(vl) {
+						shift += cb.autoMarginShift(t, vl.Width, childWidth)
 					}
 					if shift != 0 {
 						vl.ShiftX += shift
