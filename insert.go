@@ -436,6 +436,85 @@ func (cb *CSSBuilder) bufferBody(box *node.VList, height bag.ScaledPoint, headin
 	cb.pageBufHeight += height
 }
 
+// recordHeading gives heading idx the page and the top edge y of the node
+// that carries it, unless seen already has it: the first, outermost carrier
+// counts. y is in PDF user space; the outline builder uses it for an /XYZ
+// destination so a bookmark jumps to the heading's exact vertical position.
+func (cb *CSSBuilder) recordHeading(idx, pageNum int, y bag.ScaledPoint, seen map[int]bool) {
+	if idx < 0 || idx >= len(cb.Headings) || seen[idx] {
+		return
+	}
+	seen[idx] = true
+	cb.Headings[idx].Page = pageNum
+	cb.Headings[idx].Y = y
+}
+
+// recordAnchor gives anchor idx the page.
+func (cb *CSSBuilder) recordAnchor(idx, pageNum int) {
+	if idx >= 0 && idx < len(cb.Anchors) {
+		cb.Anchors[idx].Page = pageNum
+	}
+}
+
+// recordMarks gives every heading and anchor stamped on box or on a box or
+// line inside it the page, and a heading the top edge of its carrier, box
+// being placed with its top edge at top. A block below the top level of the
+// body is placed inside its container's box, so its marks are not on the
+// page buffer's entry.
+func (cb *CSSBuilder) recordMarks(box *node.VList, pageNum int, top bag.ScaledPoint, seen map[int]bool) {
+	mark := func(attrs node.H, y bag.ScaledPoint) {
+		if attrs == nil {
+			return
+		}
+		if idx, ok := attrs["_heading_idx"].(int); ok {
+			cb.recordHeading(idx, pageNum, y, seen)
+		}
+		if idx, ok := attrs["_anchor_idx"].(int); ok {
+			cb.recordAnchor(idx, pageNum)
+		}
+		if list, ok := attrs["_anchor_indices"].([]int); ok {
+			for _, idx := range list {
+				cb.recordAnchor(idx, pageNum)
+			}
+		}
+	}
+	var walkV func(n node.Node, y bag.ScaledPoint)
+	var walkH func(hl *node.HList, y bag.ScaledPoint)
+	// The boxes in a line hang from its top edge, as a bordered block's
+	// content does in the frame HTMLBorder builds around it.
+	walkH = func(hl *node.HList, y bag.ScaledPoint) {
+		mark(hl.Attributes, y)
+		for c := hl.List; c != nil; c = c.Next() {
+			switch v := c.(type) {
+			case *node.VList:
+				mark(v.Attributes, y)
+				walkV(v.List, y)
+			case *node.HList:
+				walkH(v, y)
+			}
+		}
+	}
+	walkV = func(n node.Node, y bag.ScaledPoint) {
+		for ; n != nil; n = n.Next() {
+			switch v := n.(type) {
+			case *node.VList:
+				mark(v.Attributes, y)
+				walkV(v.List, y)
+				y -= v.Height + v.Depth
+			case *node.HList:
+				walkH(v, y)
+				y -= v.Height + v.Depth
+			case *node.Kern:
+				y -= v.Kern
+			case *node.Glue:
+				y -= v.Width
+			}
+		}
+	}
+	mark(box.Attributes, top)
+	walkV(box.List, top)
+}
+
 // filterInserts returns the subset of ins whose Class equals class. Returns
 // nil for an empty result so callers can use len() == 0 as the absence
 // check without an explicit nil branch.
@@ -688,18 +767,12 @@ func (cb *CSSBuilder) flushInsertsIn(reg region) error {
 		// its side of this page.
 		fixLogicalFloats(entry.box, reg.isRight())
 		reg.output(yCursor, entry.box, entry.height)
-		if entry.headingIdx >= 0 && entry.headingIdx < len(cb.Headings) {
-			cb.Headings[entry.headingIdx].Page = reg.pageNum
-			// yCursor is the top edge of the box in PDF user space; the
-			// outline builder uses it for an /XYZ destination so a bookmark
-			// jumps to the heading's exact vertical position.
-			cb.Headings[entry.headingIdx].Y = yCursor
-		}
+		seen := map[int]bool{}
+		cb.recordHeading(entry.headingIdx, reg.pageNum, yCursor, seen)
 		for _, idx := range entry.anchorIndices {
-			if idx >= 0 && idx < len(cb.Anchors) {
-				cb.Anchors[idx].Page = reg.pageNum
-			}
+			cb.recordAnchor(idx, reg.pageNum)
 		}
+		cb.recordMarks(entry.box, reg.pageNum, yCursor, seen)
 		yCursor -= entry.height
 	}
 	cb.pageBuf = nil
