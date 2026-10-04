@@ -404,6 +404,16 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 				ih.linebreakTolerance = f
 			}
+		case "-bag-line-breaker":
+			// boxesandglue-specific: how a paragraph chooses its breaks.
+			// auto keeps Knuth-Plass; any other name selects a breaker
+			// registered with CSSBuilder.RegisterBreaker.
+			switch b := strings.ToLower(strings.TrimSpace(v)); {
+			case b == "auto":
+				ih.breaker = ""
+			case b != "" && !builtinBreaker(b):
+				ih.breaker = b
+			}
 		case "-bag-leading-model":
 			// boxesandglue-specific: how the leading (line-height minus the
 			// line's natural height) is distributed. "half" splits it above
@@ -942,6 +952,7 @@ type FormattingStyles struct {
 	linebreakTolerance float64 // -bag-linebreak-tolerance (0 = inherit/default)
 	leadingModel       string  // -bag-leading-model: "half" or "trailing" ("" = inherit/default)
 	lineModel          string  // -bag-leading-model naming a registered line model
+	breaker            string  // -bag-line-breaker naming a registered breaker
 	indent             bag.ScaledPoint
 	initialLetterLines int
 	italicCorrection   bool
@@ -1177,6 +1188,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		linebreakTolerance: is.linebreakTolerance,
 		leadingModel:       is.leadingModel,
 		lineModel:          is.lineModel,
+		breaker:            is.breaker,
 		language:           is.language,
 		langPattern:        is.langPattern,
 		letterSpacing:      is.letterSpacing,
@@ -1468,6 +1480,16 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 }
 
+// builtinBreaker reports whether name is a -bag-line-breaker value htmlbag
+// handles itself, and so never a registered breaker's name.
+func builtinBreaker(name string) bool {
+	switch name {
+	case "auto", "inherit", "initial", "unset", "revert", "revert-layer":
+		return true
+	}
+	return false
+}
+
 // builtinLeadingModel reports whether name is a -bag-leading-model value
 // htmlbag handles itself, and so never a registered line model's name.
 func builtinLeadingModel(name string) bool {
@@ -1478,11 +1500,15 @@ func builtinLeadingModel(name string) bool {
 	return false
 }
 
-// applySettings is ApplySettings plus the registered line model the styles
-// name, which ApplySettings has no CSSBuilder to look up.
+// applySettings is ApplySettings plus the registered line model and breaker
+// the styles name, which ApplySettings has no CSSBuilder to look up.
 func (cb *CSSBuilder) applySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) {
 	ApplySettings(settings, ih)
-	if cb == nil || ih.lineModel == "" {
+	if cb == nil {
+		return
+	}
+	cb.applyBreaker(settings, ih)
+	if ih.lineModel == "" {
 		return
 	}
 	f := cb.lineModels[ih.lineModel]
@@ -3219,4 +3245,26 @@ func (cb *CSSBuilder) autoMarginShift(te *frontend.Text, wd, avail bag.ScaledPoi
 		return avail - wd
 	}
 	return 0
+}
+
+// applyBreaker sets the breaker the styles' -bag-line-breaker names, if one
+// is registered under that name.
+func (cb *CSSBuilder) applyBreaker(settings frontend.TypesettingSettings, ih *FormattingStyles) {
+	if ih.breaker == "" {
+		return
+	}
+	f := cb.breakers[ih.breaker]
+	if f == nil {
+		if !cb.warnedBreakers[ih.breaker] {
+			if cb.warnedBreakers == nil {
+				cb.warnedBreakers = map[string]bool{}
+			}
+			cb.warnedBreakers[ih.breaker] = true
+			bag.Logger.Warn("-bag-line-breaker names no registered breaker, keeping Knuth-Plass", "name", ih.breaker)
+		}
+		return
+	}
+	if b := f(BreakerStyles{Name: ih.breaker, FontSize: ih.Fontsize, Language: ih.language}); b != nil {
+		settings[frontend.SettingBreaker] = b
+	}
 }
