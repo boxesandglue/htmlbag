@@ -1317,6 +1317,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		settings[frontend.SettingFontWeight] = ih.Fontweight
 	}
 	settings[frontend.SettingBackgroundColor] = ih.BackgroundColor
+	// An inline background covers the font's ascent and descent, the content
+	// area browsers paint (CSS 2.1 §10.6.1 leaves it to the user agent).
+	settings[frontend.SettingBackgroundArea] = frontend.BackgroundAreaAscentDescent
 	settings[frontend.SettingBorderCollapse] = ih.borderModel
 	settings[frontend.SettingBorderSpacingHorizontal] = ih.borderSpacingH
 	settings[frontend.SettingBorderSpacingVertical] = ih.borderSpacingV
