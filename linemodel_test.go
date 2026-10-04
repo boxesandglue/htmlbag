@@ -400,6 +400,9 @@ p { font-family: "Probe"; font-size: 11pt; -bag-leading-model: keep }`
 				t.Errorf("strut font: face %p, size %s, ascent %s, descent %s, line gap %s; glyph font: face %p, size %s, ascent %s, descent %s, line gap %s",
 					s.Face, s.Size, s.Ascent, s.Descent, s.LineGap, want.Face, want.Size, want.Ascent, want.Descent, want.LineGap)
 			}
+			if s.ContentAscent != want.ContentAscent || s.ContentDescent != want.ContentDescent {
+				t.Errorf("strut font content area %s + %s, glyph font %s + %s", s.ContentAscent, s.ContentDescent, want.ContentAscent, want.ContentDescent)
+			}
 		})
 	}
 }
