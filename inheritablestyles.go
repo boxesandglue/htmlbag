@@ -3141,9 +3141,11 @@ func (cb *CSSBuilder) strutFont(ih *FormattingStyles) *font.Font {
 		em := size.ToPT()
 		if m.Ascent >= 0 {
 			fnt.Ascent = bag.ScaledPointFromFloat(em * m.Ascent)
+			fnt.ContentAscent = fnt.Ascent
 		}
 		if m.Descent >= 0 {
 			fnt.Descent = bag.ScaledPointFromFloat(em * m.Descent)
+			fnt.ContentDescent = fnt.Descent
 		}
 		if m.LineGap >= 0 {
 			fnt.LineGap = bag.ScaledPointFromFloat(em * m.LineGap)
