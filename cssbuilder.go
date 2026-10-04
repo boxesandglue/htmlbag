@@ -1739,10 +1739,14 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		// Splittable block (<pre>, block container with bg/border) that's
 		// taller than what fits even on an empty page: fragment it across
 		// pages instead of letting the wrapped vlist run off the bottom.
-		// Short splittable blocks fall through to the normal pageBuf path.
+		// Short splittable blocks fall through to the normal pageBuf path,
+		// and so does a block with break-inside: avoid that fits on an
+		// empty page: it moves on whole. A forced break inside it is taken
+		// all the same.
 		if vlS, ok := cur.(*node.VList); ok && vlS.Attributes != nil {
 			if isSplittable, _ := vlS.Attributes["_splittable"].(bool); isSplittable {
-				if trialPageHeight(incoming, h) > contentArea || forcedInside(splitChildren(vlS), fc.forcedKeyword) {
+				keepWhole := avoidBreakInside(vlS) && h <= contentArea
+				if (trialPageHeight(incoming, h) > contentArea && !keepWhole) || forcedInside(splitChildren(vlS), fc.forcedKeyword) {
 					// Commit incoming inserts so outputBlockSplit's
 					// availOnPage sees the correct float/footnote
 					// reservations. Don't ship pageBuf here — the splitter
