@@ -188,6 +188,8 @@ type CSSBuilder struct {
 	strutFonts       map[strutKey]*font.Font
 	warnedLineModels map[string]bool
 	warnedBreakers   map[string]bool
+	// inlineNodes are the nodes InlineNode stands in for, by element.
+	inlineNodes map[*html.Node]node.Node
 	ElementCallback  ElementCallbackFunc
 	PageInitCallback PageInitCallbackFunc
 	// Counters holds named counter values used when evaluating CSS content
@@ -3428,6 +3430,33 @@ func vlistNodeHeight(n node.Node) bag.ScaledPoint {
 	default:
 		return 0
 	}
+}
+
+// inlineNodeElement is the name of InlineNode's element, an inline one.
+const inlineNodeElement = "bag-inline-node"
+
+// InlineNode returns an element that stands for n in a document given to
+// ParseHTMLFromNode. Where the element is in a paragraph, n goes into the
+// line, as an inline image does, so a node.StartStop there is shipped out
+// with its line and on its page. The element has no content, and styles do
+// not apply to it. n is copied each time the paragraph is formatted, which
+// keeps a StartStop's ShipoutCallback.
+func (cb *CSSBuilder) InlineNode(n node.Node) *html.Node {
+	elt := &html.Node{Type: html.ElementNode, Data: inlineNodeElement}
+	if cb.inlineNodes == nil {
+		cb.inlineNodes = map[*html.Node]node.Node{}
+	}
+	cb.inlineNodes[elt] = n
+	return elt
+}
+
+// inlineNode is the node InlineNode made elt stand for.
+func (cb *CSSBuilder) inlineNode(elt *html.Node) (node.Node, bool) {
+	if cb == nil || elt == nil {
+		return nil, false
+	}
+	n, ok := cb.inlineNodes[elt]
+	return n, ok
 }
 
 // ParseHTMLFromNode interprets the HTML structure and applies all previously read CSS data.

@@ -2521,6 +2521,11 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			te.Items = append(te.Items, item.Data)
 		}
 	case html.ElementNode:
+		// The caller's node from InlineNode goes into the line as it is.
+		if n, ok := cb.inlineNode(item.Node); ok {
+			te.Items = append(te.Items, n)
+			return nil
+		}
 		// display:none removes the element and its subtree entirely,
 		// mirroring the styles.Hide check in the block path. Checked
 		// before anchor collection: a hidden element must not become
