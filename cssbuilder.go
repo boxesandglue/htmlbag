@@ -156,6 +156,21 @@ type LineModelStyles struct {
 // keeps the built-in leading. It may be called more than once per paragraph.
 type LineModelFunc func(LineModelStyles) node.LineModel
 
+// BreakerStyles is what a BreakerFunc is told about the paragraph whose
+// -bag-line-breaker names it. Fields may be added.
+type BreakerStyles struct {
+	// Name is the -bag-line-breaker name, lower case.
+	Name     string
+	FontSize bag.ScaledPoint
+	// Language is the paragraph's BCP 47 language tag, "" when unset.
+	Language string
+}
+
+// BreakerFunc makes the breaker (node.Breaker) for a paragraph whose
+// -bag-line-breaker names it; see CSSBuilder.RegisterBreaker. A nil breaker
+// keeps Knuth-Plass. It may be called more than once per paragraph.
+type BreakerFunc func(BreakerStyles) node.Breaker
+
 // CSSBuilder handles HTML chunks and CSS instructions.
 type CSSBuilder struct {
 	pagebox               []node.Node
@@ -168,9 +183,11 @@ type CSSBuilder struct {
 	structureCurrent      *document.StructureElement
 	enableTagging         bool
 	lineModels            map[string]LineModelFunc
+	breakers              map[string]BreakerFunc
 	// strutFonts caches LineModelStyles.Font.
 	strutFonts       map[strutKey]*font.Font
 	warnedLineModels map[string]bool
+	warnedBreakers   map[string]bool
 	ElementCallback  ElementCallbackFunc
 	PageInitCallback PageInitCallbackFunc
 	// Counters holds named counter values used when evaluating CSS content
@@ -3479,6 +3496,28 @@ func (cb *CSSBuilder) RegisterLineModel(name string, f LineModelFunc) error {
 		cb.lineModels = map[string]LineModelFunc{}
 	}
 	cb.lineModels[name] = f
+	return nil
+}
+
+// RegisterBreaker makes name a value of -bag-line-breaker that chooses a
+// paragraph's breaks by the breaker f returns, which htmlbag passes to bag as
+// frontend.SettingBreaker. Names are case-insensitive. auto, a CSS-wide keyword
+// and the empty name are rejected; registering a name again replaces its
+// function.
+func (cb *CSSBuilder) RegisterBreaker(name string, f BreakerFunc) error {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch {
+	case name == "":
+		return fmt.Errorf("breaker: empty name")
+	case builtinBreaker(name):
+		return fmt.Errorf("breaker %q: the name is reserved", name)
+	case f == nil:
+		return fmt.Errorf("breaker %q: nil function", name)
+	}
+	if cb.breakers == nil {
+		cb.breakers = map[string]BreakerFunc{}
+	}
+	cb.breakers[name] = f
 	return nil
 }
 
