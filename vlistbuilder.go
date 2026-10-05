@@ -1494,11 +1494,28 @@ func applyCSSHeight(vl *node.VList, h bag.ScaledPoint) {
 	if h <= vl.Height+vl.Depth {
 		return
 	}
-	k := node.NewKern()
-	k.Kern = h - vl.Height - vl.Depth
-	k.Attributes = node.H{"origin": "css height"}
+	k := cssHeightKern(h - vl.Height - vl.Depth)
 	vl.List = node.InsertAfter(vl.List, node.Tail(vl.List), k)
 	vl.Height += k.Kern
+}
+
+// cssHeightKern is the space applyCSSHeight adds below a block's content.
+// A page break may split it, as it would split the content it stands for.
+func cssHeightKern(h bag.ScaledPoint) *node.Kern {
+	k := node.NewKern()
+	k.Kern = h
+	k.Attributes = node.H{"origin": "css height"}
+	return k
+}
+
+// cssHeight reports whether n is the space applyCSSHeight adds.
+func cssHeight(n node.Node) (*node.Kern, bool) {
+	k, ok := n.(*node.Kern)
+	if !ok || k.Attributes == nil {
+		return nil, false
+	}
+	o, _ := k.Attributes["origin"].(string)
+	return k, o == "css height"
 }
 
 // attrPlaceholder marks the box of a block-level data-vlist-id placeholder,

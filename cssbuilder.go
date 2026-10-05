@@ -1794,6 +1794,26 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			}
 		}
 
+		// The space a CSS height adds below a block's content fills the
+		// page, and its rest goes on at the top of the next one, as the
+		// content it stands for would.
+		if k, ok := cssHeight(cur); ok {
+			if room := contentArea - trialPageHeight(incoming, 0); k.Kern > room {
+				if room > 0 {
+					box := node.NewVList()
+					box.List = cssHeightKern(room)
+					box.Width = contentWidth
+					box.Height = room
+					cb.bufferBody(box, room)
+					k.Kern -= room
+				}
+				if err := fc.breakTo("", cur); err != nil {
+					return -1, nil, err
+				}
+				continue
+			}
+		}
+
 		if trialPageHeight(incoming, h) > contentArea && fc.holdsContent(cb) {
 			if err := fc.moveOn(cb, cur); err != nil {
 				return -1, nil, err
@@ -2173,7 +2193,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		// §4.4); a container cuts between its blocks, or through one, as
 		// long as something goes before the cut and the cut does not fall
 		// between two blocks a break-after: avoid keeps together.
-		short := countContent(batch) < fl.orphans && i < len(children)
+		short := countContent(batch) < fl.orphans && i < len(children) && !inner.heightCut()
 		if splitTe == nil {
 			if inner == nil && brk == "" && i < len(children) {
 				if b, j := pullBackForAvoid(children, batch, i); countContent(b) > 0 || fc.holdsContent(cb) {
@@ -2217,7 +2237,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			continue
 		}
 
-		if splitTe != nil && i < len(children) {
+		if splitTe != nil && i < len(children) && !inner.heightCut() {
 			var remainingLines int
 			batch, i, remainingLines = pullBackForWidows(children, batch, i, fl)
 			// Both cannot be kept, so there is no break inside the block
@@ -2516,6 +2536,16 @@ type splitPlan struct {
 	brk string
 	// room is the height the part before the cut is placed in.
 	room bag.ScaledPoint
+	// height is set when the cut falls in the space a CSS height adds
+	// below a block's content (cssHeight), which is cut at room.
+	height *node.Kern
+}
+
+// heightCut reports whether p cuts the space a CSS height adds below the
+// content. No line or block follows the cut, so orphans and widows, which
+// keep lines together, do not apply.
+func (p *splitPlan) heightCut() bool {
+	return p != nil && p.height != nil
 }
 
 // attrSplitRest marks the rest of a block cut by cutBlock: its first
@@ -2528,11 +2558,21 @@ const attrSplitRest = "_splitRest"
 // orphans, a rest of fewer lines than widows, or blocks that a break-after:
 // avoid keeps with the rest.
 func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint, forced func(any) string) *splitPlan {
+	if k, ok := cssHeight(n); ok {
+		if room <= 0 || room >= k.Kern {
+			return nil
+		}
+		return &splitPlan{height: k, room: room}
+	}
 	vl, ok := n.(*node.VList)
 	if !ok || vl.Attributes == nil {
 		return nil
 	}
 	if spl, _ := vl.Attributes["_splittable"].(bool); !spl {
+		return nil
+	}
+	// A float is placed whole; one taller than the page overflows it.
+	if _, isFloat := floatBoxHeight(vl); isFloat {
 		return nil
 	}
 	if pbi, _ := vl.Attributes["pageBreakInside"].(string); pbi == "avoid" {
@@ -2550,7 +2590,7 @@ func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint, forced func(a
 	if overflow || next >= len(children) {
 		return nil
 	}
-	if brk != "" {
+	if brk != "" || inner.heightCut() {
 		// A forced break is taken whatever orphans, widows or avoid say.
 	} else if _, leaf := vl.Attributes["_splittableTe"]; leaf {
 		fl := fragLinesOf(vl)
@@ -2587,7 +2627,10 @@ func carryMarks(vl, frag *node.VList) {
 // cutBlock builds the cut p plans: the fragment before it, which carries the
 // block's heading and anchors, and the rest of the block, which splits
 // again.
-func (cb *CSSBuilder) cutBlock(p *splitPlan) (head, rest *node.VList) {
+func (cb *CSSBuilder) cutBlock(p *splitPlan) (node.Node, node.Node) {
+	if p.heightCut() {
+		return cssHeightKern(p.room), cssHeightKern(p.height.Kern - p.room)
+	}
 	vl := p.vl
 	headItems := append([]node.Node(nil), p.children[:p.n]...)
 	restItems := append([]node.Node(nil), p.children[p.n:]...)
@@ -2613,8 +2656,8 @@ func (cb *CSSBuilder) cutBlock(p *splitPlan) (head, rest *node.VList) {
 	// The head is placed now; fitChildren may have weighed an overhang in it
 	// as the room left.
 	cb.endOverhangAt(headItems, p.room)
-	head, _ = cb.buildFragment(vl, headItems, kind, innerWidth)
-	rest, _ = cb.buildFragment(vl, restItems, fragBottom, innerWidth)
+	head, _ := cb.buildFragment(vl, headItems, kind, innerWidth)
+	rest, _ := cb.buildFragment(vl, restItems, fragBottom, innerWidth)
 	carryMarks(vl, head)
 	for _, k := range []string{"_splittable", "_splittableHv", "_splittableInnerWidth", "_splittableTe", attrFragLines, "pageBreakAfter"} {
 		if v, ok := vl.Attributes[k]; ok {
