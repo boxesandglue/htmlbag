@@ -645,6 +645,8 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			if v == "left" || v == "right" || v == "inside" || v == "outside" {
 				ih.floatSide = v
 			}
+		case "-bag-float-gutter":
+			ih.floatGutter = max(0, ParseRelativeSize(v, curFontSize, ih.DefaultFontSize))
 		case "clear":
 			if v == "left" || v == "right" || v == "both" || v == "inside" || v == "outside" {
 				ih.clear = v
@@ -981,7 +983,11 @@ type FormattingStyles struct {
 	TextDecorationColor *color.Color
 	// floatSide and clear are CSS float/clear (see float.go). Neither is
 	// inherited: both are cleared for each element as its own styles resolve.
-	floatSide          string
+	floatSide string
+	// floatGutter is -bag-float-gutter, the space beside a float whose
+	// margin on the side of the text is not positive. Inherited, 9pt at
+	// the root.
+	floatGutter        bag.ScaledPoint
 	clear              string
 	leaderContent      string
 	preserveWhitespace bool
@@ -1190,6 +1196,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		whiteSpace:          is.whiteSpace,
 		tabsize:             is.tabsize,
 		tabsizeSpaces:       is.tabsizeSpaces,
+		floatGutter:         is.floatGutter,
 		tabStops:            is.tabStops,
 		Valign:              is.Valign,
 		Halign:              is.Halign,
@@ -1630,7 +1637,7 @@ func (ss *StylesStack) PushStyles() *FormattingStyles {
 		// that never passes a body element (HTML fragments, e.g. xts
 		// paragraphs). Full documents get the same defaults from the UA
 		// stylesheet's body rule (CSSdefaults); keep both in sync.
-		is = &FormattingStyles{Halign: frontend.HAlignStart, leadingModel: "half", borderModel: frontend.BorderModelSeparate}
+		is = &FormattingStyles{Halign: frontend.HAlignStart, leadingModel: "half", borderModel: frontend.BorderModelSeparate, floatGutter: floatGutter}
 	} else {
 		is = (*ss)[len(*ss)-1].Clone()
 	}
@@ -1722,6 +1729,12 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			cb.autoMargins = map[*frontend.Text]autoMargin{}
 		}
 		cb.autoMargins[newte] = autoMargin{left: styles.marginLeftAuto, right: styles.marginRightAuto}
+	}
+	if styles.floatSide != "" {
+		if cb.floatGutters == nil {
+			cb.floatGutters = map[*frontend.Text]bag.ScaledPoint{}
+		}
+		cb.floatGutters[newte] = styles.floatGutter
 	}
 	// styles is re-assigned inside the children loop (each inline run
 	// pushes its own frame); keep the block element's own styles for the

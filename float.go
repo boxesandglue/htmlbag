@@ -59,17 +59,17 @@ import (
 // on a sibling and the attrFloatBandIndent record on a split paragraph (see
 // outputGroupNodes and outputBlockSplit).
 
-// floatGutter is the space between a float and the text beside it when the float
-// declares no margin of its own. CSS has no default here, but a picture butting
-// against the text reads as a mistake rather than as a layout.
-//
-// A declared margin replaces it. Zero cannot: margins are stamped on every
-// element whether or not they were written, so "margin: 0" and "no margin at
-// all" arrive here as the same thing, and the second is much the commoner.
+// floatGutter is the initial -bag-float-gutter: the space between a float and
+// the text beside it when the float's margin on that side is not positive. CSS
+// has no such space, but a picture butting against the text reads as a mistake
+// rather than as a layout. A declared margin replaces it; zero cannot, since
+// "margin: 0" and no margin at all arrive as the same value, so a stylesheet
+// that wants the browser's behavior sets -bag-float-gutter: 0.
 const floatGutter = 9 * bag.Factor
 
-// floatMargins is what a float holds clear around itself.
-type floatMargins struct{ left, right, top, bottom bag.ScaledPoint }
+// floatMargins is what a float holds clear around itself: its margins, and
+// the gutter that stands in for a margin facing the text that is not positive.
+type floatMargins struct{ left, right, top, bottom, gutter bag.ScaledPoint }
 
 // marginsOf reads the margins declared on the float.
 //
@@ -79,7 +79,7 @@ type floatMargins struct{ left, right, top, bottom bag.ScaledPoint }
 // arrives in is not it — that run's margins are its own, which is to say zeros,
 // so an image read through it holds no more space than its own box. Its margins
 // are stamped on the node beside the side it floats to (see attrFloatMargins).
-func marginsOf(itm any) floatMargins {
+func (cb *CSSBuilder) marginsOf(itm any) floatMargins {
 	if n, ok := itm.(node.Node); ok {
 		m, _ := n.GetAttribute(attrFloatMargins)
 		fm, _ := m.(floatMargins)
@@ -93,11 +93,16 @@ func marginsOf(itm any) floatMargins {
 		v, _ := t.Settings[key].(bag.ScaledPoint)
 		return v
 	}
+	gutter, ok := cb.floatGutters[t]
+	if !ok {
+		gutter = floatGutter
+	}
 	return floatMargins{
 		left:   sp(frontend.SettingMarginLeft),
 		right:  sp(frontend.SettingMarginRight),
 		top:    sp(frontend.SettingMarginTop),
 		bottom: sp(frontend.SettingMarginBottom),
+		gutter: gutter,
 	}
 }
 
@@ -109,20 +114,21 @@ func (fs *FormattingStyles) floatMargins() floatMargins {
 		right:  fs.marginRight,
 		top:    fs.marginTop,
 		bottom: fs.marginBottom,
+		gutter: fs.floatGutter,
 	}
 }
 
-// gutter is the space between the float and the text: the margin on the side
-// the text is on, or the default where none was declared.
-func (m floatMargins) gutter(side string) bag.ScaledPoint {
-	declared := m.right
+// textGap is the space between the float and the text: the margin on the side
+// the text is on, or the gutter where that margin is not positive.
+func (m floatMargins) textGap(side string) bag.ScaledPoint {
+	margin := m.right
 	if side == "right" {
-		declared = m.left
+		margin = m.left
 	}
-	if declared > 0 {
-		return declared
+	if margin > 0 {
+		return margin
 	}
-	return floatGutter
+	return m.gutter
 }
 
 // A float declared inside or outside is resolved against the page it is
@@ -257,7 +263,7 @@ func (m floatMargins) forPage(rightPage bool) floatMargins {
 // negative far margin of width plus gutter brings it to zero: the float hangs
 // outside the text block and takes nothing from it.
 func floatInset(side string, width bag.ScaledPoint, m floatMargins) bag.ScaledPoint {
-	inset := width + m.gutter(side)
+	inset := width + m.textGap(side)
 	if side == "right" {
 		return inset + m.right
 	}

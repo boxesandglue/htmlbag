@@ -237,6 +237,8 @@ type CSSBuilder struct {
 	sourceNodes map[*frontend.Text]*html.Node
 	// autoMargins holds the Texts of blocks with an auto side margin.
 	autoMargins map[*frontend.Text]autoMargin
+	// floatGutters holds the -bag-float-gutter of each floated element.
+	floatGutters map[*frontend.Text]bag.ScaledPoint
 	// pageInserts accumulates inserts (per class) whose marks have been
 	// placed on the current page. Flushed by flushInserts, which is called
 	// automatically from cb.NewPage() before shipout, and must also be

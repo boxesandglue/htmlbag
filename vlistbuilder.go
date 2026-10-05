@@ -284,7 +284,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// everything after it by its unconsumed remainder. A float
 					// without a footprint and one that narrows the text do
 					// not compete, so those two share their position.
-					narrows := floatFootprint(side, box.Width, marginsOf(float), cb.pageIsRight()) > 0
+					narrows := floatFootprint(side, box.Width, cb.marginsOf(float), cb.pageIsRight()) > 0
 					if narrows && band != nil {
 						skipBand(band, "float")
 						band = nil
@@ -312,7 +312,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// The float, not the item it arrived in: a replaced element
 					// comes wrapped in an anonymous inline run whose margins are
 					// its own, which is to say zeros.
-					opened := openBand(vls, box, side, childBaseWidth, marginsOf(float), cb.pageIsRight())
+					opened := openBand(vls, box, side, childBaseWidth, cb.marginsOf(float), cb.pageIsRight())
 					if narrows {
 						band = opened
 					} else {

@@ -783,3 +783,46 @@ func TestANegativeBottomMarginShortensTheBand(t *testing.T) {
 		t.Errorf("%d lines are narrowed with a -20pt bottom margin and %d without: the margin does not shorten the band", short, full)
 	}
 }
+
+// -bag-float-gutter (#15) is the space beside a float that declares no
+// positive margin on the side of the text: 9pt by default, 0 for a browser's
+// spacing, inherited or set on the float itself. A declared margin replaces
+// it. The floats are 60pt wide.
+func TestFloatGutter(t *testing.T) {
+	png, err := filepath.Abs("testdata/float.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	box := func(style string) string {
+		return `<div><div class="fig" style="float:left;width:60pt;height:40pt;` + style + `"></div><p>` + floatProse + `</p></div>`
+	}
+	img := `<div><img src="` + png + `" style="float:left;width:60pt"><p>` + floatProse + `</p></div>`
+	for _, c := range []struct{ name, css, html, want string }{
+		{"default", "", box(""), "69pt"},
+		{"default, margin-right: 0", "", box("margin-right:0"), "69pt"},
+		{"switched off", "* { -bag-float-gutter: 0 }", box(""), "60pt"},
+		{"switched off, margin-right: 0", "* { -bag-float-gutter: 0 }", box("margin-right:0"), "60pt"},
+		{"inherited from body", "body { -bag-float-gutter: 0 }", box(""), "60pt"},
+		{"on the float", ".fig { -bag-float-gutter: 12pt }", box(""), "72pt"},
+		{"a declared margin replaces it", "* { -bag-float-gutter: 20pt }", box("margin-right:5pt"), "65pt"},
+		{"negative is zero", ".fig { -bag-float-gutter: -5pt }", box(""), "60pt"},
+		{"image, default", "", img, "69pt"},
+		{"image, switched off", "* { -bag-float-gutter: 0 }", img, "60pt"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cb := floatBuilder(t)
+			if c.css != "" {
+				if err := cb.AddCSS(c.css); err != nil {
+					t.Fatal(err)
+				}
+			}
+			indents := lineIndents(buildHTML(t, cb, c.html))
+			if len(indents) == 0 {
+				t.Fatal("no lines")
+			}
+			if want := bag.MustSP(c.want); indents[0] != want {
+				t.Errorf("the first line is indented %s, want %s", indents[0], want)
+			}
+		})
+	}
+}
