@@ -271,3 +271,66 @@ func TestMarginAutoBlockImage(t *testing.T) {
 		}
 	})
 }
+
+// A table sits in its container's content box as any other child, and
+// position: relative moves it (#54). The container is 160pt wide.
+func TestTableInItsContainer(t *testing.T) {
+	for _, c := range []struct {
+		name, html string
+		x, wd      string
+	}{
+		{"padding", `<div style="padding-left: 20pt"><table id="x"><tr><td>Q</td></tr></table></div>`, "20pt", ""},
+		{"width 100%, border and padding", `<div style="border: 1pt solid black; padding-left: 20pt"><table id="x" style="width: 100%"><tr><td>Q</td></tr></table></div>`, "21pt", "138pt"},
+		{"position: relative, left", `<table id="x" style="position: relative; left: 15pt"><tr><td>Q</td></tr></table>`, "15pt", ""},
+		{"position: relative, right", `<table id="x" style="width: 80pt; position: relative; right: 10pt"><tr><td>Q</td></tr></table>`, "-10pt", "80pt"},
+		{"position: relative in padding", `<div style="padding-left: 20pt"><table id="x" style="position: relative; left: 15pt"><tr><td>Q</td></tr></table></div>`, "35pt", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			x, wd := boxX(t, renderHTMLPages(t, charCSS, c.html), "x")
+			if x != sp(c.x) || (c.wd != "" && wd != sp(c.wd)) {
+				t.Errorf("table at %s, %s wide; want %s, %s wide", x, wd, c.x, c.wd)
+			}
+		})
+	}
+	rows := strings.Repeat(`<tr><td>R</td></tr>`, 20)
+	t.Run("position: relative, split thead table", func(t *testing.T) {
+		pages := renderHTMLPages(t, charCSS, `<div style="padding-left: 20pt"><table style="width: 80pt; position: relative; left: 15pt"><thead><tr><th>H</th></tr></thead><tbody>`+rows+`</tbody></table></div>`)
+		if len(pages) < 2 {
+			t.Fatalf("got %d pages, want the table split", len(pages))
+		}
+		for i, pg := range pages {
+			for _, obj := range pg.Objects {
+				for _, l := range lineLefts(Filled{Box: obj.Vlist}) {
+					if x := obj.X - sp("20pt") + l; x != sp("35pt") {
+						t.Errorf("page %d has a row at %s, want 35pt", i+1, x)
+					}
+				}
+			}
+		}
+	})
+	// The rows of a table without a header are spliced into the page one by
+	// one; the PDF shows where their text starts.
+	t.Run("position: relative, split headless table", func(t *testing.T) {
+		textLefts := func(style string) map[float64]bool {
+			pdf := renderLineModelPDF(t, charCSS, `<div style="padding-left: 20pt"><table style="width: 80pt`+style+`"><tbody>`+rows+`</tbody></table></div>`, func(cb *CSSBuilder) { cb.frontend.Doc.CompressLevel = 0 })
+			if n := strings.Count(string(pdf), "/Type /Page\n"); n < 2 {
+				t.Fatalf("%d pages, want the table split", n)
+			}
+			xs := map[float64]bool{}
+			for _, m := range regexp.MustCompile(`1 0 0 1 ([\d.]+) [\d.]+ Tm \[<`).FindAllSubmatch(pdf, -1) {
+				x, _ := strconv.ParseFloat(string(m[1]), 64)
+				xs[x] = true
+			}
+			return xs
+		}
+		plain, moved := textLefts(""), textLefts("; position: relative; left: 15pt")
+		if len(plain) != 1 || len(moved) != 1 {
+			t.Fatalf("rows start at %v and %v, want one x each", plain, moved)
+		}
+		for p := range plain {
+			if !moved[p+15] {
+				t.Errorf("rows start at %v with left: 15pt, want %v", moved, p+15)
+			}
+		}
+	})
+}

@@ -457,6 +457,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// without a width is as wide as its content.
 					mr, _ := t.Settings[frontend.SettingMarginRight].(bag.ScaledPoint)
 					vl.ShiftX += padShift + ml + cb.autoMarginShift(t, vl.Width, avail-ml-mr)
+					// position: relative moves it after that, as any child.
+					if sx, ok := t.Settings[frontend.SettingShiftX].(bag.ScaledPoint); ok {
+						vl.ShiftX += sx
+					}
 					// The table's own box carries its id, as a paragraph's does.
 					if id, ok := t.Settings[frontend.SettingElementID].(string); ok && id != "" {
 						vl.SetAttribute("id", id)
