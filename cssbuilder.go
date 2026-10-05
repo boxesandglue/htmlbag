@@ -1434,15 +1434,13 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		if !ok || inner.Next() != nil {
 			break
 		}
-		// Do not descend into a table that cannot fit on one page: the
-		// table paths below (repeating thead headers via outputTableRows,
-		// the row splice, the width reflow) need the table VList intact —
-		// unwrapping would strip the _buildHeaders machinery and place the
-		// bare rows one by one. So does a table with a row that may break
-		// inside. Other tables that fit on a page keep the old unwrap
-		// behavior.
+		// Do not descend into a table: a table that does not fit breaks
+		// in outputTableRows, which needs the table VList intact for the
+		// repeated header, rows that break inside or that a rowspan
+		// joins, and the width reflow. Unwrapped, its bare rows would be
+		// placed one by one.
 		if inner.Attributes != nil {
-			if o, _ := inner.Attributes["origin"].(string); o == "table" && (vlistNodeHeight(inner) > fc.cur.height || hasRowSplitter(inner)) {
+			if o, _ := inner.Attributes["origin"].(string); o == "table" {
 				break
 			}
 			// A box with a border or background splits in outputBlockSplit,
@@ -1639,14 +1637,15 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		// when a large top reservation eats most of page 1). Short tables
 		// that do fit in the remaining space fall through to the normal
 		// pageBuf path, which composes them with adjacent paragraphs.
-		// A table without a header takes this path too when a row may break
-		// inside or a rowspan joins rows, since only outputTableRows splits
-		// rows and keeps joined rows together.
+		// A table without a header takes this path too: only
+		// outputTableRows splits rows, keeps the rows a rowspan joins
+		// together and sets the rest of the table again at the width of a
+		// wider or narrower page.
 		if tableVL, ok := cur.(*node.VList); ok && tableVL.Attributes != nil {
 			buildHeadersFn, tok := tableVL.Attributes["_buildHeaders"]
 			if !tok {
 				o, _ := tableVL.Attributes["origin"].(string)
-				tok = o == "table" && (hasRowSplitter(tableVL) || hasJoinedRows(tableVL))
+				tok = o == "table"
 			}
 			if tok {
 				tableIncoming := fc.insertsOn(cur)
@@ -1702,37 +1701,6 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 					cur = next
 					continue
 				}
-			}
-		}
-
-		// A table without repeating headers (no thead/tfoot) that is
-		// taller than a full page must break across pages. When such a table
-		// is the group's sole child, the unwrap loop above already exposes its
-		// rows as top-level siblings, so they buffer and break one by one. But
-		// a preceding sibling (e.g. a margin-top kern emitted by a wrapper
-		// above the table) blocks that unwrap, leaving the table as
-		// one monolithic VList taller than the page. `cur` was resolved to the
-		// table above; splice its row HLists into the sibling chain so it
-		// breaks like any other block sequence. (thead/tfoot tables took the
-		// _buildHeaders path above and never reach here.)
-		if tableVL, ok := cur.(*node.VList); ok && tableVL.Attributes != nil {
-			o, _ := tableVL.Attributes["origin"].(string)
-			_, hasHeaders := tableVL.Attributes["_buildHeaders"]
-			if o == "table" && !hasHeaders && cb.pageBufHeight+h > contentArea && tableVL.List != nil {
-				// Move any cell inserts onto the first row so they are still
-				// reserved once the wrapper VList is dropped.
-				propagateInsertsAttr(tableVL, tableVL.List)
-				shiftChildren(tableVL)
-				propagateFlowChild(tableVL, tableVL.List)
-				first := tableVL.List
-				last := node.Tail(first)
-				last.SetNext(next)
-				if next != nil {
-					next.SetPrev(last)
-				}
-				first.SetPrev(nil)
-				cur = first
-				continue
 			}
 		}
 
@@ -3137,26 +3105,6 @@ func keepGroupHeight(rows []node.Node, i int) bag.ScaledPoint {
 		h += vlistNodeHeight(rows[j+1])
 	}
 	return h
-}
-
-// hasJoinedRows reports whether a rowspan joins rows of the table.
-func hasJoinedRows(tableVL *node.VList) bool {
-	for n := tableVL.List; n != nil; n = n.Next() {
-		if keepsWithNext(n) {
-			return true
-		}
-	}
-	return false
-}
-
-// hasRowSplitter reports whether a row of the table may break inside.
-func hasRowSplitter(tableVL *node.VList) bool {
-	for n := tableVL.List; n != nil; n = n.Next() {
-		if rowSplitterOf(n) != nil {
-			return true
-		}
-	}
-	return false
 }
 
 // rowSplitterOf returns the splitter bag gives a table row that may break

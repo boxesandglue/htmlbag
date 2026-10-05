@@ -62,3 +62,26 @@ func TestFlowTextRowspanGroupStaysInOneRegion(t *testing.T) {
 		})
 	}
 }
+
+// A table shorter than a page, without a header and alone in its block,
+// whose rowspan group meets the page end after the paragraphs before it,
+// moves the group on whole too. The sweep puts the page end at each of the
+// table's rows in turn.
+func TestShortTableRowspanGroupStaysOnOnePage(t *testing.T) {
+	for n := 44; n <= 54; n++ {
+		t.Run(fmt.Sprintf("%dparagraphs", n), func(t *testing.T) {
+			var paras strings.Builder
+			for i := 0; i < n; i++ {
+				paras.WriteString(`<p>Absatz</p>`)
+			}
+			html := paras.String() + `<div><table class="items"><tbody>` + itemRows(4) + rowspanGroup + `</tbody></table></div>`
+			pages := renderHTMLPages(t, tableSplitCSS, html)
+			for i, pg := range pages {
+				txt := pageText(pg)
+				if a, b := strings.Contains(txt, "GruppeA"), strings.Contains(txt, "GruppeB"); a != b {
+					t.Errorf("page %d holds one row of the rowspan group only (A %v, B %v)", i+1, a, b)
+				}
+			}
+		})
+	}
+}
