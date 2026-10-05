@@ -57,6 +57,8 @@ func TestLineBreakerProperty(t *testing.T) {
 		{"on the paragraph", `p { font-size: 10pt; -bag-line-breaker: EVERY }`, 4},
 		{"inherited from the body", `body { -bag-line-breaker: every } p { font-size: 10pt }`, 4},
 		{"auto below a breaker", `body { -bag-line-breaker: every } p { font-size: 10pt; -bag-line-breaker: auto }`, 1},
+		{"initial below a breaker", `body { -bag-line-breaker: every } p { font-size: 10pt; -bag-line-breaker: initial }`, 1},
+		{"revert below a breaker", `body { -bag-line-breaker: every } p { font-size: 10pt; -bag-line-breaker: revert }`, 4},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

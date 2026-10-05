@@ -151,10 +151,13 @@ func TestABuiltInLeadingModelOverridesAnInheritedRegisteredOne(t *testing.T) {
 			return fixedModel{&s}
 		})
 	}
-	lines := lineModelLines(t, `body { -bag-leading-model: fixed } p { -bag-leading-model: half }`, lineModelPara, register)
-	for i, hl := range lines {
-		if got := hl.Height + hl.Depth; got != bag.MustSP("12pt") {
-			t.Errorf("line %d spans %s, want the half-leading 12pt", i, got)
+	// initial is half; the other CSS-wide keywords inherit the parent's model.
+	for value, want := range map[string]string{"half": "12pt", "initial": "12pt", "unset": "25pt", "revert": "25pt"} {
+		lines := lineModelLines(t, `body { -bag-leading-model: fixed } p { -bag-leading-model: `+value+` }`, lineModelPara, register)
+		for i, hl := range lines {
+			if got := hl.Height + hl.Depth; got != bag.MustSP(want) {
+				t.Errorf("%s: line %d spans %s, want %s", value, i, got, want)
+			}
 		}
 	}
 }

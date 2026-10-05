@@ -408,8 +408,9 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// boxesandglue-specific: how a paragraph chooses its breaks.
 			// auto keeps Knuth-Plass; any other name selects a breaker
 			// registered with CSSBuilder.RegisterBreaker.
+			// inherit, unset and revert keep the cloned parent's breaker.
 			switch b := strings.ToLower(strings.TrimSpace(v)); {
-			case b == "auto":
+			case b == "auto" || b == "initial":
 				ih.breaker = ""
 			case b != "" && !builtinBreaker(b):
 				ih.breaker = b
@@ -421,9 +422,13 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// puts all of it below the line (the TeX-flavored default).
 			// Any other name selects a model registered with
 			// CSSBuilder.RegisterLineModel.
+			// inherit, unset and revert keep the cloned parent's model.
 			switch lm := strings.ToLower(strings.TrimSpace(v)); {
 			case lm == "half" || lm == "trailing":
 				ih.leadingModel = lm
+				ih.lineModel = ""
+			case lm == "initial":
+				ih.leadingModel = "half"
 				ih.lineModel = ""
 			case lm != "" && !builtinLeadingModel(lm):
 				ih.lineModel = lm
