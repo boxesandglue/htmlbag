@@ -749,6 +749,15 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			vls.Width = wd
 		}
 
+		// An id on a container names a destination as on a paragraph, but
+		// a container never reaches FormatParagraph, where bag sets it. It
+		// goes first among the children, before the paddings, the border
+		// and the snapshots a split takes, so it lands at the top of the
+		// container's content in its first fragment.
+		if d := destNode(te); d != nil {
+			vls.List = node.InsertBefore(vls.List, vls.List, d)
+		}
+
 		// CSS padding-top/bottom on a box without border/background:
 		// HTMLBorder does not run, so reserve the vertical padding as
 		// kerns around the children (with border/background HTMLBorder
@@ -1507,7 +1516,23 @@ func (cb *CSSBuilder) placeholderBox(te *frontend.Text, vlid string) *node.VList
 	if id, ok := te.Settings[frontend.SettingElementID].(string); ok && id != "" {
 		box.SetAttribute("id", id)
 	}
+	if d := destNode(te); d != nil {
+		box.List = node.InsertBefore(box.List, box.List, d)
+	}
 	return box
+}
+
+// destNode is the named destination of an element with an id, for a box that
+// bag does not format as a paragraph (a container, a placeholder), or nil.
+func destNode(te *frontend.Text) node.Node {
+	name, ok := te.Settings[frontend.SettingDest].(string)
+	if !ok || name == "" {
+		return nil
+	}
+	d := node.NewStartStop()
+	d.Action = node.ActionDest
+	d.Value = name
+	return d
 }
 
 // isPlaceholderBox reports whether n is the box of a data-vlist-id placeholder.

@@ -507,8 +507,7 @@ func stackEntries(run []sinkEntry, width bag.ScaledPoint) *node.VList {
 	var left, right bag.ScaledPoint
 	found := false
 	for _, e := range run {
-		if !e.margin {
-			l, w := drawnExtent(e.box)
+		if l, w := drawnExtent(e.box); !e.margin && w > 0 {
 			if !found || l < left {
 				left = l
 			}
@@ -548,6 +547,15 @@ func stackEntries(run []sinkEntry, width bag.ScaledPoint) *node.VList {
 // its only child (a table row placed on its own sits in a box of the region's
 // width), shifted by both.
 func drawnExtent(box *node.VList) (left, width bag.ScaledPoint) {
+	// A box of nothing but start/stop nodes, such as the destination of a
+	// container's id, draws nothing.
+	onlyMarkers := box.List != nil
+	for n := box.List; n != nil && onlyMarkers; n = n.Next() {
+		_, onlyMarkers = n.(*node.StartStop)
+	}
+	if onlyMarkers {
+		return box.ShiftX, 0
+	}
 	if box.List != nil && box.List.Next() == nil {
 		switch c := box.List.(type) {
 		case *node.VList:
