@@ -2,6 +2,9 @@ package htmlbag
 
 import (
 	"math"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -201,6 +204,70 @@ func TestMarginAutoTableInAPaddedContainer(t *testing.T) {
 					}
 				}
 			}
+		}
+	})
+}
+
+// imageBox returns the left edge, from the content area's, the top, from the
+// page's top, and the width of the first image in the PDF of html.
+func imageBox(t *testing.T, css, html string) (x, top, wd float64) {
+	t.Helper()
+	pdf := renderLineModelPDF(t, css, html, func(cb *CSSBuilder) { cb.frontend.Doc.CompressLevel = 0 })
+	m := regexp.MustCompile(`([\d.]+) 0 0 ([\d.]+) ([\d.]+) ([\d.]+) cm`).FindSubmatch(pdf)
+	if m == nil {
+		t.Fatal("no image in the PDF")
+	}
+	num := func(b []byte) float64 {
+		f, err := strconv.ParseFloat(string(b), 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	return num(m[3]) - 20, 200 - num(m[4]) - num(m[2]), num(m[1])
+}
+
+// A block image is placed by its side margins, as a block with a width
+// (CSS 2.1 §10.3.4), not by the text-align it inherits, and its margins and
+// padding apply once (#72). The image is 40pt wide in a 160pt container.
+func TestMarginAutoBlockImage(t *testing.T) {
+	png, err := filepath.Abs("testdata/float.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := charCSS + "\nimg { display: block; width: 40pt }"
+	for _, c := range []struct {
+		name, html string
+		x          float64
+	}{
+		{"centered", `<img style="margin: 0 auto">`, 60},
+		{"margin-left auto", `<img style="margin-left: auto">`, 120},
+		{"margin-right auto", `<img style="margin-right: auto">`, 0},
+		{"margin-left auto, margin-right 20pt", `<img style="margin-left: auto; margin-right: 20pt">`, 100},
+		{"margin-left 20pt, margin-right auto", `<img style="margin-left: 20pt; margin-right: auto">`, 20},
+		{"no auto margins", `<img>`, 0},
+		{"margin-left 20pt", `<img style="margin-left: 20pt">`, 20},
+		{"padding-left 10pt", `<img style="padding-left: 10pt">`, 10},
+		{"no auto margins, text-align center", `<div style="text-align: center"><img></div>`, 0},
+		{"centered, text-align right", `<div style="text-align: right"><img style="margin: 0 auto"></div>`, 60},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			html := strings.ReplaceAll(c.html, "<img", `<img src="`+png+`"`)
+			if x, _, _ := imageBox(t, css, html); math.Abs(x-c.x) > 0.01 {
+				t.Errorf("the image is at %.2fpt, want %.0fpt", x, c.x)
+			}
+		})
+	}
+	t.Run("margin-top 20pt", func(t *testing.T) {
+		_, top0, _ := imageBox(t, css, `<img src="`+png+`">`)
+		_, top, _ := imageBox(t, css, `<img src="`+png+`" style="margin-top: 20pt">`)
+		if d := top - top0; math.Abs(d-20) > 0.01 {
+			t.Errorf("margin-top moves the image down by %.2fpt, want 20pt", d)
+		}
+	})
+	t.Run("width 100%, margin-right 20pt", func(t *testing.T) {
+		if _, _, wd := imageBox(t, css, `<img src="`+png+`" style="width: 100%; margin-right: 20pt">`); math.Abs(wd-140) > 0.01 {
+			t.Errorf("the image is %.2fpt wide, want 140pt", wd)
 		}
 	})
 }

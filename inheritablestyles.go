@@ -2113,6 +2113,29 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		inner := frontend.NewText()
 		cb.applySettings(inner.Settings, styles)
 		delete(inner.Settings, frontend.SettingWidth)
+		// The box around the image takes its margins and padding; on the
+		// inner Text they would apply a second time.
+		for _, k := range []frontend.SettingType{
+			frontend.SettingMarginTop, frontend.SettingMarginRight, frontend.SettingMarginBottom, frontend.SettingMarginLeft,
+			frontend.SettingPaddingTop, frontend.SettingPaddingRight, frontend.SettingPaddingBottom, frontend.SettingPaddingLeft,
+		} {
+			delete(inner.Settings, k)
+		}
+		// The image is a block, so the text-align it inherits does not
+		// place it; its side margins do (CSS 2.1 §10.3.3, §10.3.4). The
+		// box branch formats the line at the width less the fixed margins,
+		// so aligning that line is where auto margins put the image, and
+		// with none it sits at the start.
+		switch {
+		case styles.marginLeftAuto && styles.marginRightAuto:
+			inner.Settings[frontend.SettingHAlign] = frontend.HAlignCenter
+		case styles.marginLeftAuto:
+			inner.Settings[frontend.SettingHAlign] = frontend.HAlignRight
+		case styles.marginRightAuto:
+			inner.Settings[frontend.SettingHAlign] = frontend.HAlignLeft
+		default:
+			inner.Settings[frontend.SettingHAlign] = frontend.HAlignStart
+		}
 		if err := collectHorizontalNodes(cb, inner, item, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 			ss.PopStyles()
 			return nil, err
