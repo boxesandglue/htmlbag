@@ -1502,7 +1502,7 @@ func (cb *CSSBuilder) applySettings(settings frontend.TypesettingSettings, ih *F
 		FontSize:   ih.Fontsize,
 		LineHeight: lineHeight,
 		Language:   ih.language,
-		Font:       cb.strutFont(ih),
+		Font:       cb.strutFont(ih, settings),
 	})
 	if lm != nil {
 		settings[frontend.SettingLineModel] = lm
@@ -3141,13 +3141,14 @@ type strutKey struct {
 }
 
 // strutFont is the font the frontend sets the paragraph's glyphs in, for
-// LineModelStyles.Font: its source for the weight and style, at the size,
-// size-adjust and variations, with the source's metric overrides.
-func (cb *CSSBuilder) strutFont(ih *FormattingStyles) *font.Font {
+// LineModelStyles.Font: its source for the weight and style under the
+// paragraph's settings (font-synthesis-style), at the size, size-adjust and
+// variations, with the source's metric overrides.
+func (cb *CSSBuilder) strutFont(ih *FormattingStyles, settings frontend.TypesettingSettings) *font.Font {
 	if ih.fontfamily == nil || ih.Fontsize <= 0 {
 		return nil
 	}
-	fs, err := ih.fontfamily.GetFontSource(ih.Fontweight, ih.fontstyle)
+	fs, err := ih.fontfamily.GetFontSourceFor(ih.Fontweight, ih.fontstyle, settings)
 	if err != nil || fs == nil {
 		return nil
 	}

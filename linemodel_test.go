@@ -406,3 +406,39 @@ p { font-family: "Probe"; font-size: 11pt; -bag-leading-model: keep }`
 		})
 	}
 }
+
+// Under font-synthesis-style the paragraph's font is a slanted upright where
+// the family has no italic: LineModelStyles.Font is that synthetic oblique too,
+// and the missing italic is said once, for the glyphs, not again for the strut.
+func TestLineModelStylesFontFollowsStyleSynthesis(t *testing.T) {
+	var buf bytes.Buffer
+	old := bag.Logger
+	bag.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	defer func() { bag.Logger = old }()
+	var kept []*font.Font
+	var shift bag.ScaledPoint
+	register := func(cb *CSSBuilder) {
+		if err := cb.RegisterLineModel("keep", func(s LineModelStyles) node.LineModel {
+			kept = append(kept, s.Font)
+			return keepModel{fixedModel{&shift}}
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	css := `@font-face { font-family: "Upright"; src: url("fontsource/crimsonpro/CrimsonPro-Regular.ttf"); }
+p { font-family: "Upright"; font-size: 11pt; font-style: italic; font-synthesis-style: auto; -bag-leading-model: keep }`
+	lines := lineModelLines(t, css, `<p>Text</p>`, register)
+	var g *node.Glyph
+	for n := lines[0].List; n != nil && g == nil; n = n.Next() {
+		g, _ = n.(*node.Glyph)
+	}
+	if g == nil || g.Font == nil || g.Font.Slant == 0 {
+		t.Fatal("the glyphs are not set in a synthetic oblique")
+	}
+	if len(kept) == 0 || kept[0] == nil || kept[0].Slant != g.Font.Slant {
+		t.Errorf("the strut font is not the glyphs' oblique: %+v", kept)
+	}
+	if n := strings.Count(buf.String(), "not found in font family"); n != 1 {
+		t.Errorf("the missing italic was said %d times, want once:\n%s", n, buf.String())
+	}
+}
