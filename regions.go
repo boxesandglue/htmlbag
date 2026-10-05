@@ -734,10 +734,10 @@ const (
 type flowCursor struct {
 	regions regions
 	cur     region
-	// caller is set for FlowText's regions. Only there are margins at a
-	// region top truncated after an automatic break, column breaks forced,
-	// and page-level inserts dropped; OutputPagesFromText paginates as it
-	// always has.
+	// caller is set for FlowText's regions. Only there are column breaks
+	// forced and page-level inserts dropped; OutputPagesFromText paginates
+	// as it always has, except that a margin at the top of a page after an
+	// automatic break is truncated as in a caller's region.
 	caller bool
 	top    regionTop
 	warned map[InsertClass]bool
@@ -835,13 +835,20 @@ func (fc *flowCursor) regionEmpty(cb *CSSBuilder) bool {
 	return fc.caller && cb.pageBufHeight == 0 && fc.cur.sink.empty()
 }
 
+// topEmpty reports whether nothing is placed in the current region yet, a
+// caller's or a page.
+func (fc *flowCursor) topEmpty(cb *CSSBuilder) bool {
+	return cb.pageBufHeight == 0 && (fc.cur.sink == nil || fc.cur.sink.empty())
+}
+
 // truncated reports whether cur, the next node to place, is a margin at the
-// top of a caller's region after an automatic break, which is dropped.
+// top of a region after an automatic break, which is dropped (CSS
+// Fragmentation 3 §5.2).
 func (fc *flowCursor) truncated(cb *CSSBuilder, cur node.Node) bool {
 	if fc.top != topTruncated {
 		return false
 	}
-	if !fc.regionEmpty(cb) {
+	if !fc.topEmpty(cb) {
 		fc.top = topPlaced
 		return false
 	}
