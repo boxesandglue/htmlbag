@@ -57,7 +57,9 @@ import (
 // the next page. Content the band covered that lands on a later page is set
 // beside nothing and is rebuilt at full width, from the attrInFloatBand mark
 // on a sibling and the attrFloatBandIndent record on a split paragraph (see
-// outputGroupNodes and outputBlockSplit).
+// outputGroupNodes and outputBlockSplit). A float taller than a whole page
+// cannot be kept on one: it overflows the page it starts on, as a block of
+// that height does, and the container it extends ends there (endOverhangAt).
 
 // floatGutter is the initial -bag-float-gutter: the space between a float and
 // the text beside it when the float's margin on that side is not positive. CSS
@@ -194,6 +196,84 @@ func floatBoxHeight(n node.Node) (bag.ScaledPoint, bool) {
 	}
 	h, _ := vl.Attributes[attrFloatHeight].(bag.ScaledPoint)
 	return h, true
+}
+
+// floatOverhang reports whether n is the kern by which the vlist builder
+// extends a container to hold a float taller than the content beside it.
+func floatOverhang(n node.Node) (*node.Kern, bool) {
+	k, ok := n.(*node.Kern)
+	if !ok || k.Attributes == nil {
+		return nil, false
+	}
+	o, _ := k.Attributes["origin"].(string)
+	return k, o == "float"
+}
+
+// endOverhangAt shortens the overhang kern among items, placed from the top of
+// room, so that it ends where room does, and reports whether it did. The band
+// ends at the page break and the overhang with it: a float taller than the
+// page overflows it as any block of that height does, and the rest of the
+// overhang would come out on the next page as empty space beside nothing. The
+// paginators weigh an overhang that does not fit as the room left (see
+// fitChildren) and shorten it only here, once the items are placed, since a
+// trial fit may be discarded.
+//
+// A block container that does not fit the room is one a paginator placed
+// whole on an empty page; the overhang inside it is shortened and the
+// container rebuilt in place, so that its height and its border follow.
+func (cb *CSSBuilder) endOverhangAt(items []node.Node, room bag.ScaledPoint) bool {
+	var before bag.ScaledPoint
+	for i, n := range items {
+		if k, ok := floatOverhang(n); ok {
+			shortened := max(min(k.Kern, room-before), 0)
+			changed := shortened != k.Kern
+			k.Kern = shortened
+			return changed
+		}
+		h := vlistNodeHeight(n)
+		if vl, ok := n.(*node.VList); ok && before+h > room {
+			if frag := cb.endOverhangInside(vl, room-before); frag != nil {
+				items[i] = frag
+				return true
+			}
+			return false
+		}
+		before += h
+	}
+	return false
+}
+
+// endOverhangInside is endOverhangAt for the children of a splittable block
+// container vl placed whole: the rebuilt container, or nil when there was no
+// overhang to shorten.
+func (cb *CSSBuilder) endOverhangInside(vl *node.VList, room bag.ScaledPoint) *node.VList {
+	children := splitChildren(vl)
+	if children == nil {
+		return nil
+	}
+	hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
+	kind := fragOnly
+	room -= hv.PaddingBottom + hv.BorderBottomWidth
+	if rest, _ := vl.Attributes[attrSplitRest].(bool); rest {
+		kind = fragBottom
+	} else {
+		room -= hv.PaddingTop + hv.BorderTopWidth
+	}
+	children = append([]node.Node(nil), children...)
+	if !cb.endOverhangAt(children, room) {
+		return nil
+	}
+	for _, c := range children {
+		c.SetPrev(nil)
+		c.SetNext(nil)
+	}
+	innerWidth, _ := vl.Attributes["_splittableInnerWidth"].(bag.ScaledPoint)
+	frag, _ := cb.buildFragment(vl, children, kind, innerWidth)
+	if kind == fragOnly {
+		carryMarks(vl, frag)
+	}
+	stampFragment(frag, vl)
+	return frag
 }
 
 // inFloatBand reports whether a sibling was built beside a float that precedes

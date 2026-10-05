@@ -1738,6 +1738,13 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 
 		incoming := fc.insertsOn(cur)
 
+		// The overhang of a float that overflows the page ends at the page
+		// break rather than taking a page of its own.
+		if _, ok := floatOverhang(cur); ok {
+			cb.endOverhangAt([]node.Node{cur}, contentArea-trialPageHeight(incoming, 0))
+			h = vlistNodeHeight(cur)
+		}
+
 		// Splittable block (<pre>, block container with bg/border) that's
 		// taller than what fits even on an empty page: fragment it across
 		// pages instead of letting the wrapped vlist run off the bottom.
@@ -2274,6 +2281,18 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		if !isFirst {
 			kind = fragMiddle
 		}
+		room := avail - topOverhead
+		// A batch that takes the last child is the block's last fragment and
+		// closes it, even when its bottom padding and border overrun the
+		// room (a float overhang ending at the page break fills it).
+		if i == len(children) {
+			kind = fragBottom
+			if isFirst {
+				kind = fragOnly
+			}
+			room -= bottomOverhead
+		}
+		cb.endOverhangAt(batch, room)
 		wrapped, h := cb.buildFragment(blockVL, batch, kind, innerWidth)
 		stampFragment(wrapped, blockVL)
 		if isFirst {
@@ -2366,6 +2385,11 @@ func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPo
 		if fh, isFloat := floatBoxHeight(children[i]); isFloat {
 			ch = floatKeepWithNext(fh, children[i+1:])
 		}
+		// The overhang of a float that overflows the page ends at the page
+		// break; the caller shortens it once the batch is placed.
+		if _, ok := floatOverhang(children[i]); ok && batchH+ch > room {
+			ch = max(room-batchH, 0)
+		}
 		if batchH+ch > room {
 			if p := cb.planSplit(children[i], room-batchH, forced); p != nil {
 				return batch, i, false, p, p.brk
@@ -2380,7 +2404,11 @@ func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPo
 			}
 		}
 		batch = append(batch, children[i])
-		batchH += vlistNodeHeight(children[i])
+		if _, ok := floatOverhang(children[i]); ok {
+			batchH += ch
+		} else {
+			batchH += vlistNodeHeight(children[i])
+		}
 		if isContentNode(children[i]) {
 			last = children[i]
 		}
@@ -2518,6 +2546,8 @@ type splitPlan struct {
 	// brk is the keyword of the forced break the cut is made at, "" when
 	// the room runs out there.
 	brk string
+	// room is the height the part before the cut is placed in.
+	room bag.ScaledPoint
 }
 
 // attrSplitRest marks the rest of a block cut by cutBlock: its first
@@ -2572,7 +2602,7 @@ func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint, forced func(a
 	if countContent(batch) == 0 && inner == nil {
 		return nil
 	}
-	return &splitPlan{vl: vl, children: children, n: next, inner: inner, brk: brk}
+	return &splitPlan{vl: vl, children: children, n: next, inner: inner, brk: brk, room: room}
 }
 
 // carryMarks puts the heading and the anchors of the split block vl on frag,
@@ -2612,6 +2642,9 @@ func (cb *CSSBuilder) cutBlock(p *splitPlan) (head, rest *node.VList) {
 	if r, _ := vl.Attributes[attrSplitRest].(bool); r {
 		kind = fragMiddle
 	}
+	// The head is placed now; fitChildren may have weighed an overhang in it
+	// as the room left.
+	cb.endOverhangAt(headItems, p.room)
 	head, _ = cb.buildFragment(vl, headItems, kind, innerWidth)
 	rest, _ = cb.buildFragment(vl, restItems, fragBottom, innerWidth)
 	carryMarks(vl, head)

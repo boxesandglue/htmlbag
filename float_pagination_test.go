@@ -193,3 +193,105 @@ func TestASplitContainerLeavesTheBandBehind(t *testing.T) {
 		t.Errorf("page 2: %d lines are narrowed beside a float that is on page 1", n)
 	}
 }
+
+// spaceAboveFirstLine is the vertical space a page leaves above its first
+// line of flow: margins, spacers and blocks without lines.
+func spaceAboveFirstLine(pg *document.Page) bag.ScaledPoint {
+	var walk func(n node.Node) (bag.ScaledPoint, bool)
+	walk = func(n node.Node) (bag.ScaledPoint, bool) {
+		var space bag.ScaledPoint
+		for e := n; e != nil; e = e.Next() {
+			switch c := e.(type) {
+			case *node.Kern:
+				space += c.Kern
+			case *node.Glue:
+				space += c.Width
+			case *node.HList:
+				if origin, _ := c.Attributes["origin"].(string); origin == "line" {
+					return space, true
+				}
+				space += c.Height + c.Depth
+			case *node.VList:
+				if _, isFloat := floatBoxHeight(c); isFloat {
+					continue
+				}
+				inner, found := walk(c.List)
+				if found {
+					return space + inner, true
+				}
+				space += c.Height + c.Depth
+			}
+		}
+		return space, false
+	}
+	var space bag.ScaledPoint
+	for _, obj := range pg.Objects {
+		// An empty list is the page's own box, not flow.
+		if obj.Vlist == nil || obj.Vlist.List == nil {
+			continue
+		}
+		inner, found := walk(obj.Vlist)
+		if found {
+			return space + inner
+		}
+		space += inner
+	}
+	return space
+}
+
+// pageFlowHeight is the height of the flow a page holds.
+func pageFlowHeight(pg *document.Page) bag.ScaledPoint {
+	var h bag.ScaledPoint
+	for _, obj := range pg.Objects {
+		if obj.Vlist != nil && obj.Vlist.List != nil {
+			h = max(h, obj.Vlist.Height+obj.Vlist.Depth)
+		}
+	}
+	return h
+}
+
+// A float taller than a page cannot be kept on one. It overflows the page it
+// starts on, as any block taller than a page does, and the container it
+// extends ends with that page: the rest of its band is not carried to the
+// next page as empty space.
+const tallFloatCSS = paginationCSS + ` .fig { float: left; width: 40pt; height: 800pt; }`
+
+func TestAFloatTallerThanAPageLeavesNoEmptyPage(t *testing.T) {
+	html := `<!DOCTYPE html><html><body>` + pageFiller(5) +
+		`<div class="fig"></div><p>` + floatProse + `</p></body></html>`
+	pages, _ := renderHTMLPagesCB(t, tallFloatCSS, html)
+	if got := floatPage(pages); got != 2 {
+		t.Fatalf("float painted on page %d, want 2", got)
+	}
+	if len(pages) != 2 {
+		t.Errorf("got %d pages, want 2: the band ends with the page the float is on", len(pages))
+	}
+}
+
+func TestAFloatTallerThanAPageEndsItsContainerThere(t *testing.T) {
+	para := `<p>` + floatProse + `</p>`
+	for _, c := range []struct{ name, open, close string }{
+		{"div", `<div>`, `</div>`},
+		{"bordered div", `<div style="border: 1pt solid black">`, `</div>`},
+		{"div in a split div", `<div>` + para + `<div>`, `</div></div>`},
+		{"bordered div in a split div", `<div>` + para + `<div style="border: 1pt solid black">`, `</div></div>`},
+	} {
+		html := `<!DOCTYPE html><html><body>` + pageFiller(5) + c.open +
+			`<div class="fig"></div>` + para + c.close + para + `</body></html>`
+		pages, _ := renderHTMLPagesCB(t, tallFloatCSS, html)
+		if got := floatPage(pages); got != 2 {
+			t.Fatalf("%s: float painted on page %d, want 2", c.name, got)
+		}
+		if len(pages) != 3 {
+			t.Fatalf("%s: got %d pages, want 3", c.name, len(pages))
+		}
+		// The container, its bottom border included, ends at the bottom of
+		// the page the float overflows.
+		if got, want := pageFlowHeight(pages[1]), bag.MustSP("257mm"); got < want-bag.MustSP("0.5pt") || got > want {
+			t.Errorf("%s: page 2 holds %s of flow, want the content area, %s", c.name, got, want)
+		}
+		if space := spaceAboveFirstLine(pages[2]); space > bag.MustSP("2pt") {
+			t.Errorf("%s: page 3 starts with %s of space, the rest of the band", c.name, space)
+		}
+	}
+}
