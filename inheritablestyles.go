@@ -677,6 +677,12 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			}
 		case "text-align":
 			ih.Halign = ParseHorizontalAlign(v, ih)
+		case "text-box-trim":
+			ih.textBoxTrim = parseTextBoxTrim(v, ih.textBoxTrim)
+		case "text-box-edge":
+			checkTextBoxEdge(v)
+		case "text-box":
+			ih.textBoxTrim = parseTextBox(v, ih.textBoxTrim)
 		case "border-collapse":
 			switch v {
 			case "separate":
@@ -988,8 +994,10 @@ type FormattingStyles struct {
 	// marginLeftAuto and marginRightAuto are margin-left and margin-right
 	// auto, which take up the room a block's width leaves (autoMargins).
 	marginLeftAuto, marginRightAuto bool
-	paddingInlineStart              bag.ScaledPoint
-	OlCounter                       int
+	// textBoxTrim is text-box-trim, which is not inherited.
+	textBoxTrim        textBoxTrim
+	paddingInlineStart bag.ScaledPoint
+	OlCounter          int
 	// LocalCounters holds CSS counter values defined in this element's
 	// scope. Children look up counter values by walking the StylesStack
 	// from the top down, so siblings share counters declared on the
@@ -1767,6 +1775,13 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	styles := ss.PushStyles()
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err
+	}
+	if styles.textBoxTrim != (textBoxTrim{}) {
+		if cb.trims == nil {
+			cb.trims = map[*frontend.Text]textBoxTrim{}
+		}
+		cb.trims[newte] = styles.textBoxTrim
+		newte.Settings[frontend.SettingRecordLineTrims] = true
 	}
 	if styles.marginLeftAuto || styles.marginRightAuto {
 		if cb.autoMargins == nil {

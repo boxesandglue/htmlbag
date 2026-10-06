@@ -256,6 +256,8 @@ type CSSBuilder struct {
 	sourceNodes map[*frontend.Text]*html.Node
 	// autoMargins holds the Texts of blocks with an auto side margin.
 	autoMargins map[*frontend.Text]autoMargin
+	// trims holds the Texts of blocks with text-box-trim (trimLines).
+	trims map[*frontend.Text]textBoxTrim
 	// floatGutters holds the -bag-float-gutter of each floated element.
 	floatGutters map[*frontend.Text]bag.ScaledPoint
 	// pageInserts accumulates inserts (per class) whose marks have been
@@ -1989,6 +1991,10 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		restoreTrace := captureTraceSettings(splitTe)
 		tailVL, err := cb.frontend.FormatParagraphTail(splitTe, steps, newTeWidth)
 		restoreTrace()
+		if err == nil && tailVL != nil {
+			// The block's first line was placed already.
+			trimLines(tailVL, textBoxTrim{end: cb.trims[splitTe].end})
+		}
 		if hasPBI {
 			splitTe.Settings[settingPageBreakInside] = pbi
 		}
