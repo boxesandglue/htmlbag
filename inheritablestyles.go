@@ -1986,6 +1986,13 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		}
 		markerSettings := make(frontend.TypesettingSettings, len(newte.Settings))
 		for k, v := range newte.Settings {
+			// htmlbag's own sentinels (negative SettingTypes) describe the
+			// <li>, not the marker's text, and BuildNodelistFromString
+			// rejects them: lang, -bag-bookmark or page-break-inside on an
+			// <li> stopped the document.
+			if k < 0 {
+				continue
+			}
 			markerSettings[k] = v
 		}
 		// text-align on the ::before pseudo controls how the marker is
