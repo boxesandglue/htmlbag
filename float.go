@@ -34,9 +34,13 @@ import (
 //
 // Known limits, all of them narrowings rather than wrong answers:
 //
-//   - A float is recognised only as a direct child of a block container. One
-//     written inside a paragraph's inline content is left in flow; lifting it to
-//     the container is a separate change.
+//   - A float is recognised as a child of a block container, and as the start
+//     of a paragraph's inline content, from where it is lifted to the container
+//     (liftLeadingFloats). One later in the paragraph, in a link or in a list
+//     item is left in flow.
+//   - A float is painted under the background of a block beside it, in list
+//     order rather than CSS's (htmlbag#81), so a paragraph with a background or
+//     border of its own keeps a float at its start inline.
 //   - One band at a time: a float opening while a band is live starts below it
 //     rather than beside it, so two floats never overlap but neither do they sit
 //     side by side as a browser would place them.
@@ -445,6 +449,95 @@ func nodeFloatSide(n node.Node) (string, bool) {
 	}
 	side, ok := v.(string)
 	return side, ok
+}
+
+// liftLeadingFloats moves the floats a paragraph begins with out of it, to
+// stand before it among the container's children, where the container branch
+// sees them. A float is placed at the top of the line it is in (CSS 2.1
+// §9.5.1), which for one before the first text of a paragraph is the
+// paragraph's first line, so before the paragraph it is exact. A float later
+// in the paragraph stays inline: where it would start depends on the lines
+// before it. The items are rewritten in place, so a second pass over the same
+// Text (a table cell's measuring, a page-width reflow) finds the floats where
+// the first one put them. A list item is left alone: its float belongs inside
+// it, beside its marker.
+func liftLeadingFloats(items []any) []any {
+	var out []any
+	for _, itm := range items {
+		if t, ok := itm.(*frontend.Text); ok && isLiftableParagraph(t) {
+			out = append(out, takeLeadingFloats(t)...)
+		}
+		out = append(out, itm)
+	}
+	return out
+}
+
+// isAnonymousRun reports whether t is an inline run without an element of its
+// own: no tag, no link, not a box.
+func isAnonymousRun(t *frontend.Text) bool {
+	if box, _ := t.Settings[frontend.SettingBox].(bool); box {
+		return false
+	}
+	_, hasTag := t.Settings[frontend.SettingDebug]
+	_, hasLink := t.Settings[frontend.SettingHyperlink]
+	return !hasTag && !hasLink
+}
+
+// isLiftableParagraph reports whether t is a paragraph of inline content that
+// is not itself a float or a list item, and has no background or border of
+// its own: those are painted after a float placed before the paragraph, over
+// it, so such a paragraph keeps its float inline for now.
+func isLiftableParagraph(t *frontend.Text) bool {
+	if box, _ := t.Settings[frontend.SettingBox].(bool); box {
+		return false
+	}
+	if hv := settingsToHTMLValues(t.Settings); hv.BackgroundColor != nil || hv.hasBorder() {
+		return false
+	}
+	if _, isFloat := t.Settings[settingFloat]; isFloat {
+		return false
+	}
+	if tag, _ := t.Settings[frontend.SettingDebug].(string); tag == "li" {
+		return false
+	}
+	_, hasMarker := t.Settings[frontend.SettingPrepend]
+	return !hasMarker
+}
+
+// takeLeadingFloats removes and returns the floats before the first text of
+// t, looking into the anonymous inline runs the text begins with. Not into an
+// element of its own, a link say: lifted out of it, a floated image would
+// lose what the element gives it.
+func takeLeadingFloats(t *frontend.Text) []any {
+	var lifted []any
+	for i := 0; i < len(t.Items); i++ {
+		itm := t.Items[i]
+		if s, isStr := itm.(string); isStr && strings.TrimSpace(s) == "" {
+			continue
+		}
+		if inner, ok := itm.(*frontend.Text); ok {
+			// floatSideOf unwraps a Text holding nothing but a floated node,
+			// a link around an image too; only a run without an element of
+			// its own may be taken apart.
+			if _, own := inner.Settings[settingFloat]; !own && !isAnonymousRun(inner) {
+				break
+			}
+		}
+		if _, _, isFloat := floatSideOf(itm); isFloat {
+			lifted = append(lifted, itm)
+			t.Items = append(t.Items[:i:i], t.Items[i+1:]...)
+			i--
+			continue
+		}
+		if inner, ok := itm.(*frontend.Text); ok && isAnonymousRun(inner) {
+			lifted = append(lifted, takeLeadingFloats(inner)...)
+			if isWhitespaceOnly(inner) {
+				continue
+			}
+		}
+		break
+	}
+	return lifted
 }
 
 // soleItem returns a Text's only item, ignoring whitespace either side of it.
