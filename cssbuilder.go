@@ -189,7 +189,7 @@ type CSSBuilder struct {
 	warnedLineModels map[string]bool
 	warnedBreakers   map[string]bool
 	// inlineNodes are the nodes InlineNode stands in for, by element.
-	inlineNodes map[*html.Node]node.Node
+	inlineNodes      map[*html.Node]node.Node
 	ElementCallback  ElementCallbackFunc
 	PageInitCallback PageInitCallbackFunc
 	// Counters holds named counter values used when evaluating CSS content
