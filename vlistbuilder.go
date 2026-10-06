@@ -956,6 +956,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// strict switch. Restored after the paragraph is built: a table cell's
 	// measuring passes and a page-width reflow format this same Text again.
 	defer captureInlineFloatSettings(te)()
+	// The trace mark too, read into hv above.
+	defer captureTraceSettings(te)()
 
 	// Same convention for -bag-bookmark, which the container branch strips for
 	// its children but a float's own Text never passes through: buildFloat
@@ -1134,7 +1136,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// of the box, so they shrink the content box inward. Inserted
 		// after the splittable snapshot: a later fragmentation drops the
 		// overlay instead of duplicating it at full height per fragment.
-		if cb.TraceBoxModel {
+		if cb.TraceBoxModel || hv.traceBoxModel {
 			cb.traceBoxModel(vl, hv, true)
 		}
 	}
@@ -1407,6 +1409,7 @@ func findImageAlt(te *frontend.Text) string {
 // settingsToHTMLValues extracts border/padding/background settings into HTMLValues.
 func settingsToHTMLValues(settings frontend.TypesettingSettings) HTMLValues {
 	hv := HTMLValues{}
+	hv.traceBoxModel, _ = settings[settingTraceBoxModel].(bool)
 
 	if v, ok := settings[frontend.SettingBackgroundColor]; ok && v != nil {
 		hv.BackgroundColor = v.(*color.Color)

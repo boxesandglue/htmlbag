@@ -97,3 +97,93 @@ func TestBoxModelTraceEndToEnd(t *testing.T) {
 		t.Error("serialized PDF misses the /ca 0.4 parameter dictionary")
 	}
 }
+
+// traceOverlays renders body with css and returns how many box model
+// overlays the PDF paints: each sets the overlay's alpha graphics state once.
+func traceOverlays(t *testing.T, global bool, css, body string) int {
+	t.Helper()
+	var buf bytes.Buffer
+	fe, err := frontend.NewForWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fe.Doc.CompressLevel = 0
+	if err = LoadIncludedFonts(fe); err != nil {
+		t.Fatal(err)
+	}
+	cb, err := New(fe, NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb.TraceBoxModel = global
+	if err = cb.AddCSS(css); err != nil {
+		t.Fatal(err)
+	}
+	if err = cb.InitPage(); err != nil {
+		t.Fatal(err)
+	}
+	te, err := cb.HTMLToText(`<!DOCTYPE html><html><body>` + body + `</body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cb.OutputPagesFromText(te); err != nil {
+		t.Fatal(err)
+	}
+	if err = fe.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(buf.String(), "/GSca0_4 gs")
+}
+
+// -bag-trace: boxmodel paints the overlay on the matched elements only,
+// without the global switch: not on their children (it is not inherited),
+// not where a more specific rule says none, and once where the global
+// switch is on as well. A span with it is inline, gets no box, and must not
+// carry the mark into the paragraph's formatting.
+func TestBagTraceBoxModel(t *testing.T) {
+	const css = `.x { -bag-trace: boxmodel } .off { -bag-trace: none }`
+	for _, tc := range []struct {
+		name, body string
+		global     bool
+		want       int
+	}{
+		{"matched paragraph", `<p class="x">a</p><p>b</p><p>c</p>`, false, 1},
+		{"no property", `<p>a</p><p>b</p>`, false, 0},
+		{"none in a more specific rule", `<p class="x off">a</p>`, false, 0},
+		{"not inherited", `<div class="x" style="border: 1pt solid red"><p>a</p><p>b</p></div>`, false, 1},
+		{"list item", `<ul><li class="x">a</li><li>b</li></ul>`, false, 1},
+		{"heading", `<h2 class="x">a</h2><p>b</p>`, false, 1},
+		{"inline span", `<p>a <span class="x">b</span> c</p>`, false, 0},
+		{"span in a traced paragraph", `<p class="x">a <span class="x">b</span></p>`, false, 1},
+		{"with the global switch", `<p class="x">a</p>`, true, -1},
+		// A paragraph split across pages loses its overlay, with the global
+		// switch as well; what counts here is that the split, which formats
+		// the rest of the paragraph again, gets no trace mark.
+		{"split across pages", `<p class="x">` + strings.Repeat("word ", 1500) + `</p>`, false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := tc.want
+			if want < 0 {
+				// Once, as without the property.
+				want = traceOverlays(t, true, "", `<p>a</p>`)
+			}
+			if got := traceOverlays(t, tc.global, css, tc.body); got != want {
+				t.Errorf("%d overlays, want %d", got, want)
+			}
+		})
+	}
+}
+
+// The rest of a traced paragraph that goes on to a wider page is set again
+// at that page's width, as without the trace: the trace mark is taken off
+// the paragraph for the new setting too, where the frontend would refuse it
+// and the rest would keep the narrower width.
+func TestBagTraceKeepsPageWidthReflow(t *testing.T) {
+	html := `<html><body><p class="x">` + strings.Repeat("Wort ", 2000) + `</p></body></html>`
+	pages, _ := renderHTMLPagesCB(t, reflowNarrowFirstCSS+` .x { -bag-trace: boxmodel }`, html)
+	if len(pages) < 2 {
+		t.Fatalf("got %d pages, want at least 2", len(pages))
+	}
+	requireWidth(t, "page 1", maxLineWidth(pages[0]), bag.MustSP("130mm"))
+	requireWidth(t, "page 2", maxLineWidth(pages[1]), bag.MustSP("170mm"))
+}

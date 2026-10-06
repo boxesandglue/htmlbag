@@ -1986,7 +1986,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		delete(splitTe.Settings, settingBookmark)
 		lt, hasLT := splitTe.Settings[settingLangTag]
 		delete(splitTe.Settings, settingLangTag)
+		restoreTrace := captureTraceSettings(splitTe)
 		tailVL, err := cb.frontend.FormatParagraphTail(splitTe, steps, newTeWidth)
+		restoreTrace()
 		if hasPBI {
 			splitTe.Settings[settingPageBreakInside] = pbi
 		}

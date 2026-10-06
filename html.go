@@ -38,6 +38,8 @@ type HTMLValues struct {
 	PaddingRight            bag.ScaledPoint
 	PaddingBottom           bag.ScaledPoint
 	PaddingLeft             bag.ScaledPoint
+	// traceBoxModel is -bag-trace: boxmodel on this element.
+	traceBoxModel bool
 }
 
 func (hv HTMLValues) hasBorder() bool {
@@ -49,6 +51,7 @@ func (hv HTMLValues) hasBorder() bool {
 
 func SettingsToValues(s frontend.TypesettingSettings) HTMLValues {
 	hv := HTMLValues{}
+	hv.traceBoxModel, _ = s[settingTraceBoxModel].(bool)
 	if c, ok := s[frontend.SettingBackgroundColor]; ok {
 		hv.BackgroundColor = c.(*color.Color)
 	}
@@ -369,7 +372,7 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 	// Box model trace overlay. Anchored inside the content vlist (above a
 	// background rule, below the text), so it survives the padding/border
 	// wrapping below and the per-fragment re-wrap after a page split.
-	if cb.TraceBoxModel {
+	if cb.TraceBoxModel || hv.traceBoxModel {
 		cb.traceBoxModel(vl, hv, false)
 	}
 

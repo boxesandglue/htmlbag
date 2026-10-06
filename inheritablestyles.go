@@ -75,6 +75,12 @@ const settingLangTag frontend.SettingType = -4
 // which moves it onto the row and deletes it, as with settingCSSHeight.
 const settingFixedHeight frontend.SettingType = -10
 
+// settingTraceBoxModel marks an element whose -bag-trace is boxmodel, so its
+// box gets the box model overlay without the global CSSBuilder.TraceBoxModel.
+// Read into HTMLValues where the box is built, and captured from the Text and
+// its inline children before FormatParagraph (captureTraceSettings).
+const settingTraceBoxModel frontend.SettingType = -11
+
 // Sentinels for CSS floats that text flows beside (see float.go). They carry
 // state from style resolution and from the block container down to the
 // paragraph, and are consumed before FormatParagraph, whose settings switch
@@ -615,6 +621,9 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// boxesandglue-specific PDF outline control. Grammar:
 			// `none | [<integer>] [open|closed]`. Read in vlistbuilder.
 			ih.bookmark = strings.ToLower(strings.TrimSpace(v))
+		case "-bag-trace":
+			// boxmodel or none; anything else traces nothing.
+			ih.traceBoxModel = strings.ToLower(strings.TrimSpace(v)) == "boxmodel"
 		case "position":
 			// CSS 2.1 §9.3.1: position keyword. Unknown values
 			// fall through to static via the lowercase-trim. We
@@ -1022,6 +1031,7 @@ type FormattingStyles struct {
 	widows          int    // 0 = initial (2)
 	orphans         int    // 0 = initial (2)
 	bookmark        string // -bag-bookmark raw value (non-inherited; "" = unset)
+	traceBoxModel   bool   // -bag-trace: boxmodel (non-inherited)
 	yoffset         bag.ScaledPoint
 	// relativeYOffset is the sum of the top/bottom offsets of the
 	// position: relative inline elements around the text. It moves the
@@ -1445,6 +1455,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	if ih.bookmark != "" {
 		settings[settingBookmark] = ih.bookmark
+	}
+	if ih.traceBoxModel {
+		settings[settingTraceBoxModel] = true
 	}
 	if ih.width != "" {
 		settings[frontend.SettingWidth] = ih.width
