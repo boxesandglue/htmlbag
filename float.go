@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
@@ -12,9 +13,10 @@ import (
 // paged-media floats in insert.go, which are lifted out of the flow to a page
 // edge.
 //
-// A float is taken out of its container's vertical stacking and painted at the
-// point it appeared. What it leaves behind is a BAND: a vertical extent, as tall
-// as the float, over which the content that follows has to keep clear of it.
+// A float is taken out of its container's vertical stacking and placed at the
+// point it appeared, painted after the rest of the page (document.PaintLast).
+// What it leaves behind is a BAND: a vertical extent, as tall as the float,
+// over which the content that follows has to keep clear of it.
 // Every following child consumes part of the band and narrows itself by the
 // float's width until the band is used up, after which content runs full width
 // again. `clear` ends the band early.
@@ -36,11 +38,10 @@ import (
 //
 //   - A float is recognised as a child of a block container, and as the start
 //     of a paragraph's inline content, from where it is lifted to the container
-//     (liftLeadingFloats). One later in the paragraph, in a link or in a list
-//     item is left in flow.
-//   - A float is painted under the background of a block beside it, in list
-//     order rather than CSS's (htmlbag#81), so a paragraph with a background or
-//     border of its own keeps a float at its start inline.
+//     (liftLeadingFloats). One later in the paragraph, in a link, in a list
+//     item or in a paragraph with a border or padding is left in flow. A
+//     lifted float stands at the container's edge, outside a side margin of
+//     the paragraph.
 //   - One band at a time: a float opening while a band is live starts below it
 //     rather than beside it, so two floats never overlap but neither do they sit
 //     side by side as a browser would place them.
@@ -459,13 +460,20 @@ func nodeFloatSide(n node.Node) (string, bool) {
 // in the paragraph stays inline: where it would start depends on the lines
 // before it. The items are rewritten in place, so a second pass over the same
 // Text (a table cell's measuring, a page-width reflow) finds the floats where
-// the first one put them. A list item is left alone: its float belongs inside
-// it, beside its marker.
-func liftLeadingFloats(items []any) []any {
+// the first one put them, and liftedFloats remembers the paragraph each came
+// from. A list item is left alone: its float belongs inside it, beside its
+// marker.
+func (cb *CSSBuilder) liftLeadingFloats(items []any) []any {
 	var out []any
 	for _, itm := range items {
 		if t, ok := itm.(*frontend.Text); ok && isLiftableParagraph(t) {
-			out = append(out, takeLeadingFloats(t)...)
+			for _, f := range takeLeadingFloats(t) {
+				if cb.liftedFloats == nil {
+					cb.liftedFloats = map[any]*frontend.Text{}
+				}
+				cb.liftedFloats[f] = t
+				out = append(out, f)
+			}
 		}
 		out = append(out, itm)
 	}
@@ -484,14 +492,14 @@ func isAnonymousRun(t *frontend.Text) bool {
 }
 
 // isLiftableParagraph reports whether t is a paragraph of inline content that
-// is not itself a float or a list item, and has no background or border of
-// its own: those are painted after a float placed before the paragraph, over
-// it, so such a paragraph keeps its float inline for now.
+// is not itself a float or a list item, and has no border or padding: lifted
+// to the container, a float stands at the paragraph's border edge rather than
+// inside its padding, so such a paragraph keeps its float inline for now.
 func isLiftableParagraph(t *frontend.Text) bool {
 	if box, _ := t.Settings[frontend.SettingBox].(bool); box {
 		return false
 	}
-	if hv := settingsToHTMLValues(t.Settings); hv.BackgroundColor != nil || hv.hasBorder() {
+	if hv := settingsToHTMLValues(t.Settings); hv.hasBorder() || hv.PaddingTop != 0 || hv.PaddingLeft != 0 || hv.PaddingRight != 0 {
 		return false
 	}
 	if _, isFloat := t.Settings[settingFloat]; isFloat {
@@ -742,6 +750,10 @@ func openBand(vls *node.VList, box *node.VList, declared string, wd bag.ScaledPo
 	// below it, so no shift is wanted on top of that.
 	box.Height, box.Depth = 0, 0
 	box.Attributes["origin"] = "float"
+	// Painted after the rest of the page, as CSS paints a float over the
+	// backgrounds and borders of the blocks beside it (CSS 2.1 Appendix E): in
+	// list order, the blocks it narrows come later and would cover it.
+	box.Attributes[document.PaintLast] = true
 	vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), box)
 	inset := floatInset(side, width, m)
 	if isLogicalSide(declared) {

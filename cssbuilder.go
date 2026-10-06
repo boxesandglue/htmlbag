@@ -258,6 +258,9 @@ type CSSBuilder struct {
 	autoMargins map[*frontend.Text]autoMargin
 	// trims holds the Texts of blocks with text-box-trim (trimLines).
 	trims map[*frontend.Text]textBoxTrim
+	// liftedFloats maps a float lifted from the start of a paragraph
+	// (liftLeadingFloats) to that paragraph.
+	liftedFloats map[any]*frontend.Text
 	// floatGutters holds the -bag-float-gutter of each floated element.
 	floatGutters map[*frontend.Text]bag.ScaledPoint
 	// pageInserts accumulates inserts (per class) whose marks have been

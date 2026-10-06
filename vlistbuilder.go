@@ -263,7 +263,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			}
 		}
 
-		te.Items = liftLeadingFloats(te.Items)
+		te.Items = cb.liftLeadingFloats(te.Items)
 		for i, itm := range te.Items {
 			if band != nil && clearsBand(itm, band) {
 				skipBand(band, "clear")
@@ -301,13 +301,25 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// equal margins starts level with the block after it. Left
 					// above the margin, the float's offset to that block would
 					// depend on whatever the margins around it happen to be.
-					if i > 0 && prevMarginBottom > floatSpentMargin {
+					// A float lifted from the start of a paragraph belongs at
+					// the top of the paragraph's first line, so below the
+					// paragraph's own top margin too.
+					var floatMargin bag.ScaledPoint
+					if i > 0 {
+						floatMargin = prevMarginBottom
+					}
+					if p := cb.liftedFloats[itm]; p != nil {
+						if mt, ok := p.Settings[frontend.SettingMarginTop].(bag.ScaledPoint); ok && mt > floatMargin {
+							floatMargin = mt
+						}
+					}
+					if floatMargin > floatSpentMargin {
 						k := node.NewKern()
-						k.Kern = prevMarginBottom - floatSpentMargin
+						k.Kern = floatMargin - floatSpentMargin
 						k.Attributes = node.H{"origin": "margin", attrMarginTop: bag.ScaledPoint(0)}
 						vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
 						vls.Height += k.Kern
-						floatSpentMargin = prevMarginBottom
+						floatSpentMargin = floatMargin
 						floatMarginKern = k
 					}
 					// The float, not the item it arrived in: a replaced element

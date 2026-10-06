@@ -26,6 +26,9 @@ func TestAFloatAtAParagraphsStartFloats(t *testing.T) {
 		"image":         `<p>` + floatPNG(t) + ` ` + floatProse + `</p>`,
 		"span":          `<p> <span style="float:left;width:60pt;height:40pt">F</span>` + floatProse + `</p>`,
 		"in a bare div": `<div><p>` + floatPNG(t) + floatProse + `</p></div>`,
+		// A float is painted after the paragraph's background
+		// (document.PaintLast), so it no longer covers it.
+		"with background": `<p style="background-color: yellow">` + floatPNG(t) + ` ` + floatProse + `</p>`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			vl := buildHTML(t, floatBuilder(t), `<div>`+p+`</div>`)
@@ -41,17 +44,17 @@ func TestAFloatAtAParagraphsStartFloats(t *testing.T) {
 }
 
 // A float after text, in a link, in a list item, or in a paragraph with a
-// background or border of its own stays inline: where a float later in a
-// paragraph starts depends on the lines before it; lifted out of a link it
-// would lose the link; a list item's float belongs beside its marker; and a
-// paragraph's own background would be painted over a float before it.
+// border or padding stays inline: where a float later in a paragraph starts
+// depends on the lines before it; lifted out of a link it would lose the link;
+// a list item's float belongs beside its marker; and lifted, a float would
+// stand on the paragraph's border rather than inside its padding.
 func TestAFloatThatIsNotLiftedStaysInline(t *testing.T) {
 	for name, body := range map[string]string{
-		"after text":      `<p>before ` + floatPNG(t) + ` after</p>`,
-		"in a link":       `<p><a href="https://example.com">` + floatPNG(t) + `</a> text</p>`,
-		"in a list item":  `<ul><li>` + floatPNG(t) + ` text</li></ul>`,
-		"with background": `<p style="background-color: yellow">` + floatPNG(t) + ` text</p>`,
-		"with border":     `<p style="border: 1pt solid black">` + floatPNG(t) + ` text</p>`,
+		"after text":     `<p>before ` + floatPNG(t) + ` after</p>`,
+		"in a link":      `<p><a href="https://example.com">` + floatPNG(t) + `</a> text</p>`,
+		"in a list item": `<ul><li>` + floatPNG(t) + ` text</li></ul>`,
+		"with border":    `<p style="border: 1pt solid black">` + floatPNG(t) + ` text</p>`,
+		"with padding":   `<p style="padding-left: 6pt">` + floatPNG(t) + ` text</p>`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if box := floatBox(buildHTML(t, floatBuilder(t), `<div>`+body+`</div>`)); box != nil {
@@ -114,5 +117,37 @@ func TestTwoFloatsAtAParagraphsStartAreBothLifted(t *testing.T) {
 	walk(vl.List)
 	if len(sides) != 2 || sides[0] != "left" || sides[1] != "right" {
 		t.Errorf("floats %v, want left then right", sides)
+	}
+}
+
+// A float lifted from a paragraph whose top margin is larger than the bottom
+// margin before it stands at the paragraph's first line, below that margin:
+// the margin is laid out before the float, and the paragraph's collapses with
+// it.
+func TestALiftedFloatStandsBelowTheParagraphsMargin(t *testing.T) {
+	vl := buildHTML(t, floatBuilder(t), `<div><p style="margin: 0">Before.</p><p style="margin-top: 20pt">`+floatPNG(t)+` `+floatProse+`</p></div>`)
+	box := floatBox(vl)
+	if box == nil {
+		t.Fatal("the float stayed inline")
+	}
+	space := func(n node.Node, next func(node.Node) node.Node) bag.ScaledPoint {
+		var sum bag.ScaledPoint
+		for n = next(n); n != nil; n = next(n) {
+			switch v := n.(type) {
+			case *node.Kern:
+				sum += v.Kern
+			case *node.Glue:
+				sum += v.Width
+			default:
+				return sum
+			}
+		}
+		return sum
+	}
+	if above := space(box, node.Node.Prev); above != bag.MustSP("20pt") {
+		t.Errorf("the space above the float is %s, want the paragraph's 20pt margin", above)
+	}
+	if below := space(box, node.Node.Next); below != 0 {
+		t.Errorf("%s between the float and the paragraph, want none", below)
 	}
 }
