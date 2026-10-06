@@ -113,3 +113,28 @@ body { margin: 0 } p { margin: 0; font-family: serif; font-size: 10pt; line-heig
 		t.Errorf("B moves down by %s, want %s", got, grow)
 	}
 }
+
+// A split block whose rest is re-broken at the wider page 2 (the reflow in
+// outputBlockSplit, which takes only a block with a border or background)
+// keeps its last line trimmed, as it is without the reflow.
+func TestTextBoxTrimSplitReflow(t *testing.T) {
+	html := `<p style="text-box-trim: trim-both; background-color: #eee">` + charLines("A", 14) + `</p>`
+	last := func(css string) placedLine {
+		lines := placedLines(renderHTMLPages(t, css, html))
+		first, l := lines[0], lines[len(lines)-1]
+		if l.page != 2 {
+			t.Fatalf("the last line is on page %d, want 2", l.page)
+		}
+		if l.width != sp("160pt") {
+			t.Fatalf("the last line is %s wide, want 160pt (the first is %s)", l.width, first.width)
+		}
+		return l
+	}
+	want := lineSize(last(trimCSS))
+	if want >= sp("16pt") {
+		t.Fatalf("the last line without a reflow is %s, want it trimmed", want)
+	}
+	if got := lineSize(last(trimCSS + `@page :first { margin-left: 60pt }`)); got != want {
+		t.Errorf("the last line after a reflow is %s, want %s", got, want)
+	}
+}
