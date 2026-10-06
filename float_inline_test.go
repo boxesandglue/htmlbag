@@ -6,6 +6,7 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
+	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
 // floatPNG is a floated image for the paragraphs below.
@@ -149,5 +150,91 @@ func TestALiftedFloatStandsBelowTheParagraphsMargin(t *testing.T) {
 	}
 	if below := space(box, node.Node.Next); below != 0 {
 		t.Errorf("%s between the float and the paragraph, want none", below)
+	}
+}
+
+// floatBoxes counts the float boxes in v.
+func floatBoxes(v *node.VList) int {
+	n := 0
+	var walk func(e node.Node)
+	walk = func(e node.Node) {
+		for ; e != nil; e = e.Next() {
+			if c, ok := e.(*node.VList); ok {
+				if origin, _ := c.Attributes["origin"].(string); origin == "float" {
+					n++
+				}
+				walk(c.List)
+			}
+		}
+	}
+	walk(v.List)
+	return n
+}
+
+// A floated inline element whose content makes more than one run, by a <br>
+// or a child element, is one float, lifted from a paragraph or as the only
+// content of a block (#83). Two floated spans stay two floats.
+func TestAFloatedSpanWithSeveralRunsIsOneFloat(t *testing.T) {
+	span := `<span style="float: left; width: 50pt; border: 1pt solid red">A<br><em>B</em> b<br>C</span>`
+	for name, c := range map[string]struct {
+		body   string
+		floats int
+	}{
+		"in a paragraph":    {`<div><p>` + span + floatProse + `</p></div>`, 1},
+		"in a block":        {`<div><div>` + span + `</div><p>` + floatProse + `</p></div>`, 1},
+		"two floated spans": {`<div><p><span style="float: left">One</span><span style="float: left">Two</span>` + floatProse + `</p></div>`, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := floatBoxes(buildHTML(t, floatBuilder(t), c.body)); got != c.floats {
+				t.Errorf("%d float boxes, want %d", got, c.floats)
+			}
+		})
+	}
+}
+
+// The runs of such a float are its inline content: the float and the box
+// (background, border, padding, width) are on the element's Text alone, so
+// a run neither floats again nor paints the padding a second time.
+func TestAFloatedSpansRunsCarryNoBox(t *testing.T) {
+	cb := floatBuilder(t)
+	te, err := cb.HTMLToText(`<!DOCTYPE html><html><body><div><span style="float: left; width: 50pt; padding: 4pt; background-color: yellow">A<br>B</span></div></body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var group *frontend.Text
+	var find func(items []any)
+	find = func(items []any) {
+		for _, itm := range items {
+			if t, ok := itm.(*frontend.Text); ok && group == nil {
+				if _, isFloat := t.Settings[settingFloat]; isFloat {
+					group = t
+					return
+				}
+				find(t.Items)
+			}
+		}
+	}
+	find(te.Items)
+	if group == nil {
+		t.Fatal("no floated Text")
+	}
+	if _, ok := group.Settings[frontend.SettingPaddingLeft]; !ok {
+		t.Error("the float has lost its padding")
+	}
+	runs := 0
+	for _, itm := range group.Items {
+		run, ok := itm.(*frontend.Text)
+		if !ok {
+			continue
+		}
+		runs++
+		for _, k := range []frontend.SettingType{settingFloat, frontend.SettingPaddingLeft, frontend.SettingBackgroundColor, frontend.SettingWidth} {
+			if _, has := run.Settings[k]; has {
+				t.Errorf("run %d carries setting %v of the float's box", runs, k)
+			}
+		}
+	}
+	if runs != 3 {
+		t.Errorf("the float holds %d runs, want 3 (A, the break, B)", runs)
 	}
 }

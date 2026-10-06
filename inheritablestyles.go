@@ -2592,6 +2592,18 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			cb.anchorCount++
 		}
 
+		// An inline element has no Text of its own: each child below gets
+		// one with the element's settings. A side float is one box, though
+		// (CSS 2.1 §9.7 makes it a block), and each of those Texts would
+		// float on its own, one per run (#83). So the children of a float
+		// that makes more than one go into a Text of the element's own,
+		// which carries the float and the box, and they are its inline
+		// content.
+		outer := te
+		if inlineSideFloatRuns(item) > 1 {
+			te = frontend.NewText()
+		}
+
 		// emitGeneratedContent resolves the pseudo-element's inherited
 		// style (a fresh frame carrying the element's own styles) and
 		// renders the content value via appendGeneratedContent. Used
@@ -3125,7 +3137,70 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				}
 			}
 		}
+		if te != outer {
+			return cb.closeFloatGroup(outer, te, item, ss, currentFontsize, df)
+		}
 	}
+	return nil
+}
+
+// inlineSideFloatRuns counts the runs an inline element with a side float
+// makes, a Text for each child and each pseudo-element, and returns 0 for
+// any other element.
+func inlineSideFloatRuns(item *HTMLItem) int {
+	switch item.Styles.Get("float") {
+	case "left", "right", "inside", "outside":
+	default:
+		return 0
+	}
+	n := len(item.Children)
+	for _, pseudo := range []string{"before::content", "after::content"} {
+		if c, ok := item.Styles[pseudo]; ok && !c.isEmpty() {
+			n++
+		}
+	}
+	return n
+}
+
+// floatBoxSettings are the settings of an inline element's box, which its
+// runs carry as well when it has no Text of its own.
+var floatBoxSettings = []frontend.SettingType{
+	settingFloat, settingClear,
+	frontend.SettingBackgroundColor,
+	frontend.SettingBorderTopWidth, frontend.SettingBorderRightWidth, frontend.SettingBorderBottomWidth, frontend.SettingBorderLeftWidth,
+	frontend.SettingBorderTopStyle, frontend.SettingBorderRightStyle, frontend.SettingBorderBottomStyle, frontend.SettingBorderLeftStyle,
+	frontend.SettingBorderTopColor, frontend.SettingBorderRightColor, frontend.SettingBorderBottomColor, frontend.SettingBorderLeftColor,
+	frontend.SettingBorderTopLeftRadius, frontend.SettingBorderTopRightRadius, frontend.SettingBorderBottomLeftRadius, frontend.SettingBorderBottomRightRadius,
+	frontend.SettingPaddingTop, frontend.SettingPaddingRight, frontend.SettingPaddingBottom, frontend.SettingPaddingLeft,
+	frontend.SettingMarginTop, frontend.SettingMarginRight, frontend.SettingMarginBottom, frontend.SettingMarginLeft,
+	frontend.SettingWidth, frontend.SettingHeight,
+}
+
+// closeFloatGroup gives group, which holds the runs of the inline element
+// item with a side float, the element's settings, takes the float and the
+// box off the runs, and adds group to outer.
+func (cb *CSSBuilder) closeFloatGroup(outer, group *frontend.Text, item *HTMLItem, ss StylesStack, currentFontsize bag.ScaledPoint, df *frontend.Document) error {
+	sty := ss.PushStyles()
+	defer ss.PopStyles()
+	if err := StylesToStyles(sty, item.Styles, df, currentFontsize); err != nil {
+		return err
+	}
+	applyLangAndHyphens(sty, item.Attributes, df)
+	cb.applySettings(group.Settings, sty)
+	if cb != nil {
+		if cb.floatGutters == nil {
+			cb.floatGutters = map[*frontend.Text]bag.ScaledPoint{}
+		}
+		cb.floatGutters[group] = sty.floatGutter
+	}
+	for _, itm := range group.Items {
+		if run, ok := itm.(*frontend.Text); ok {
+			for _, k := range floatBoxSettings {
+				delete(run.Settings, k)
+			}
+		}
+	}
+	outer.Items = append(outer.Items, group)
 	return nil
 }
 
