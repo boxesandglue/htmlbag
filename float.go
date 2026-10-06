@@ -40,7 +40,9 @@ import (
 //   - One band at a time: a float opening while a band is live starts below it
 //     rather than beside it, so two floats never overlap but neither do they sit
 //     side by side as a browser would place them.
-//   - A float needs a declared width (see buildFloat).
+//   - A float without a width shrinks to its longest line (floatFitWidth),
+//     but one holding a table in a bordered box, a block image or a rule is
+//     set at the container's width, and the text after it goes below it.
 //   - A margin declared as zero gets the default gutter, because a margin is
 //     stamped on every element whether or not it was written.
 //   - A negative margin is not what CSS would do with it: on the text side it
@@ -485,10 +487,13 @@ func (cb *CSSBuilder) buildFloat(itm any, wd bag.ScaledPoint) (*node.VList, erro
 		// Text again, and a float stripped of what makes it a float renders in
 		// flow the second time round.
 		defer captureFloatSettings(t.Settings)()
-		// The float is built at the container's width, so a float that declares
-		// no width of its own fills the measure and leaves nothing beside it.
-		// CSS 2.1 §10.3.5 shrinks it to fit its content instead; that needs a
-		// measuring pass this does not do yet, so a float needs a width.
+		// A float that declares no width shrinks to fit its content (CSS 2.1
+		// §10.3.5): as wide as its longest line, at most the container's width.
+		if w, ok := t.Settings[frontend.SettingWidth].(string); !ok || w == "auto" {
+			if fit, ok := cb.floatFitWidth(t, wd); ok && fit < wd {
+				wd = fit
+			}
+		}
 		return cb.CreateVlist(t, wd)
 	case node.Node:
 		// A replaced element whose size is a percentage of its containing block
@@ -505,6 +510,87 @@ func (cb *CSSBuilder) buildFloat(itm any, wd bag.ScaledPoint) (*node.VList, erro
 		return node.Vpack(t), nil
 	}
 	return nil, nil
+}
+
+// floatFitWidth is the shrink-to-fit width of a float without a width of its
+// own, the preferred width of CSS 2.1 §10.3.5: the float is set at twice the
+// available width wd, and every line asks for the room around it (margins,
+// borders and padding of the boxes it is in, whatever the float's width
+// takes from it) plus its natural width. Twice wd is wide enough: a float
+// whose content needs more than wd is set at wd either way.
+//
+// ok is false when the float holds something whose width this cannot read
+// off a line, such as a table, a block image or a rule; the float is then set
+// at wd, as a float without a width always was. The measuring pass registers
+// nothing: no heading, anchor or element callback (reflowRebuild), and no
+// structure element.
+func (cb *CSSBuilder) floatFitWidth(te *frontend.Text, wd bag.ScaledPoint) (bag.ScaledPoint, bool) {
+	if wd <= 0 {
+		return 0, false
+	}
+	measure := 2 * wd
+	savedRebuild, savedTagging := cb.reflowRebuild, cb.enableTagging
+	cb.reflowRebuild, cb.enableTagging = true, false
+	vl, err := cb.CreateVlist(te, measure)
+	cb.reflowRebuild, cb.enableTagging = savedRebuild, savedTagging
+	if err != nil || vl == nil {
+		return 0, false
+	}
+	fit, ok := lineFitWidth(vl.List, measure)
+	return fit, ok && fit > 0
+}
+
+// lineFitWidth walks the list n of a box set at width measure and returns the
+// widest room a line asks for (see floatFitWidth). It goes through the lists
+// a block is made of and through the border and padding wrapper HTMLBorder
+// packs, and reports false for anything else that takes width.
+func lineFitWidth(n node.Node, measure bag.ScaledPoint) (bag.ScaledPoint, bool) {
+	var fit bag.ScaledPoint
+	for ; n != nil; n = n.Next() {
+		switch t := n.(type) {
+		case *node.VList:
+			w, ok := lineFitWidth(t.List, measure)
+			if !ok {
+				return 0, false
+			}
+			fit = max(fit, w)
+		case *node.HList:
+			switch origin, _ := t.Attributes["origin"].(string); origin {
+			case "line":
+				fit = max(fit, measure-t.Width+lineNaturalWidth(t))
+			case "hpack padding":
+				w, ok := lineFitWidth(t.List, measure)
+				if !ok {
+					return 0, false
+				}
+				fit = max(fit, w)
+			default:
+				return 0, false
+			}
+		case *node.Rule:
+			if t.Width > 0 {
+				return 0, false
+			}
+		case *node.Kern, *node.Glue, *node.Penalty, *node.StartStop:
+		default:
+			return 0, false
+		}
+	}
+	return fit, true
+}
+
+// lineNaturalWidth is the width of a line's content, without the glue of
+// infinite stretch that aligns it (left, right or centered).
+func lineNaturalWidth(hl *node.HList) bag.ScaledPoint {
+	var wd bag.ScaledPoint
+	for e := hl.List; e != nil; e = e.Next() {
+		if g, ok := e.(*node.Glue); ok && g.StretchOrder > 0 {
+			continue
+		}
+		w, _, _ := node.Dimensions(e, e, node.Horizontal)
+		wd += w
+	}
+	return wd
 }
 
 // openBand places the float box in the container and returns the band it

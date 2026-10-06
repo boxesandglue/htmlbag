@@ -313,6 +313,13 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// comes wrapped in an anonymous inline run whose margins are
 					// its own, which is to say zeros.
 					opened := openBand(vls, box, side, childBaseWidth, cb.marginsOf(float), cb.pageIsRight())
+					if narrows && opened.inset >= childBaseWidth {
+						// No room beside the float: the content after it goes
+						// below it (CSS 2.1 §9.5), as after a clear, rather
+						// than into a column of no width.
+						skipBand(opened, "float without room beside it")
+						continue
+					}
 					if narrows {
 						band = opened
 					} else {
