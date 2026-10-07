@@ -260,12 +260,15 @@ func (cb *CSSBuilder) endOverhangInside(vl *node.VList, room bag.ScaledPoint) *n
 	}
 	hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
 	kind := fragOnly
-	room -= hv.PaddingBottom + hv.BorderBottomWidth
+	top, bottom := hv.PaddingTop+hv.BorderTopWidth, hv.PaddingBottom+hv.BorderBottomWidth
 	if rest, _ := vl.Attributes[attrSplitRest].(bool); rest {
 		kind = fragBottom
-	} else {
-		room -= hv.PaddingTop + hv.BorderTopWidth
+		top = 0
 	}
+	if t, b, clone := decorationClone(vl); clone {
+		top, bottom = t, b
+	}
+	room -= top + bottom
 	children = append([]node.Node(nil), children...)
 	if !cb.endOverhangAt(children, room) {
 		return nil

@@ -817,6 +817,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					splittableInner = append(splittableInner, n)
 				}
 				if len(splittableInner) > 0 {
+					splittableInner = cb.cloneDecoration(vls, te, splittableInner, true, hv)
 					vls.Attributes["_splittable"] = true
 					vls.Attributes["_splittableInner"] = splittableInner
 					vls.Attributes["_splittableHv"] = HTMLValues{}
@@ -867,6 +868,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				vls.Attributes["_splittableContainerTe"] = te
 				vls.Attributes["_splittableContainerWd"] = wd
 				cb.stampFragLines(vls.Attributes, te)
+				cb.cloneDecoration(vls, te, nil, false, hv)
 			}
 		}
 
@@ -1107,6 +1109,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			if bandIndent.rows > 0 {
 				vl.Attributes[attrFloatBandIndent] = bandIndent
 			}
+			cb.cloneDecoration(vl, te, nil, false, hv)
 		}
 	} else {
 		// CSS padding-top/bottom without border/background: HTMLBorder
@@ -1135,6 +1138,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		for n := vl.List; n != nil; n = n.Next() {
 			splittableInner = append(splittableInner, n)
 		}
+		splittableInner = cb.cloneDecoration(vl, te, splittableInner, true, hv)
 		if len(splittableInner) > 1 {
 			if vl.Attributes == nil {
 				vl.Attributes = node.H{}
