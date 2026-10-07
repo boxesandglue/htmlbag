@@ -258,6 +258,8 @@ type CSSBuilder struct {
 	autoMargins map[*frontend.Text]autoMargin
 	// trims holds the Texts of blocks with text-box-trim (trimLines).
 	trims map[*frontend.Text]textBoxTrim
+	// clones holds the Texts of blocks with box-decoration-break: clone.
+	clones map[*frontend.Text]bool
 	// liftedFloats maps a float lifted from the start of a paragraph
 	// (liftLeadingFloats) to that paragraph.
 	liftedFloats map[any]*frontend.Text
@@ -1490,6 +1492,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if isPlaceholderBox(inner) {
 				break
 			}
+			// A box that repeats its decorations on every fragment splits in
+			// outputBlockSplit.
+			if _, _, clone := decorationClone(inner); clone {
+				break
+			}
 		}
 		shiftChildren(inner)
 		propagateInsertsAttr(inner, inner.List)
@@ -2109,6 +2116,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		delete(settings, settingCSSHeight)
 		delete(settings, settingBookmark)
 		wrapper := &frontend.Text{Settings: settings, Items: containerTe.Items[itemIdx:]}
+		if cb.clones[containerTe] {
+			cb.clones[wrapper] = true
+		}
 		cb.reflowRebuild = true
 		vl, err := cb.CreateVlist(wrapper, containerWd)
 		cb.reflowRebuild = false
@@ -2196,6 +2206,11 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			topOverhead = hv.PaddingTop + hv.BorderTopWidth
 		}
 		bottomOverhead := hv.PaddingBottom + hv.BorderBottomWidth
+		// Under clone, every fragment has both sides.
+		var cutOverhead bag.ScaledPoint
+		if top, bottom, ok := decorationClone(blockVL); ok {
+			topOverhead, bottomOverhead, cutOverhead = top, bottom, bottom
+		}
 		remaining := childrenHeight(children[i:])
 
 		if topOverhead+remaining+bottomOverhead <= avail && !forcedInside(children[i:], fc.forcedKeyword) {
@@ -2218,7 +2233,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		var overflow bool
 		var inner *splitPlan
 		var brk string
-		batch, i, overflow, inner, brk = cb.fitChildren(children, i, avail-topOverhead, fc.forcedKeyword)
+		batch, i, overflow, inner, brk = cb.fitChildren(children, i, avail-topOverhead-cutOverhead, fc.forcedKeyword)
 		// A paragraph keeps orphans and widows lines (CSS Fragmentation 3
 		// §4.4); a container cuts between its blocks, or through one, as
 		// long as something goes before the cut and the cut does not fall
@@ -2299,7 +2314,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		if !isFirst {
 			kind = fragMiddle
 		}
-		room := avail - topOverhead
+		room := avail - topOverhead - cutOverhead
 		// A batch that takes the last child is the block's last fragment and
 		// closes it, even when its bottom padding and border overrun the
 		// room (a float overhang ending at the page break fills it).
@@ -2308,7 +2323,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			if isFirst {
 				kind = fragOnly
 			}
-			room -= bottomOverhead
+			room = avail - topOverhead - bottomOverhead
 		}
 		cb.endOverhangAt(batch, room)
 		wrapped, h := cb.buildFragment(blockVL, batch, kind, innerWidth)
@@ -2612,7 +2627,9 @@ func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint, forced func(a
 	if len(children) == 0 {
 		return nil
 	}
-	if rest, _ := vl.Attributes[attrSplitRest].(bool); !rest {
+	if top, bottom, clone := decorationClone(vl); clone {
+		room -= top + bottom
+	} else if rest, _ := vl.Attributes[attrSplitRest].(bool); !rest {
 		hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
 		room -= hv.PaddingTop + hv.BorderTopWidth
 	}
@@ -2689,7 +2706,7 @@ func (cb *CSSBuilder) cutBlock(p *splitPlan) (node.Node, node.Node) {
 	head, _ := cb.buildFragment(vl, headItems, kind, innerWidth)
 	rest, _ := cb.buildFragment(vl, restItems, fragBottom, innerWidth)
 	carryMarks(vl, head)
-	for _, k := range []string{"_splittable", "_splittableHv", "_splittableInnerWidth", "_splittableTe", attrFragLines, "pageBreakAfter"} {
+	for _, k := range []string{"_splittable", "_splittableHv", "_splittableInnerWidth", "_splittableTe", attrFragLines, "pageBreakAfter", attrDecorationClone} {
 		if v, ok := vl.Attributes[k]; ok {
 			rest.SetAttribute(k, v)
 		}
@@ -2817,6 +2834,10 @@ func (cb *CSSBuilder) buildFragment(blockVL *node.VList, items []node.Node, kind
 			items = append(items, colorResetNode())
 		}
 	}
+	_, _, clone := decorationClone(blockVL)
+	if pad, _ := blockVL.Attributes[attrDecorationClone].(clonePadding); clone {
+		items = padFragment(items, pad)
+	}
 	innerVL := node.NewVList()
 	innerVL.Width = innerWidth
 	var totalH bag.ScaledPoint
@@ -2848,11 +2869,11 @@ func (cb *CSSBuilder) buildFragment(blockVL *node.VList, items []node.Node, kind
 		return innerVL, vlistNodeHeight(innerVL)
 	}
 	fragHv := hv
-	if kind != fragTop && kind != fragOnly {
+	if kind != fragTop && kind != fragOnly && !clone {
 		fragHv.PaddingTop = 0
 		fragHv.BorderTopWidth = 0
 	}
-	if kind != fragBottom && kind != fragOnly {
+	if kind != fragBottom && kind != fragOnly && !clone {
 		fragHv.PaddingBottom = 0
 		fragHv.BorderBottomWidth = 0
 	}
@@ -3340,6 +3361,9 @@ func splittablePeekHeight(n node.Node) (bag.ScaledPoint, bool) {
 		}
 	}
 	peek := hv.PaddingTop + hv.BorderTopWidth
+	if top, bottom, clone := decorationClone(vl); clone {
+		peek = top + bottom
+	}
 	if _, leaf := vl.Attributes["_splittableTe"].(*frontend.Text); leaf {
 		// Reserve room for `orphans` lines, not just the first one:
 		// outputBlockSplit refuses to start a paragraph that would leave

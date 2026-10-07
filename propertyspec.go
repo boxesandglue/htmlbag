@@ -127,6 +127,7 @@ var Properties = []PropertySpec{
 	{Name: "page-break-inside", Aliases: []string{"break-inside"}, Values: "`auto`, `avoid`", Example: "page-break-inside: avoid;", Note: "On a table row, `auto` lets the row break across pages; a row without the property stays whole, as with `avoid`", Group: GroupLayout},
 	{Name: "widows", Values: "Positive integer, the default is 2; `1` switches the control off", Example: "widows: 3;", Note: "Counts the lines of a paragraph, a list item or `<pre>`, also inside a container; the blocks of a container are not counted", Group: GroupLayout},
 	{Name: "orphans", Values: "Positive integer, the default is 2; `1` switches the control off", Example: "orphans: 3;", Note: "Counts as `widows` does", Group: GroupLayout},
+	{Name: "box-decoration-break", Values: "`slice` (the initial value), `clone`", Example: "box-decoration-break: clone;", Note: "Not inherited. On a block split across pages or regions, `clone` gives every fragment the block's padding and border on both sides, and its background. Applies to blocks and block containers; tables and inline boxes are not cloned", Group: GroupLayout},
 
 	// Lists and generated content
 	{Name: "list-style-type", Values: "`disc`, `circle`, `square`, `none`, `decimal`, `decimal-leading-zero`, `lower-alpha`, `upper-alpha`, `lower-latin`, `upper-latin`, `lower-roman`, `upper-roman`, `lower-greek`", Example: "list-style-type: lower-roman;", Group: GroupGenerated},

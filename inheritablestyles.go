@@ -683,6 +683,15 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			checkTextBoxEdge(v)
 		case "text-box":
 			ih.textBoxTrim = parseTextBox(v, ih.textBoxTrim)
+		case "box-decoration-break":
+			switch v {
+			case "slice":
+				ih.decorationClone = false
+			case "clone":
+				ih.decorationClone = true
+			default:
+				bag.Logger.Warn("unknown box-decoration-break value", "value", v)
+			}
 		case "border-collapse":
 			switch v {
 			case "separate":
@@ -996,6 +1005,7 @@ type FormattingStyles struct {
 	marginLeftAuto, marginRightAuto bool
 	// textBoxTrim is text-box-trim, which is not inherited.
 	textBoxTrim        textBoxTrim
+	decorationClone    bool // box-decoration-break: clone, not inherited
 	paddingInlineStart bag.ScaledPoint
 	OlCounter          int
 	// LocalCounters holds CSS counter values defined in this element's
@@ -1782,6 +1792,12 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		}
 		cb.trims[newte] = styles.textBoxTrim
 		newte.Settings[frontend.SettingRecordLineTrims] = true
+	}
+	if styles.decorationClone {
+		if cb.clones == nil {
+			cb.clones = map[*frontend.Text]bool{}
+		}
+		cb.clones[newte] = true
 	}
 	if styles.marginLeftAuto || styles.marginRightAuto {
 		if cb.autoMargins == nil {
