@@ -143,3 +143,49 @@ func TestFragLinesClearedAfterOutput(t *testing.T) {
 		t.Errorf("fragLines holds %d entries after OutputPagesFromText, want 0", n)
 	}
 }
+
+// A paragraph that is the only block of its flow, or of the part after a
+// forced break, keeps its widows at every break, as among other blocks
+// (#84). charCSS pages hold 13 lines.
+func TestWidowsLoneParagraph(t *testing.T) {
+	perPage := func(html string) []int {
+		var ns []int
+		for _, l := range placedLines(renderHTMLPages(t, charCSS, html)) {
+			if l.text == "Zq" {
+				continue
+			}
+			for len(ns) < l.page {
+				ns = append(ns, 0)
+			}
+			ns[l.page-1]++
+		}
+		return ns
+	}
+	for _, c := range []struct {
+		name, html string
+		want       []int
+	}{
+		{"initial widows", `<p>` + charLines("B", 14) + `</p>`, []int{12, 2}},
+		{"widows: 4", `<p style="widows: 4">` + charLines("B", 14) + `</p>`, []int{10, 4}},
+		{"in a div", `<div><p>` + charLines("B", 14) + `</p></div>`, []int{12, 2}},
+		{"over three pages", `<p>` + charLines("B", 27) + `</p>`, []int{13, 12, 2}},
+		{"alone after a forced break", `<p>Zq</p><p style="break-before: page">` + charLines("B", 14) + `</p>`, []int{0, 12, 2}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := perPage(c.html); fmt.Sprint(got) != fmt.Sprint(c.want) {
+				t.Errorf("lines per page %v, want %v", got, c.want)
+			}
+		})
+	}
+	t.Run("FlowText", func(t *testing.T) {
+		cb, _ := newFlowBuilder(t, "")
+		tr := flow(t, cb, `<p>`+charLines("B", 6)+`</p>`, wide("60pt"), wide("1000pt"))
+		var got []int
+		for _, f := range tr.filled {
+			got = append(got, len(boxLines(f)))
+		}
+		if fmt.Sprint(got) != "[4 2]" {
+			t.Errorf("lines per region %v, want [4 2]", got)
+		}
+	})
+}

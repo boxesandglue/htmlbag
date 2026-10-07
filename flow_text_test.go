@@ -113,9 +113,8 @@ func TestFlowTextFillsRegionsOfDifferentSizes(t *testing.T) {
 }
 
 // A paragraph split into a narrower region is re-broken at its width where a
-// page of another @page width re-breaks it: among other blocks. The lines of
-// a paragraph that is the flow's only block keep their width, as they do on
-// pages.
+// page of another @page width re-breaks it, also when it is the flow's only
+// block (#84).
 func TestFlowTextNarrowerRegion(t *testing.T) {
 	text := strings.Repeat("alpha beta gamma delta epsilon ", 30)
 	widest := func(f Filled) bag.ScaledPoint {
@@ -130,7 +129,7 @@ func TestFlowTextNarrowerRegion(t *testing.T) {
 		rebroken   bool
 	}{
 		{"among other blocks", `<p>Aq</p><p>` + text + `</p>`, true},
-		{"the only block", `<p>` + text + `</p>`, false},
+		{"the only block", `<p>` + text + `</p>`, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

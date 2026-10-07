@@ -1480,10 +1480,10 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if hasBoxMarks(inner) && vlistNodeHeight(inner) <= fc.cur.height {
 				break
 			}
-			// Unwrapped, a paragraph's lines are placed one by one, without
-			// orphans and widows. Those only matter in a region that holds
-			// something, which at the start of a flow is an occupied one.
-			if _, leaf := inner.Attributes["_splittableTe"]; leaf && fc.cur.occupied {
+			// Unwrapped, a paragraph's lines would be placed one by one,
+			// without widows at its breaks and without the re-break of its
+			// rest in a region of another width (#84).
+			if _, leaf := inner.Attributes["_splittableTe"]; leaf {
 				break
 			}
 			// A pre-rendered box is placed whole.

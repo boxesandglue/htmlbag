@@ -109,10 +109,9 @@ type Fragment struct {
 // A region of another width than the one before it rebuilds the remaining
 // whole blocks at its width, and re-breaks the rest of a paragraph or a table
 // split across the two, as a page of another @page width does. What that
-// cannot rebuild keeps the width it was built at: the lines of a paragraph
-// that is the flow's only block and starts in a region that is not occupied,
-// the children of a split box with a border or background, and a paragraph
-// whose rest fails to re-break.
+// cannot rebuild keeps the width it was built at: the children of a split
+// box with a border or background, and a paragraph whose rest fails to
+// re-break.
 //
 // Nothing of the flow is left in the builder when FlowText returns, and the
 // page content the builder holds is kept as it was. As with
