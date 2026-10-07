@@ -263,6 +263,8 @@ type CSSBuilder struct {
 	ownTrims map[*frontend.Text]textBoxTrim
 	// clones holds the Texts of blocks with box-decoration-break: clone.
 	clones map[*frontend.Text]bool
+	// breakTrims holds the Texts of blocks with -bag-text-box-trim-at-break.
+	breakTrims map[*frontend.Text]bool
 	// liftedFloats maps a float lifted from the start of a paragraph
 	// (liftLeadingFloats) to that paragraph.
 	liftedFloats map[any]*frontend.Text
@@ -1497,7 +1499,10 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			}
 			// A box that repeats its decorations on every fragment splits in
 			// outputBlockSplit.
-			if _, _, clone := decorationClone(inner); clone {
+			if _, _, clone := decorationClone(inner); clone || cb.fragmentTrim(inner) != (breakTrim{}) {
+				break
+			}
+			if at, _ := inner.Attributes[attrTrimAtBreak].(bool); at {
 				break
 			}
 		}
@@ -1744,6 +1749,13 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		// break rather than taking a page of its own.
 		if _, ok := floatOverhang(cur); ok {
 			cb.endOverhangAt([]node.Node{cur}, contentArea-trialPageHeight(incoming, 0))
+			h = vlistNodeHeight(cur)
+		}
+
+		// With -bag-text-box-trim-at-break, a block whose last line fits by
+		// its text ends at the break with that line trimmed.
+		if t := blockTrimAtBreak(cur); t > 0 && trialPageHeight(incoming, h) > contentArea && trialPageHeight(incoming, h-t) <= contentArea {
+			trimBlockAtBreak(cur)
 			h = vlistNodeHeight(cur)
 		}
 
@@ -2240,7 +2252,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		var overflow bool
 		var inner *splitPlan
 		var brk string
-		batch, i, overflow, inner, brk = cb.fitChildren(children, i, avail-topOverhead-cutOverhead, fc.forcedKeyword, trim.end)
+		batch, i, overflow, inner, brk = cb.fitChildren(children, i, avail-topOverhead-cutOverhead, fc.forcedKeyword, trim)
 		// A paragraph keeps orphans and widows lines (CSS Fragmentation 3
 		// §4.4); a container cuts between its blocks, or through one, as
 		// long as something goes before the cut and the cut does not fall
@@ -2332,8 +2344,13 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			}
 			room = avail - topOverhead - bottomOverhead
 		}
-		if trim.end && i < len(children) {
-			trimFragmentEnd(batch)
+		// Under clone every fragment ends trimmed. With
+		// -bag-text-box-trim-at-break only one before an unforced break is,
+		// which can be the block's last when it fits only by its text.
+		if trim.end && (trim.clone || brk == "") {
+			if i < len(children) || !trim.clone && bottomOverhead == 0 && childrenHeight(batch) > room {
+				trimFragmentEnd(batch, trim.clone)
+			}
 		}
 		cb.endOverhangAt(batch, room)
 		wrapped, h := cb.buildFragment(blockVL, batch, kind, innerWidth)
@@ -2412,8 +2429,8 @@ func countContent(items []node.Node) int {
 // in even when it does not fit, which only an empty page may take; overflow
 // reports that. A forced break between two blocks, or inside a block, ends
 // the batch there; brk is its keyword, as forced reports it.
-func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPoint, forced func(any) string, trimEnd bool) (batch []node.Node, next int, overflow bool, inner *splitPlan, brk string) {
-	if trimEnd {
+func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPoint, forced func(any) string, trim breakTrim) (batch []node.Node, next int, overflow bool, inner *splitPlan, brk string) {
+	if trim.end && trim.clone {
 		defer func() {
 			if inner == nil && brk == "" && next < len(children) {
 				batch, next = pullBackGrownLine(children, batch, next, room)
@@ -2443,7 +2460,7 @@ func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPo
 		if batchH+ch > room {
 			// A line whose end is trimmed at the break fits by its text, and
 			// the fragment ends after it.
-			if t := lineTrimEnd(children[i]); trimEnd && t > 0 && batchH+ch-t <= room {
+			if t := lineTrimEnd(children[i]); trim.end && t > 0 && batchH+ch-t <= room {
 				return append(batch, children[i]), i + 1, false, nil, ""
 			}
 			if p := cb.planSplit(children[i], room-batchH, forced); p != nil {
@@ -2655,7 +2672,7 @@ func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint, forced func(a
 		hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
 		room -= hv.PaddingTop + hv.BorderTopWidth
 	}
-	batch, next, overflow, inner, brk := cb.fitChildren(children, 0, room, forced, cb.fragmentTrim(vl).end)
+	batch, next, overflow, inner, brk := cb.fitChildren(children, 0, room, forced, cb.fragmentTrim(vl))
 	if overflow || next >= len(children) {
 		return nil
 	}
@@ -2722,9 +2739,9 @@ func (cb *CSSBuilder) cutBlock(p *splitPlan) (node.Node, node.Node) {
 	if r, _ := vl.Attributes[attrSplitRest].(bool); r {
 		kind = fragMiddle
 	}
-	if trim := cb.fragmentTrim(vl); trim != (textBoxTrim{}) {
-		if trim.end {
-			trimFragmentEnd(headItems)
+	if trim := cb.fragmentTrim(vl); trim != (breakTrim{}) {
+		if trim.end && (trim.clone || p.brk == "") {
+			trimFragmentEnd(headItems, trim.clone)
 		}
 		if trim.start {
 			trimFragmentStart(restItems)

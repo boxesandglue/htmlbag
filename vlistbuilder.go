@@ -1018,6 +1018,9 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		return nil, err
 	}
 	trimLines(vl, cb.trims[te])
+	if cb.breakTrims[te] {
+		vl.SetAttribute(attrTrimAtBreak, true)
+	}
 	// Restore the settings stripped before FormatParagraph (and the
 	// SettingPaddingLeft it consumed itself), so a reflow rebuild or a
 	// FormatParagraphTail pass at another page width sees the same input.
