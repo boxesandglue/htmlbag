@@ -264,6 +264,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		}
 
 		te.Items = cb.liftLeadingFloats(te.Items)
+		cb.passTrimDown(te)
 		for i, itm := range te.Items {
 			if band != nil && clearsBand(itm, band) {
 				skipBand(band, "clear")

@@ -138,3 +138,128 @@ func TestTextBoxTrimSplitReflow(t *testing.T) {
 		t.Errorf("the last line after a reflow is %s, want %s", got, want)
 	}
 }
+
+// text-box-trim on a block container trims its first and last formatted
+// line, which sit in its first and last in-flow child, through containers
+// in between. Padding or a border on the child's side ends the trim's reach,
+// as does a table; the container's own padding does not, and a float is
+// passed over (CSS Inline 3, boxesandglue/htmlbag#82).
+func TestTextBoxTrimContainer(t *testing.T) {
+	full := sp("16pt")
+	render := func(html string) []placedLine {
+		return placedLines(renderHTMLPages(t, trimCSS, html))
+	}
+	// The sizes a paragraph's own trims give the first and the last line.
+	trimmedFirst := lineSize(render(`<p style="text-box-trim: trim-start">A<br>x</p>`)[0])
+	trimmedLast := lineSize(render(`<p style="text-box-trim: trim-end">y<br>z</p>`)[1])
+	if trimmedFirst >= full || trimmedLast >= full {
+		t.Fatalf("a paragraph's trims give %s and %s, want less than %s", trimmedFirst, trimmedLast, full)
+	}
+	const pair = `<p>A<br>x</p><p>y<br>z</p>`
+	for _, c := range []struct {
+		name, html string
+		start, end bool
+	}{
+		{"none", `<div>` + pair + `</div>`, false, false},
+		{"trim-both", `<div style="text-box-trim: trim-both">` + pair + `</div>`, true, true},
+		{"trim-start", `<div style="text-box-trim: trim-start">` + pair + `</div>`, true, false},
+		{"trim-end", `<div style="text-box-trim: trim-end">` + pair + `</div>`, false, true},
+		{"through a container", `<div style="text-box-trim: trim-both"><div><p>A<br>x</p></div><div><div><p>y<br>z</p></div></div></div>`, true, true},
+		{"padding-top on the first child", `<div style="text-box-trim: trim-both"><p style="padding-top: 2pt">A<br>x</p><p>y<br>z</p></div>`, false, true},
+		{"merged with the child's own", `<div style="text-box-trim: trim-start"><p>A<br>x</p><p style="text-box-trim: trim-end">y<br>z</p></div>`, true, true},
+		{"after a float", `<div style="text-box-trim: trim-both"><div style="float: right; width: 30pt">Fq</div>` + pair + `</div>`, true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			lines := render(c.html + `<p>B</p>`)
+			var a, z placedLine
+			for _, l := range lines {
+				switch l.text {
+				case "A":
+					a = l
+				case "z":
+					z = l
+				}
+			}
+			want := map[bool]bag.ScaledPoint{false: full, true: trimmedFirst}
+			if got := lineSize(a); got != want[c.start] {
+				t.Errorf("first line %s, want %s (trimmed %t)", got, want[c.start], c.start)
+			}
+			want[true] = trimmedLast
+			if got := lineSize(z); got != want[c.end] {
+				t.Errorf("last line %s, want %s (trimmed %t)", got, want[c.end], c.end)
+			}
+			for _, l := range lines {
+				if (l.text == "x" || l.text == "y" || l.text == "B") && lineSize(l) != full {
+					t.Errorf("line %s is %s, want %s", l.text, lineSize(l), full)
+				}
+			}
+		})
+	}
+}
+
+// A box with a border is one placed unit here, so its trims are measured on
+// its size: the container's own padding and border do not stop the trim,
+// a border on the child holding the last line does.
+func TestTextBoxTrimContainerBorders(t *testing.T) {
+	full := sp("16pt")
+	render := func(html string) []placedLine {
+		return placedLines(renderHTMLPages(t, trimCSS, html+`<p>B</p>`))
+	}
+	trimmedFirst := lineSize(render(`<p style="text-box-trim: trim-start">A<br>x</p>`)[0])
+	trimmedLast := lineSize(render(`<p style="text-box-trim: trim-end">y<br>z</p>`)[1])
+	const pair = `<p>A<br>x</p><p>y<br>z</p>`
+	t.Run("own padding and border", func(t *testing.T) {
+		box := `; padding: 4pt; border: 1pt solid black">` + pair + `</div>`
+		plain := firstLine(t, render(`<div style="`+box), "Axyz")
+		trimmed := firstLine(t, render(`<div style="text-box-trim: trim-both`+box), "Axyz")
+		if got, want := lineSize(trimmed), lineSize(plain)-(full-trimmedFirst)-(full-trimmedLast); got != want {
+			t.Errorf("the box is %s, want %s", got, want)
+		}
+	})
+	t.Run("border-bottom on the last child", func(t *testing.T) {
+		lines := render(`<div style="text-box-trim: trim-both"><p>A<br>x</p><div style="border-bottom: 1pt solid black"><p>y<br>z</p></div></div>`)
+		if got := lineSize(firstLine(t, lines, "A")); got != trimmedFirst {
+			t.Errorf("first line %s, want %s", got, trimmedFirst)
+		}
+		if got, want := lineSize(firstLine(t, lines, "yz")), 2*full; got != want {
+			t.Errorf("the bordered child is %s, want %s untrimmed", got, want)
+		}
+	})
+}
+
+// A trimmed container moves the block after it up by its trims: they are
+// taken off its box, not only off the lines.
+func TestTextBoxTrimContainerHeight(t *testing.T) {
+	render := func(style string) []placedLine {
+		return placedLines(renderHTMLPages(t, trimCSS, `<div style="`+style+`"><p>A<br>x</p><p>y<br>z</p></div><p>B</p>`))
+	}
+	plain, trimmed := render(""), render("text-box-trim: trim-both")
+	var shift bag.ScaledPoint
+	for i := range 4 {
+		shift += lineSize(plain[i]) - lineSize(trimmed[i])
+	}
+	if shift <= 0 {
+		t.Fatalf("the trims take %s off the lines, want more than 0", shift)
+	}
+	b, b0 := firstLine(t, trimmed, "B"), firstLine(t, plain, "B")
+	if got := b.top - b0.top; got != shift {
+		t.Errorf("B moves up by %s, want %s", got, shift)
+	}
+}
+
+// A table at the container's start holds no formatted line of it: the trim
+// does not reach past it to the paragraph below, nor into its cells.
+func TestTextBoxTrimContainerTableFirst(t *testing.T) {
+	render := func(style string) []placedLine {
+		return placedLines(renderHTMLPages(t, trimCSS, `<div style="`+style+`"><table><tr><td><p>T</p></td></tr></table><p>A<br>x</p></div>`))
+	}
+	plain, trimmed := render(""), render("text-box-trim: trim-start")
+	if len(plain) != len(trimmed) {
+		t.Fatalf("%d lines trimmed, %d without", len(trimmed), len(plain))
+	}
+	for i := range plain {
+		if got, want := lineSize(trimmed[i]), lineSize(plain[i]); got != want {
+			t.Errorf("line %s is %s, want %s as without the trim", trimmed[i].text, got, want)
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/node"
+	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
 // textBoxTrim is CSS Inline 3 text-box-trim: whether a block's first line
@@ -95,4 +96,70 @@ func trimLines(vl *node.VList, trim textBoxTrim) {
 		packed := node.Vpack(vl.List)
 		vl.Height, vl.Depth = packed.Height, packed.Depth
 	}
+}
+
+// passTrimDown hands the text-box-trim of a block container on to the block
+// that holds its first or last formatted line (CSS Inline 3): its first or
+// last in-flow child, and from a container on through the same call when
+// that one is built. Padding or a border on the child's side lies between
+// the container and the line and ends the trim's reach there. A table or a
+// pre-rendered box holds no formatted line of the container: it takes the
+// trim, which has no effect on it, and the trim reaches no further. Floats
+// are not in flow and are passed over.
+func (cb *CSSBuilder) passTrimDown(te *frontend.Text) {
+	trim := cb.trims[te]
+	if trim.start {
+		if c := edgeChild(te.Items, false); c != nil && !hasEdgeSpace(c.Settings, frontend.SettingPaddingTop, frontend.SettingBorderTopWidth) {
+			cb.addTrim(c, textBoxTrim{start: true})
+		}
+	}
+	if trim.end {
+		if c := edgeChild(te.Items, true); c != nil && !hasEdgeSpace(c.Settings, frontend.SettingPaddingBottom, frontend.SettingBorderBottomWidth) {
+			cb.addTrim(c, textBoxTrim{end: true})
+		}
+	}
+}
+
+// edgeChild returns the first in-flow block among items, the last one when
+// last is set, nil when there is none.
+func edgeChild(items []any, last bool) *frontend.Text {
+	for i := range items {
+		if last {
+			i = len(items) - 1 - i
+		}
+		t, ok := items[i].(*frontend.Text)
+		if !ok {
+			continue
+		}
+		if _, hasTag := t.Settings[frontend.SettingDebug]; !hasTag && isWhitespaceOnly(t) {
+			continue
+		}
+		if _, _, isFloat := floatSideOf(t); isFloat {
+			continue
+		}
+		return t
+	}
+	return nil
+}
+
+// hasEdgeSpace reports whether settings give a block padding or a border on
+// one side, named by its padding and border width keys.
+func hasEdgeSpace(settings frontend.TypesettingSettings, padding, border frontend.SettingType) bool {
+	for _, k := range []frontend.SettingType{padding, border} {
+		if v, ok := settings[k].(bag.ScaledPoint); ok && v != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// addTrim adds trim to what te trims and has bag record the trims on its
+// lines.
+func (cb *CSSBuilder) addTrim(te *frontend.Text, trim textBoxTrim) {
+	if cb.trims == nil {
+		cb.trims = map[*frontend.Text]textBoxTrim{}
+	}
+	cur := cb.trims[te]
+	cb.trims[te] = textBoxTrim{start: cur.start || trim.start, end: cur.end || trim.end}
+	te.Settings[frontend.SettingRecordLineTrims] = true
 }
