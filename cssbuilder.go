@@ -258,6 +258,9 @@ type CSSBuilder struct {
 	autoMargins map[*frontend.Text]autoMargin
 	// trims holds the Texts of blocks with text-box-trim (trimLines).
 	trims map[*frontend.Text]textBoxTrim
+	// ownTrims holds the text-box-trim a block sets itself, without what a
+	// container hands on to it (passTrimDown); fragmentTrim reads it.
+	ownTrims map[*frontend.Text]textBoxTrim
 	// clones holds the Texts of blocks with box-decoration-break: clone.
 	clones map[*frontend.Text]bool
 	// liftedFloats maps a float lifted from the start of a paragraph
@@ -2195,10 +2198,14 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 	}
 
 	fl := fragLinesOf(blockVL)
+	trim := cb.fragmentTrim(blockVL)
 	i := 0
 	isFirst := true
 	for i < len(children) {
 		avail := availOnPage()
+		if trim.start && !isFirst {
+			trimFragmentStart(children[i:])
+		}
 
 		// Try to fit all remaining children with bottom-fragment overhead.
 		topOverhead := bag.ScaledPoint(0)
@@ -2233,7 +2240,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		var overflow bool
 		var inner *splitPlan
 		var brk string
-		batch, i, overflow, inner, brk = cb.fitChildren(children, i, avail-topOverhead-cutOverhead, fc.forcedKeyword)
+		batch, i, overflow, inner, brk = cb.fitChildren(children, i, avail-topOverhead-cutOverhead, fc.forcedKeyword, trim.end)
 		// A paragraph keeps orphans and widows lines (CSS Fragmentation 3
 		// §4.4); a container cuts between its blocks, or through one, as
 		// long as something goes before the cut and the cut does not fall
@@ -2325,6 +2332,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			}
 			room = avail - topOverhead - bottomOverhead
 		}
+		if trim.end && i < len(children) {
+			trimFragmentEnd(batch)
+		}
 		cb.endOverhangAt(batch, room)
 		wrapped, h := cb.buildFragment(blockVL, batch, kind, innerWidth)
 		stampFragment(wrapped, blockVL)
@@ -2402,7 +2412,14 @@ func countContent(items []node.Node) int {
 // in even when it does not fit, which only an empty page may take; overflow
 // reports that. A forced break between two blocks, or inside a block, ends
 // the batch there; brk is its keyword, as forced reports it.
-func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPoint, forced func(any) string) (batch []node.Node, next int, overflow bool, inner *splitPlan, brk string) {
+func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPoint, forced func(any) string, trimEnd bool) (batch []node.Node, next int, overflow bool, inner *splitPlan, brk string) {
+	if trimEnd {
+		defer func() {
+			if inner == nil && brk == "" && next < len(children) {
+				batch, next = pullBackGrownLine(children, batch, next, room)
+			}
+		}()
+	}
 	var batchH bag.ScaledPoint
 	var last node.Node
 	for ; i < len(children); i++ {
@@ -2424,6 +2441,11 @@ func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPo
 			ch = max(room-batchH, 0)
 		}
 		if batchH+ch > room {
+			// A line whose end is trimmed at the break fits by its text, and
+			// the fragment ends after it.
+			if t := lineTrimEnd(children[i]); trimEnd && t > 0 && batchH+ch-t <= room {
+				return append(batch, children[i]), i + 1, false, nil, ""
+			}
 			if p := cb.planSplit(children[i], room-batchH, forced); p != nil {
 				return batch, i, false, p, p.brk
 			}
@@ -2633,7 +2655,7 @@ func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint, forced func(a
 		hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
 		room -= hv.PaddingTop + hv.BorderTopWidth
 	}
-	batch, next, overflow, inner, brk := cb.fitChildren(children, 0, room, forced)
+	batch, next, overflow, inner, brk := cb.fitChildren(children, 0, room, forced, cb.fragmentTrim(vl).end)
 	if overflow || next >= len(children) {
 		return nil
 	}
@@ -2699,6 +2721,14 @@ func (cb *CSSBuilder) cutBlock(p *splitPlan) (node.Node, node.Node) {
 	kind := fragTop
 	if r, _ := vl.Attributes[attrSplitRest].(bool); r {
 		kind = fragMiddle
+	}
+	if trim := cb.fragmentTrim(vl); trim != (textBoxTrim{}) {
+		if trim.end {
+			trimFragmentEnd(headItems)
+		}
+		if trim.start {
+			trimFragmentStart(restItems)
+		}
 	}
 	// The head is placed now; fitChildren may have weighed an overhang in it
 	// as the room left.

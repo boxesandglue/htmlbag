@@ -1791,6 +1791,10 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			cb.trims = map[*frontend.Text]textBoxTrim{}
 		}
 		cb.trims[newte] = styles.textBoxTrim
+		if cb.ownTrims == nil {
+			cb.ownTrims = map[*frontend.Text]textBoxTrim{}
+		}
+		cb.ownTrims[newte] = styles.textBoxTrim
 		newte.Settings[frontend.SettingRecordLineTrims] = true
 	}
 	if styles.decorationClone {

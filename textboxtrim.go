@@ -86,10 +86,12 @@ func trimLines(vl *node.VList, trim textBoxTrim) {
 	changed := false
 	if t, ok := first.Attributes[node.LineTrimStart].(bag.ScaledPoint); ok && trim.start {
 		first.Height -= t
+		first.Attributes[attrTrimmedStart] = true
 		changed = true
 	}
 	if t, ok := last.Attributes[node.LineTrimEnd].(bag.ScaledPoint); ok && trim.end {
 		last.Depth -= t
+		last.Attributes[attrTrimmedEnd] = true
 		changed = true
 	}
 	if changed {
@@ -162,4 +164,99 @@ func (cb *CSSBuilder) addTrim(te *frontend.Text, trim textBoxTrim) {
 	cur := cb.trims[te]
 	cb.trims[te] = textBoxTrim{start: cur.start || trim.start, end: cur.end || trim.end}
 	te.Settings[frontend.SettingRecordLineTrims] = true
+}
+
+// fragmentTrim is the text-box-trim every fragment of the split leaf block
+// vl takes at a break: under box-decoration-break: clone each fragment is
+// trimmed, its last line at its end and its first at its start. Under slice
+// it is none, as only the block's own first and last line are (trimLines).
+// A trim handed down by a container is the container's first or last line
+// only, not every fragment's.
+func (cb *CSSBuilder) fragmentTrim(vl *node.VList) textBoxTrim {
+	if _, _, clone := decorationClone(vl); !clone {
+		return textBoxTrim{}
+	}
+	te, _ := vl.Attributes["_splittableTe"].(*frontend.Text)
+	return cb.ownTrims[te]
+}
+
+// lineTrimEnd is the trim bag recorded at the end of n, a line, or 0 when
+// it is not a line or its end is trimmed already.
+func lineTrimEnd(n node.Node) bag.ScaledPoint {
+	hl, ok := n.(*node.HList)
+	if !ok {
+		return 0
+	}
+	if done, _ := hl.Attributes[attrTrimmedEnd].(bool); done {
+		return 0
+	}
+	t, _ := hl.Attributes[node.LineTrimEnd].(bag.ScaledPoint)
+	return t
+}
+
+// attrTrimmedStart and attrTrimmedEnd mark a line whose start or end is
+// trimmed already, so it is not trimmed twice.
+const (
+	attrTrimmedStart = "_trimmedStart"
+	attrTrimmedEnd   = "_trimmedEnd"
+)
+
+// trimFragmentStart trims the start of the first line of items, the start
+// of a fragment after a break, once.
+func trimFragmentStart(items []node.Node) {
+	for _, n := range items {
+		hl, ok := n.(*node.HList)
+		if !ok {
+			if isContentNode(n) {
+				return
+			}
+			continue
+		}
+		if done, _ := hl.Attributes[attrTrimmedStart].(bool); done {
+			return
+		}
+		if t, ok := hl.Attributes[node.LineTrimStart].(bag.ScaledPoint); ok {
+			hl.Height -= t
+			hl.Attributes[attrTrimmedStart] = true
+		}
+		return
+	}
+}
+
+// trimFragmentEnd trims the end of the last line of items, the end of a
+// fragment before a break.
+func trimFragmentEnd(items []node.Node) {
+	for j := len(items) - 1; j >= 0; j-- {
+		hl, ok := items[j].(*node.HList)
+		if !ok {
+			if isContentNode(items[j]) {
+				return
+			}
+			continue
+		}
+		if t := lineTrimEnd(hl); t != 0 {
+			hl.Depth -= t
+			hl.Attributes[attrTrimmedEnd] = true
+		}
+		return
+	}
+}
+
+// pullBackGrownLine moves the break before the last line of batch while that
+// line, trimmed at the break by a negative amount (lines set tighter than
+// the font's content area), grows past room.
+func pullBackGrownLine(children, batch []node.Node, next int, room bag.ScaledPoint) ([]node.Node, int) {
+	for countContent(batch) > 1 {
+		j := len(batch) - 1
+		for j >= 0 && !isContentNode(batch[j]) {
+			j--
+		}
+		t := lineTrimEnd(batch[j])
+		if t >= 0 || childrenHeight(batch[:j+1])-t <= room {
+			break
+		}
+		next -= len(batch) - j
+		batch = batch[:j]
+	}
+	return batch, next
 }
