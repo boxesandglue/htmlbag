@@ -1750,10 +1750,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		}
 
 		// With -bag-text-box-trim-at-break, a block whose last line fits by
-		// its text ends at the break with that line trimmed.
-		if t := blockTrimAtBreak(cur); t > 0 && trialPageHeight(incoming, h) > contentArea && trialPageHeight(incoming, h-t) <= contentArea {
-			trimBlockAtBreak(cur)
-			h = vlistNodeHeight(cur)
+		// its text fits here, but is trimmed only once it stays: a
+		// break-after: avoid chain can still move it on, to stand mid-page.
+		fit := h
+		if t := blockTrimAtBreak(cur); t > 0 && trialPageHeight(incoming, h-t) <= contentArea {
+			fit = h - t
 		}
 
 		// Splittable block (<pre>, block container with bg/border) that's
@@ -1766,7 +1767,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		if vlS, ok := cur.(*node.VList); ok && vlS.Attributes != nil {
 			if isSplittable, _ := vlS.Attributes["_splittable"].(bool); isSplittable {
 				keepWhole := avoidBreakInside(vlS) && h <= contentArea
-				if (trialPageHeight(incoming, h) > contentArea && !keepWhole) || forcedInside(splitChildren(vlS), fc.forcedKeyword) {
+				if (trialPageHeight(incoming, fit) > contentArea && !keepWhole) || forcedInside(splitChildren(vlS), fc.forcedKeyword) {
 					// Commit incoming inserts so outputBlockSplit's
 					// availOnPage sees the correct float/footnote
 					// reservations. Don't ship pageBuf here — the splitter
@@ -1857,7 +1858,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			}
 		}
 
-		if trialPageHeight(incoming, h) > contentArea && fc.holdsContent(cb) {
+		if trialPageHeight(incoming, fit) > contentArea && fc.holdsContent(cb) {
 			if err := fc.moveOn(cb, cur); err != nil {
 				return -1, nil, err
 			}
@@ -1877,6 +1878,12 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		// collapses it with MarginBefore and weighs cur again.
 		if fc.top == topKept && fc.regionEmpty(cb) {
 			continue
+		}
+
+		// cur stays here: trim it if it fits only by its text.
+		if t := blockTrimAtBreak(cur); t > 0 && trialPageHeight(incoming, h) > contentArea && trialPageHeight(incoming, h-t) <= contentArea {
+			trimBlockAtBreak(cur)
+			h = vlistNodeHeight(cur)
 		}
 
 		if len(incoming) > 0 {

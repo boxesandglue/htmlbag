@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -146,4 +147,36 @@ func TestTrimAtBreakUnderClone(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A block whose last line fits by its text but that break-after: avoid
+// moves on with the block after it is trimmed only where it stays: on the
+// next page it stands mid-page, untrimmed, as without the property. Without
+// break-after: avoid it stays, trimmed.
+func TestTrimAtBreakMovedOn(t *testing.T) {
+	for _, c := range []struct {
+		name, body string
+	}{
+		{"one line", `<p>` + charLines("A", 9) + `</p><p style="%s">B</p><p>` + charLines("C", 3) + `</p>`},
+		{"three lines", `<p>` + charLines("A", 7) + `</p><p style="%s">` + charLines("B", 3) + `</p><p>` + charLines("C", 3) + `</p>`},
+		{"float after", `<p>` + charLines("A", 9) + `</p><p style="%s">B</p><div style="float: left; width: 40pt; height: 20pt"></div><p>` + charLines("C", 3) + `</p>`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			eachTarget(t, func(t *testing.T, regions bool) {
+				const avoid = "break-after: avoid"
+				want := trimFragments(t, trimCSS, fmt.Sprintf(c.body, avoid), regions)
+				got := trimFragments(t, trimCSS, fmt.Sprintf(c.body, trimAtBreak+"; "+avoid), regions)
+				if len(got) < 2 || got[1][0].text != "B" {
+					t.Fatalf("lines %v, want B to start the second fragment", fragTexts(got))
+				}
+				if fmt.Sprint(got) != fmt.Sprint(want) {
+					t.Errorf("lines %v, want them as without the property, %v", got, want)
+				}
+				stays := trimFragments(t, trimCSS, fmt.Sprintf(c.body, trimAtBreak), regions)
+				if last := stays[0][len(stays[0])-1]; !strings.HasPrefix(last.text, "B") && last.text != "x" || downSize(last) >= sp("16pt") {
+					t.Errorf("without break-after: avoid the first fragment ends %q, %s, want B's last line trimmed", last.text, downSize(last))
+				}
+			})
+		})
+	}
 }
