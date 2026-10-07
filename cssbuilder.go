@@ -1502,9 +1502,6 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if _, _, clone := decorationClone(inner); clone || cb.fragmentTrim(inner) != (breakTrim{}) {
 				break
 			}
-			if at, _ := inner.Attributes[attrTrimAtBreak].(bool); at {
-				break
-			}
 		}
 		shiftChildren(inner)
 		propagateInsertsAttr(inner, inner.List)
