@@ -180,3 +180,18 @@ func TestTrimAtBreakMovedOn(t *testing.T) {
 		})
 	}
 }
+
+// The last fragment of a split block, when it fits only by its text, ends
+// with its last line trimmed inside the region: of twenty lines, the first
+// region holds ten and the second the other ten.
+func TestTrimAtBreakLastFragment(t *testing.T) {
+	eachTarget(t, func(t *testing.T, regions bool) {
+		frags := trimFragments(t, trimCSS, `<p style="`+trimAtBreak+`">`+charLines("A", 20)+`</p>`, regions)
+		if len(frags) != 2 || len(frags[1]) != 10 {
+			t.Fatalf("lines %v, want ten in each of two fragments", fragTexts(frags))
+		}
+		if last := frags[1][9]; last.bottom > sp("158pt") || downSize(last) >= sp("16pt") {
+			t.Errorf("the block's last line is %s and ends %s down, want it trimmed inside 158pt", downSize(last), last.bottom)
+		}
+	})
+}
