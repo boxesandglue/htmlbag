@@ -560,6 +560,10 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 		}
 	}
 
+	// A cell is a block container: its text-box-trim reaches the first and
+	// last line through its contents, as on the page.
+	cb.passTrimDown(te)
+
 	var anchors []int
 	for _, itm := range te.Items {
 		switch t := itm.(type) {
@@ -614,6 +618,9 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 				box := frontend.NewText()
 				box.Settings[frontend.SettingBox] = true
 				box.Items = []any{p}
+				if trim := cb.trims[t]; trim != (textBoxTrim{}) {
+					cb.addTrim(p, trim)
+				}
 				t = box
 			}
 			// Anything but a box reaches frontend as a Text and is formatted
@@ -667,6 +674,21 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 				td.Contents = append(td.Contents, frontend.FormatToVList(func(wd bag.ScaledPoint) (*node.VList, error) {
 					resolveDeferredSizing(tCaptured.Items, wd)
 					vl, _, err := cb.frontend.FormatParagraph(tCaptured, wd)
+					if err == nil {
+						trimLines(vl, cb.trims[tCaptured])
+					}
+					return vl, err
+				}))
+			} else if trim := cb.trims[t]; trim != (textBoxTrim{}) {
+				// frontend formats a plain Text in the cell, where nothing
+				// trims its lines. Format it here, at the width the table
+				// settles on, and trim it as a paragraph on the page is.
+				tCaptured := t
+				td.Contents = append(td.Contents, frontend.FormatToVList(func(wd bag.ScaledPoint) (*node.VList, error) {
+					vl, _, err := cb.frontend.FormatParagraph(tCaptured, wd)
+					if err == nil {
+						trimLines(vl, trim)
+					}
 					return vl, err
 				}))
 			} else {

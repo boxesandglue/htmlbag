@@ -109,6 +109,11 @@ func trimLines(vl *node.VList, trim textBoxTrim) {
 // trim, which has no effect on it, and the trim reaches no further. Floats
 // are not in flow and are passed over.
 func (cb *CSSBuilder) passTrimDown(te *frontend.Text) {
+	// A table built as a container, as one in a table cell is, passes on
+	// nothing either.
+	if dbg, _ := te.Settings[frontend.SettingDebug].(string); dbg == "table" {
+		return
+	}
 	trim := cb.trims[te]
 	if trim.start {
 		if c := edgeChild(te.Items, false); c != nil && !hasEdgeSpace(c.Settings, frontend.SettingPaddingTop, frontend.SettingBorderTopWidth) {
