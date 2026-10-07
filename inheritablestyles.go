@@ -2878,6 +2878,10 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 						vl.Attributes["alt"] = alt
 					}
 					setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, imgDims, df))
+					if cs.floatSide != "" {
+						vl.Attributes[attrFloat] = cs.floatSide
+						vl.Attributes[attrFloatMargins] = cs.floatMargins()
+					}
 					te.Items = append(te.Items, vl)
 				} else {
 					// Absolute max-width caps eagerly against the
@@ -2904,6 +2908,10 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					}
 					if alt, ok := item.Attributes["alt"]; ok {
 						svgVL.Attributes["alt"] = alt
+					}
+					if cs.floatSide != "" {
+						svgVL.Attributes[attrFloat] = cs.floatSide
+						svgVL.Attributes[attrFloatMargins] = cs.floatMargins()
 					}
 					te.Items = append(te.Items, svgVL)
 				}
