@@ -515,45 +515,35 @@ func (nr *nestingRegions) Next(brk string) (Region, error) {
 	return nr.testRegions.Next(brk)
 }
 
-// Neither FlowText nor OutputPagesFromText runs inside a flow on the same
-// builder, and the flow it was called from goes on unharmed.
-func TestFlowTextRefusesToNest(t *testing.T) {
-	body := `<html><body><p>` + charLines("A", 6) + `</p></body></html>`
-	nested := map[string]func(cb *CSSBuilder, te *frontend.Text) error{
-		"FlowText": func(cb *CSSBuilder, te *frontend.Text) error {
-			return cb.FlowText(te, &testRegions{sizes: []Region{wide("1000pt")}})
-		},
-		"OutputPagesFromText": func(cb *CSSBuilder, te *frontend.Text) error {
-			return cb.OutputPagesFromText(te)
-		},
-	}
-	for name, run := range nested {
-		t.Run("from Regions, "+name, func(t *testing.T) {
-			cb, fe := newFlowBuilder(t, "")
-			te, err := cb.HTMLToText(body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			inner, err := cb.HTMLToText(`<html><body><p>Zq</p></body></html>`)
-			if err != nil {
-				t.Fatal(err)
-			}
-			nr := &nestingRegions{testRegions: testRegions{sizes: []Region{wide("36pt"), wide("1000pt")}}}
-			nr.nested = func() error { return run(cb, inner) }
-			if err := cb.FlowText(te, nr); err != nil {
-				t.Fatalf("FlowText: %v", err)
-			}
-			if nr.nestedErr == nil {
-				t.Errorf("nested %s ran", name)
-			}
-			if len(fe.Doc.Pages) != 0 {
-				t.Errorf("made %d pages", len(fe.Doc.Pages))
-			}
-			if lines := len(boxLines(nr.filled[0])) + len(boxLines(nr.filled[1])); lines != 6 {
-				t.Errorf("placed %d lines, want 6", lines)
-			}
-		})
-	}
+// OutputPagesFromText runs neither inside FlowText nor inside itself, and
+// FlowText not inside OutputPagesFromText: the flow they were called from
+// goes on unharmed.
+func TestFlowTextRefusesToNestInPages(t *testing.T) {
+	t.Run("OutputPagesFromText from Regions", func(t *testing.T) {
+		cb, fe := newFlowBuilder(t, "")
+		te, err := cb.HTMLToText(`<html><body><p>` + charLines("A", 6) + `</p></body></html>`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inner, err := cb.HTMLToText(`<html><body><p>Zq</p></body></html>`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nr := &nestingRegions{testRegions: testRegions{sizes: []Region{wide("36pt"), wide("1000pt")}}}
+		nr.nested = func() error { return cb.OutputPagesFromText(inner) }
+		if err := cb.FlowText(te, nr); err != nil {
+			t.Fatalf("FlowText: %v", err)
+		}
+		if nr.nestedErr == nil {
+			t.Error("nested OutputPagesFromText ran")
+		}
+		if len(fe.Doc.Pages) != 0 {
+			t.Errorf("made %d pages", len(fe.Doc.Pages))
+		}
+		if lines := len(boxLines(nr.filled[0])) + len(boxLines(nr.filled[1])); lines != 6 {
+			t.Errorf("placed %d lines, want 6", lines)
+		}
+	})
 	t.Run("FlowText from a PageInitCallback", func(t *testing.T) {
 		cb, _ := newFlowBuilder(t, "")
 		te, err := cb.HTMLToText(`<html><body><p>` + charLines("A", 20) + `</p></body></html>`)
@@ -580,6 +570,123 @@ func TestFlowTextRefusesToNest(t *testing.T) {
 		// Not flowing any more.
 		if err := cb.FlowText(inner, &testRegions{sizes: []Region{wide("1000pt")}}); err != nil {
 			t.Errorf("FlowText after the pages: %v", err)
+		}
+	})
+}
+
+// nestedFlow returns a nested func for nestingRegions that runs a flow of
+// its own from a Text made while the outer flow runs, as XTS does for a
+// header slate at page creation (speedata/xts#71).
+func nestedFlow(cb *CSSBuilder, inner *testRegions) func() error {
+	return func() error {
+		te, err := cb.HTMLToText(`<html><body><p style="widows: 1; orphans: 1">Zq</p></body></html>`)
+		if err != nil {
+			return err
+		}
+		return cb.FlowText(te, inner)
+	}
+}
+
+// FlowText runs inside another FlowText on the same builder, and the outer
+// flow goes on as without it.
+func TestFlowTextNests(t *testing.T) {
+	cb, fe := newFlowBuilder(t, "")
+	te, err := cb.HTMLToText(`<html><body><p>` + charLines("A", 6) + `</p></body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &testRegions{sizes: []Region{wide("1000pt")}}
+	nr := &nestingRegions{testRegions: testRegions{sizes: []Region{wide("36pt"), wide("1000pt")}}}
+	nr.nested = nestedFlow(cb, inner)
+	if err := cb.FlowText(te, nr); err != nil {
+		t.Fatalf("FlowText: %v", err)
+	}
+	if nr.nestedErr != nil {
+		t.Fatalf("nested FlowText: %v", nr.nestedErr)
+	}
+	if len(inner.filled) != 1 || len(boxLines(inner.filled[0])) != 1 {
+		t.Errorf("the nested flow filled %d regions, want 1 with one line", len(inner.filled))
+	}
+	if len(nr.filled) != 2 {
+		t.Fatalf("the outer flow filled %d regions, want 2", len(nr.filled))
+	}
+	for i, want := range []int{3, 3} {
+		if n := len(boxLines(nr.filled[i])); n != want {
+			t.Errorf("outer region %d holds %d lines, want %d", i+1, n, want)
+		}
+	}
+	if len(fe.Doc.Pages) != 0 {
+		t.Errorf("made %d pages", len(fe.Doc.Pages))
+	}
+	if cb.flowing || cb.callerFlow != nil || cb.fragLines != nil || len(cb.pageBuf) != 0 {
+		t.Errorf("left flowing %v, cursor %v, widows/orphans %v, %d page entries", cb.flowing, cb.callerFlow, cb.fragLines, len(cb.pageBuf))
+	}
+	// Not flowing any more.
+	if err := cb.OutputPagesFromText(te); err != nil {
+		t.Errorf("OutputPagesFromText after the flows: %v", err)
+	}
+}
+
+// What the outer flow builds after a nested flow has run takes the outer
+// flow's state: the blocks after a forced break their widows and orphans,
+// a block rebuilt in a region of another width the page parity of that
+// region.
+func TestFlowTextNestedKeepsTheOuterState(t *testing.T) {
+	r1 := wide("12pt")
+	r1.PageNum = 1
+	t.Run("widows", func(t *testing.T) {
+		cb, _ := newFlowBuilder(t, "")
+		// The blocks after the forced break are built once the flow gets
+		// there, after the nested flow. Region 2 holds five lines: "Yq" and
+		// four of the six below it, of which widows: 4 leaves two.
+		te, err := cb.HTMLToText(`<html><body><p>Zq</p><p style="break-before: page">Yq</p><p style="widows: 4">` + charLines("B", 6) + `</p></body></html>`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nr := &nestingRegions{testRegions: testRegions{sizes: []Region{r1, wide("60pt"), wide("1000pt")}}}
+		nr.nested = nestedFlow(cb, &testRegions{sizes: []Region{wide("1000pt")}})
+		if err := cb.FlowText(te, nr); err != nil {
+			t.Fatalf("FlowText: %v", err)
+		}
+		if nr.nestedErr != nil {
+			t.Fatalf("nested FlowText: %v", nr.nestedErr)
+		}
+		if len(nr.filled) != 3 {
+			t.Fatalf("filled %d regions, want 3", len(nr.filled))
+		}
+		for i, want := range []int{1, 3, 4} {
+			if n := len(boxLines(nr.filled[i])); n != want {
+				t.Errorf("region %d holds %d lines, want %d", i+1, n, want)
+			}
+		}
+	})
+	t.Run("page parity", func(t *testing.T) {
+		cb, _ := newFlowBuilder(t, "")
+		// Region 2 is wider than region 1, so the block with the float is
+		// built again there, after the nested flow has run. It lies on a
+		// left page, so the inside float sits at the right edge and the
+		// lines beside it are not indented. Without the outer cursor, the
+		// parity would be the document's first page, a right one.
+		te, err := cb.HTMLToText(`<html><body><p>Zq</p><div><div style="float: inside; width: 60pt; height: 40pt">Fq</div><p>` + strings.Repeat("alpha beta ", 30) + `</p></div></body></html>`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nr := &nestingRegions{testRegions: testRegions{sizes: []Region{r1, {Width: sp("180pt"), Height: sp("1000pt"), PageNum: 2}}}}
+		nr.nested = nestedFlow(cb, &testRegions{sizes: []Region{wide("1000pt")}})
+		if err := cb.FlowText(te, nr); err != nil {
+			t.Fatalf("FlowText: %v", err)
+		}
+		if nr.nestedErr != nil {
+			t.Fatalf("nested FlowText: %v", nr.nestedErr)
+		}
+		if len(nr.filled) != 2 {
+			t.Fatalf("filled %d regions, want 2", len(nr.filled))
+		}
+		for _, ind := range lineIndents(nr.filled[1].Box) {
+			if ind > 0 {
+				t.Errorf("a line beside the float is indented by %s, want the float on the right", ind)
+				break
+			}
 		}
 	})
 }

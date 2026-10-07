@@ -119,28 +119,29 @@ type Fragment struct {
 // OutputPagesFromText, that includes the widows and orphans HTMLToText
 // recorded, so each Text goes to FlowText before the next HTMLToText.
 //
-// FlowText returns an error when it is called while it or
-// OutputPagesFromText is running on the same builder, such as from a method
-// of r.
+// FlowText may run inside another FlowText on the same builder, such as from
+// a method of r that lays out a header with a flow of its own: the outer
+// flow goes on as before once the inner one returns, and the inner Text may
+// come from an HTMLToText made while the outer flow runs. FlowText returns
+// an error when it is called while OutputPagesFromText is running on the
+// same builder.
 func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 	if r == nil {
 		return errors.New("htmlbag: FlowText needs regions")
 	}
-	done, err := cb.startFlow()
-	if err != nil {
-		return err
+	if cb.flowing && cb.callerFlow == nil {
+		return errors.New("htmlbag: FlowText cannot run while OutputPagesFromText is running on this builder")
 	}
-	defer done()
+	outer := cb.takeFlowState()
+	defer cb.restoreFlowState(outer)
 	saved := cb.takePageState()
 	defer func() {
-		cb.fragLines = nil
 		cb.reflowRebuild = false
 		cb.restorePageState(saved)
 	}()
 	cb.dropPageLevelContent()
 	fc := &flowCursor{regions: &callerRegions{cb: cb, r: r}, caller: true}
 	cb.callerFlow = fc
-	defer func() { cb.callerFlow = nil }()
 	marginAfter, err := cb.flowText(te, fc)
 	if err != nil {
 		return err
@@ -156,6 +157,36 @@ func (cb *CSSBuilder) startFlow() (done func(), err error) {
 	}
 	cb.flowing = true
 	return func() { cb.flowing = false }, nil
+}
+
+// flowState is the part of the builder a FlowText keeps while it runs. An
+// outer flow reads it again after an inner one has returned: the widows and
+// orphans for the blocks it builds after a forced break, its cursor for the
+// page parity of a block it builds again in a region of another width.
+type flowState struct {
+	flowing    bool
+	callerFlow *flowCursor
+	fragLines  map[*frontend.Text]fragLines
+}
+
+// takeFlowState marks the builder as flowing and returns the state of the
+// flow it runs in, if any, for restoreFlowState. The widows and orphans stay
+// in place: those of the Text about to flow are among them.
+func (cb *CSSBuilder) takeFlowState() flowState {
+	s := flowState{cb.flowing, cb.callerFlow, cb.fragLines}
+	cb.flowing = true
+	return s
+}
+
+// restoreFlowState puts back the state of the outer flow, or leaves the
+// builder without one: the widows and orphans of the Text that ran go with
+// it, unless an outer flow still needs the map they are in.
+func (cb *CSSBuilder) restoreFlowState(s flowState) {
+	cb.flowing, cb.callerFlow = s.flowing, s.callerFlow
+	cb.fragLines = nil
+	if s.flowing {
+		cb.fragLines = s.fragLines
+	}
 }
 
 // pageState is the part of the builder that holds the page being filled.
