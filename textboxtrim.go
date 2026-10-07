@@ -171,18 +171,65 @@ func (cb *CSSBuilder) addTrim(te *frontend.Text, trim textBoxTrim) {
 	te.Settings[frontend.SettingRecordLineTrims] = true
 }
 
-// fragmentTrim is the text-box-trim every fragment of the split leaf block
-// vl takes at a break: under box-decoration-break: clone each fragment is
-// trimmed, its last line at its end and its first at its start. Under slice
-// it is none, as only the block's own first and last line are (trimLines).
-// A trim handed down by a container is the container's first or last line
-// only, not every fragment's.
-func (cb *CSSBuilder) fragmentTrim(vl *node.VList) textBoxTrim {
-	if _, _, clone := decorationClone(vl); !clone {
-		return textBoxTrim{}
-	}
+// breakTrim is how the lines of a split leaf block are trimmed at a break.
+type breakTrim struct {
+	start, end bool
+	// clone is text-box-trim under box-decoration-break: clone, where every
+	// fragment is trimmed, at any break, and a negative trim grows the line.
+	// Otherwise it is -bag-text-box-trim-at-break: only the end, only at an
+	// unforced break, and only a positive trim, which gains room.
+	clone bool
+}
+
+// fragmentTrim is the trim the fragments of the split leaf block vl take at
+// a break: under box-decoration-break: clone its text-box-trim, as each
+// fragment is trimmed, its last line at its end and its first at its start;
+// else the end of the last line before an unforced break with
+// -bag-text-box-trim-at-break. Under slice, text-box-trim alone trims only
+// the block's own first and last line (trimLines). A text-box-trim handed
+// down by a container is the container's first or last line only, not every
+// fragment's.
+func (cb *CSSBuilder) fragmentTrim(vl *node.VList) breakTrim {
 	te, _ := vl.Attributes["_splittableTe"].(*frontend.Text)
-	return cb.ownTrims[te]
+	if te == nil {
+		return breakTrim{}
+	}
+	if _, _, clone := decorationClone(vl); clone && cb.ownTrims[te] != (textBoxTrim{}) {
+		t := cb.ownTrims[te]
+		return breakTrim{start: t.start, end: t.end, clone: true}
+	}
+	if cb.breakTrims[te] {
+		return breakTrim{end: true}
+	}
+	return breakTrim{}
+}
+
+// attrTrimAtBreak marks a block without a border or background that has
+// -bag-text-box-trim-at-break.
+const attrTrimAtBreak = "_trimAtBreak"
+
+// blockTrimAtBreak is the amount the block n gains when its last line, at
+// the end of the region, is trimmed for -bag-text-box-trim-at-break, or 0.
+// Only a block whose last line ends it can gain: padding or a border below
+// keeps the line off the break.
+func blockTrimAtBreak(n node.Node) bag.ScaledPoint {
+	vl, ok := n.(*node.VList)
+	if !ok || vl.Attributes == nil {
+		return 0
+	}
+	if at, _ := vl.Attributes[attrTrimAtBreak].(bool); !at || vl.List == nil {
+		return 0
+	}
+	return max(lineTrimEnd(node.Tail(vl.List)), 0)
+}
+
+// trimBlockAtBreak trims the last line of the block n at its end, for
+// blockTrimAtBreak.
+func trimBlockAtBreak(n node.Node) {
+	vl := n.(*node.VList)
+	trimFragmentEnd([]node.Node{node.Tail(vl.List)}, false)
+	packed := node.Vpack(vl.List)
+	vl.Height, vl.Depth = packed.Height, packed.Depth
 }
 
 // lineTrimEnd is the trim bag recorded at the end of n, a line, or 0 when
@@ -229,8 +276,8 @@ func trimFragmentStart(items []node.Node) {
 }
 
 // trimFragmentEnd trims the end of the last line of items, the end of a
-// fragment before a break.
-func trimFragmentEnd(items []node.Node) {
+// fragment before a break. A negative trim grows the line only with grow.
+func trimFragmentEnd(items []node.Node, grow bool) {
 	for j := len(items) - 1; j >= 0; j-- {
 		hl, ok := items[j].(*node.HList)
 		if !ok {
@@ -239,7 +286,7 @@ func trimFragmentEnd(items []node.Node) {
 			}
 			continue
 		}
-		if t := lineTrimEnd(hl); t != 0 {
+		if t := lineTrimEnd(hl); t > 0 || t < 0 && grow {
 			hl.Depth -= t
 			hl.Attributes[attrTrimmedEnd] = true
 		}
