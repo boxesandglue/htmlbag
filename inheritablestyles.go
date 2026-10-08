@@ -732,7 +732,12 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// As with borders, only solid is drawn.
 			ih.multicol.ruleSolid = v == "solid"
 		case "column-rule-color":
-			ih.multicol.ruleColor = df.GetColor(v)
+			// currentcolor, the initial value, is the element's color,
+			// which Output fills in.
+			ih.multicol.ruleColor = nil
+			if !strings.EqualFold(v, "currentcolor") {
+				ih.multicol.ruleColor = df.GetColor(v)
+			}
 		case "box-decoration-break":
 			switch v {
 			case "slice":
@@ -1842,6 +1847,9 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	if m := styles.multicol; m.count > 1 {
 		if !m.gapSet {
 			m.gap = styles.Fontsize
+		}
+		if m.ruleColor == nil {
+			m.ruleColor = styles.color
 		}
 		m.boxed = styles.BackgroundColor != nil ||
 			styles.BorderTopWidth > 0 || styles.BorderBottomWidth > 0 || styles.BorderLeftWidth > 0 || styles.BorderRightWidth > 0 ||

@@ -1089,7 +1089,7 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 
 	fc := &flowCursor{regions: &pageRegions{cb: cb}}
 	if flow, m := cb.multicolBody(findBody(te)); flow != nil {
-		fc.regions = &columnRegions{cb: cb, count: m.count, gap: m.gap, fillAuto: m.fillAuto, body: flow}
+		fc.regions = &columnRegions{cb: cb, count: m.count, gap: m.gap, fillAuto: m.fillAuto, body: flow, rule: m}
 		fc.columns = true
 		if len(cb.multicols) > 1 {
 			bag.Logger.Warn("column-count is laid out only on body or a direct child of body, other elements are set in one column")
@@ -1104,6 +1104,9 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	}
 	if err := fc.regions.filled(filled{}); err != nil {
 		return err
+	}
+	if cr, ok := fc.regions.(*columnRegions); ok {
+		cr.finish()
 	}
 	if err := cb.BeforeShipout(); err != nil {
 		return err

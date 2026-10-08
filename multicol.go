@@ -3,11 +3,14 @@ package htmlbag
 import (
 	"errors"
 	"maps"
+	"slices"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
+	"github.com/boxesandglue/boxesandglue/frontend/pdfdraw"
 )
 
 // multicol holds the CSS Multi-column Layout properties of an element. None
@@ -126,6 +129,9 @@ type columnRegions struct {
 	fillAuto bool
 	// body is the Text the flow takes its items from.
 	body *frontend.Text
+	// rule is the column-rule drawn between two columns of a row that
+	// both hold content.
+	rule multicol
 
 	// page is the content area of the current page.
 	page region
@@ -133,6 +139,8 @@ type columnRegions struct {
 	// tallest column so far, col the column being filled, from 0.
 	rowTop, rowUsed bag.ScaledPoint
 	col             int
+	// filledCols marks the columns of the row that hold content.
+	filledCols []bool
 	// span is set while a spanner band is filled, spanTop is its top edge
 	// and spanUsed its height once filled. wantSpan tells next what comes:
 	// flowText sets it before every group.
@@ -175,6 +183,7 @@ func (cr *columnRegions) next(brk string) (region, error) {
 		cr.startRow(pg.top)
 		cr.span, cr.spanTop = cr.wantSpan, pg.top
 	case cr.wantSpan && !cr.span:
+		cr.endRow()
 		cr.span = true
 		cr.spanTop = cr.rowTop - cr.rowUsed
 		if forcedPage {
@@ -200,6 +209,7 @@ func (cr *columnRegions) next(brk string) (region, error) {
 	case !forcedPage && cr.col+1 < cr.count:
 		cr.col++
 	default:
+		cr.endRow()
 		if err := cr.newPage(); err != nil {
 			return region{}, err
 		}
@@ -235,6 +245,46 @@ func (cr *columnRegions) startRow(top bag.ScaledPoint) {
 		cr.row++
 	}
 	cr.rowTop, cr.rowUsed, cr.col = top, 0, 0
+	cr.filledCols = make([]bool, cr.count)
+}
+
+// endRow draws the column rule of the row that ends: in the middle of the
+// gap between two columns that both hold content, as high as the tallest
+// column. A trial draws nothing.
+func (cr *columnRegions) endRow() {
+	r := cr.rule
+	if cr.trial || cr.span || !r.ruleSolid || r.ruleWidth <= 0 || cr.rowUsed <= 0 {
+		return
+	}
+	col := r.ruleColor
+	if col == nil {
+		col = cr.cb.frontend.GetColor("black")
+	}
+	n := bag.ScaledPoint(cr.count)
+	width := (cr.page.width - (n-1)*cr.gap) / n
+	for i := 0; i+1 < cr.count; i++ {
+		if !cr.filledCols[i] || !cr.filledCols[i+1] {
+			continue
+		}
+		rule := node.NewRule()
+		rule.Width, rule.Height = r.ruleWidth, cr.rowUsed
+		rule.Pre = pdfdraw.NewStandalone().
+			ColorNonstroking(*col).
+			Rect(0, 0, r.ruleWidth, -cr.rowUsed).
+			Fill().
+			String()
+		vl := node.Vpack(rule)
+		vl.Attributes = node.H{"origin": "column rule", "artifact": document.ArtifactLayout}
+		x := cr.page.left + bag.ScaledPoint(i+1)*width + bag.ScaledPoint(i)*cr.gap + (cr.gap-r.ruleWidth)/2
+		cr.cb.frontend.Doc.CurrentPage.OutputAt(x, cr.rowTop, vl)
+	}
+}
+
+// finish draws the rule of the last row once the flow has ended.
+func (cr *columnRegions) finish() {
+	if cr.started && !cr.span {
+		cr.endRow()
+	}
 }
 
 // current is the region to fill: column col of the current row, or the
@@ -288,6 +338,9 @@ func (cr *columnRegions) filled(filled) error {
 		cr.spanUsed = used
 	} else {
 		cr.rowUsed = max(cr.rowUsed, used)
+		if used > 0 {
+			cr.filledCols[cr.col] = true
+		}
 		if cr.balanced > 0 && cr.row == cr.balanceRow && used > cr.cur.height {
 			cr.tooTall = true
 		}
@@ -342,6 +395,7 @@ func (cb *CSSBuilder) balanceColumns(vl *node.VList, fc *flowCursor, cr *columnR
 // is as it was afterwards.
 func (cb *CSSBuilder) columnTrial(vl *node.VList, fc *flowCursor, cr *columnRegions, balanceRow int, h bag.ScaledPoint) (*columnRegions, bool) {
 	t := *cr
+	t.filledCols = slices.Clone(cr.filledCols)
 	t.trial, t.tooTall, t.row, t.balanceRow, t.balanced = true, false, 0, balanceRow, h
 	if balanceRow < 0 {
 		t.balanced = 0

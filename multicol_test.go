@@ -279,3 +279,42 @@ func TestColumnsOnAChildOfBody(t *testing.T) {
 		}
 	}
 }
+
+// columnRules returns the column rules painted on pg.
+func columnRules(pg *document.Page) []document.Object {
+	var out []document.Object
+	for _, obj := range pg.Objects {
+		if obj.Vlist != nil && obj.Vlist.Attributes["origin"] == "column rule" {
+			out = append(out, obj)
+		}
+	}
+	return out
+}
+
+// A column rule stands in the middle of the gap, as high as the row, and
+// only between two columns that hold content.
+func TestColumnRule(t *testing.T) {
+	var sb strings.Builder
+	for i := 1; i <= 6; i++ {
+		fmt.Fprintf(&sb, "<p>Paragraph %d %s</p>", i, strings.Repeat("word ", 30))
+	}
+	css := columnsCSS + " body { column-rule: 1pt solid red }"
+	pages, _ := renderHTMLPagesCB(t, css, "<html><body>"+sb.String()+"</body></html>")
+	rules := columnRules(pages[0])
+	if len(rules) != 1 {
+		t.Fatalf("%d rules, want 1", len(rules))
+	}
+	// Columns 40mm wide, gap 5mm: the gap is 50mm to 55mm, the rule's
+	// middle at 52.5mm.
+	requireX(t, "the rule", rules[0].X, bag.MustSP("52.5mm")-bag.MustSP("0.5pt"))
+	bottoms := columnBottoms(pages[0])
+	low := min(bottoms[bag.MustSP("10mm")], bottoms[bag.MustSP("55mm")])
+	if d := rules[0].Y - rules[0].Vlist.Height - low; d < -bag.MustSP("0.5pt") || d > bag.MustSP("0.5pt") {
+		t.Errorf("the rule ends at %s, the tallest column at %s", rules[0].Y-rules[0].Vlist.Height, low)
+	}
+
+	pages, _ = renderHTMLPagesCB(t, css+" body { column-fill: auto }", "<html><body><p>Short.</p></body></html>")
+	if n := len(columnRules(pages[0])); n != 0 {
+		t.Errorf("%d rules beside an empty column, want none", n)
+	}
+}
