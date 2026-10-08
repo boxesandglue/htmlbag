@@ -188,6 +188,8 @@ type CSSBuilder struct {
 	strutFonts       map[strutKey]*font.Font
 	warnedLineModels map[string]bool
 	warnedBreakers   map[string]bool
+	// warnedColumns is set once column-count has been warned about.
+	warnedColumns bool
 	// inlineNodes are the nodes InlineNode stands in for, by element.
 	inlineNodes      map[*html.Node]node.Node
 	ElementCallback  ElementCallbackFunc

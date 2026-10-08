@@ -257,6 +257,20 @@ func resolveDeclarations(decls []declaration) StyleMap {
 				set("border-"+loc+"-width", wd)
 				set("border-"+loc+"-color", col)
 			}
+		case "column-rule":
+			wd, sty, col := borderShorthand(decl.value)
+			set("column-rule-width", wd)
+			set("column-rule-style", sty)
+			set("column-rule-color", col)
+		case "columns":
+			// <column-width> || <column-count>: only the count is read, a
+			// width is dropped.
+			set("column-count", textValue("auto"))
+			for _, part := range componentValues(decl.value) {
+				if _, err := strconv.Atoi(part.String()); err == nil {
+					set("column-count", part)
+				}
+			}
 		case "border-radius":
 			for _, lr := range []string{"left", "right"} {
 				for _, tb := range []string{"top", "bottom"} {

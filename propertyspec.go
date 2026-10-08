@@ -127,6 +127,13 @@ var Properties = []PropertySpec{
 	{Name: "page-break-inside", Aliases: []string{"break-inside"}, Values: "`auto`, `avoid`", Example: "page-break-inside: avoid;", Note: "On a table row, `auto` lets the row break across pages; a row without the property stays whole, as with `avoid`", Group: GroupLayout},
 	{Name: "widows", Values: "Positive integer, the default is 2; `1` switches the control off", Example: "widows: 3;", Note: "Counts the lines of a paragraph, a list item or `<pre>`, also inside a container; the blocks of a container are not counted", Group: GroupLayout},
 	{Name: "orphans", Values: "Positive integer, the default is 2; `1` switches the control off", Example: "orphans: 3;", Note: "Counts as `widows` does", Group: GroupLayout},
+	{Name: "column-count", Values: "`auto` (the initial value) or a positive integer", Example: "column-count: 2;", Note: "Not laid out yet: the content is set in one column, with a warning", Group: GroupLayout},
+	{Name: "columns", Values: "Shorthand for `column-width` and `column-count`", Example: "columns: 2;", Note: "Only the count is read, a width is ignored. Not laid out yet, as `column-count`", Group: GroupLayout},
+	{Name: "column-gap", Values: "`normal` (1em, the initial value) or a length", Example: "column-gap: 6mm;", Note: "Not laid out yet, as `column-count`", Group: GroupLayout},
+	{Name: "column-span", Values: "`none` (the initial value), `all`", Example: "column-span: all;", Note: "Not laid out yet, as `column-count`", Group: GroupLayout},
+	{Name: "column-fill", Values: "`balance` (the initial value), `auto`; `balance-all` counts as `balance`", Example: "column-fill: auto;", Note: "Not laid out yet, as `column-count`", Group: GroupLayout},
+	{Name: "column-rule", Values: "Shorthand for `column-rule-width`, `column-rule-style` and `column-rule-color`, as `border`", Example: "column-rule: 0.5pt solid gray;", Note: "As with borders, `solid` is the only style drawn. Not laid out yet, as `column-count`", Group: GroupLayout},
+	{Name: "column-rule-width", Aliases: []string{"column-rule-style", "column-rule-color"}, Values: "As `border-width`, `border-style` and `border-color`", Example: "column-rule-color: #999;", Note: "Not laid out yet, as `column-count`", Group: GroupLayout},
 	{Name: "box-decoration-break", Values: "`slice` (the initial value), `clone`", Example: "box-decoration-break: clone;", Note: "Not inherited. On a block split across pages or regions, `clone` gives every fragment the block's padding and border on both sides, and its background. With `text-box-trim` on a paragraph, every fragment is trimmed. Applies to blocks and block containers; tables and inline boxes are not cloned", Group: GroupLayout},
 
 	// Lists and generated content

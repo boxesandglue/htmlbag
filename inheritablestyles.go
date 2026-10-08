@@ -692,6 +692,47 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			default:
 				bag.Logger.Warn("unknown -bag-text-box-trim-at-break value", "value", v)
 			}
+		case "column-count":
+			switch n, err := strconv.Atoi(strings.TrimSpace(v)); {
+			case v == "auto":
+				ih.multicol.count = 0
+			case err == nil && n > 0:
+				ih.multicol.count = n
+			default:
+				bag.Logger.Warn("column-count needs auto or a positive integer", "value", v)
+			}
+		case "column-gap":
+			if v == "normal" {
+				ih.multicol.gap, ih.multicol.gapSet = 0, false
+			} else {
+				ih.multicol.gap = ParseRelativeSize(v, ih.Fontsize, ih.DefaultFontSize)
+				ih.multicol.gapSet = true
+			}
+		case "column-span":
+			switch v {
+			case "none":
+				ih.multicol.spanAll = false
+			case "all":
+				ih.multicol.spanAll = true
+			default:
+				bag.Logger.Warn("unknown column-span value", "value", v)
+			}
+		case "column-fill":
+			switch v {
+			case "balance", "balance-all":
+				ih.multicol.fillAuto = false
+			case "auto":
+				ih.multicol.fillAuto = true
+			default:
+				bag.Logger.Warn("unknown column-fill value", "value", v)
+			}
+		case "column-rule-width":
+			ih.multicol.ruleWidth = ParseRelativeSize(v, ih.Fontsize, ih.DefaultFontSize)
+		case "column-rule-style":
+			// As with borders, only solid is drawn.
+			ih.multicol.ruleSolid = v == "solid"
+		case "column-rule-color":
+			ih.multicol.ruleColor = df.GetColor(v)
 		case "box-decoration-break":
 			switch v {
 			case "slice":
@@ -1012,6 +1053,8 @@ type FormattingStyles struct {
 	// marginLeftAuto and marginRightAuto are margin-left and margin-right
 	// auto, which take up the room a block's width leaves (autoMargins).
 	marginLeftAuto, marginRightAuto bool
+	// multicol holds the column properties, which are not inherited.
+	multicol multicol
 	// textBoxTrim is text-box-trim, which is not inherited.
 	textBoxTrim        textBoxTrim
 	decorationClone    bool // box-decoration-break: clone, not inherited
@@ -1795,6 +1838,10 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	styles := ss.PushStyles()
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err
+	}
+	if styles.multicol.count > 1 && !cb.warnedColumns {
+		cb.warnedColumns = true
+		bag.Logger.Warn("column-count is not laid out yet, the content is set in one column", "element", item.Data, "column-count", styles.multicol.count)
 	}
 	if styles.textBoxTrim != (textBoxTrim{}) {
 		if cb.trims == nil {
