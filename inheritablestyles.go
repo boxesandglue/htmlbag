@@ -2329,7 +2329,9 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				// will later replace the sentinel with a marker call and
 				// format the body as a standalone paragraph.
 				fnText := frontend.NewText()
-				cb.applySettings(fnText.Settings, styles)
+				if err := cb.applyFootnoteSettings(fnText.Settings, itm, ss, df, styles.Fontsize); err != nil {
+					return nil, err
+				}
 				if err := collectHorizontalNodes(cb, fnText, itm, ss, ss.CurrentStyle().Fontsize, ss.CurrentStyle().DefaultFontSize, df, anchorPages); err != nil {
 					return nil, err
 				}
@@ -2586,6 +2588,24 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue Styl
 		buf.WriteString(evaluateContentWithStack(single, ss, anchorPages, cb.anchorTexts, cb.anchorCounters, attrLookup))
 	}
 	flushString(buf.String())
+}
+
+// applyFootnoteSettings puts the styles of fn, a footnote element, into the
+// settings of the footnote's body. An inline element has no Text of its own,
+// so the body is a Text made for it, which got the styles of the element
+// around the footnote: the number that formatFootnoteBody puts in front of
+// the note was set with those, at the paragraph's size next to a note made
+// smaller in CSS. parentSize is the font size relative sizes of fn resolve
+// against.
+func (cb *CSSBuilder) applyFootnoteSettings(settings frontend.TypesettingSettings, fn *HTMLItem, ss StylesStack, df *frontend.Document, parentSize bag.ScaledPoint) error {
+	sty := ss.PushStyles()
+	defer ss.PopStyles()
+	if err := StylesToStyles(sty, fn.Styles, df, parentSize); err != nil {
+		return err
+	}
+	applyLangAndHyphens(sty, fn.Attributes, df)
+	cb.applySettings(settings, sty)
+	return nil
 }
 
 // dropElementSentinels removes the sentinels that describe an element, not
@@ -3164,6 +3184,11 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			cb.applySettings(cld.Settings, sty)
 			for k, v := range childSettings {
 				cld.Settings[k] = v
+			}
+			if isFootnoteElement(effective) {
+				if err := cb.applyFootnoteSettings(cld.Settings, effective, ss, df, sty.Fontsize); err != nil {
+					return err
+				}
 			}
 			// Descend with this element's resolved size (sty.Fontsize), not
 			// the size this frame was entered with: relative values on the
