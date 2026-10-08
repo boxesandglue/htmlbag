@@ -1153,6 +1153,11 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 		}
 		if cr != nil {
 			cr.wantSpan = spans[i]
+			if i > 0 && spans[i-1] {
+				// The margin below a spanner ends its group, the row
+				// below it starts after the margin.
+				cr.spanMargin = marginAfter
+			}
 		}
 		if i == 0 {
 			if err := fc.start(brk); err != nil {

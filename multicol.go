@@ -146,8 +146,11 @@ type columnRegions struct {
 	// flowText sets it before every group.
 	span, wantSpan    bool
 	spanTop, spanUsed bag.ScaledPoint
-	cur               region
-	started           bool
+	// spanMargin is the margin-bottom of the spanner that ends, which
+	// flowText hands over: the row below starts after it.
+	spanMargin bag.ScaledPoint
+	cur        region
+	started    bool
 
 	// row counts the rows begun since balanceColumns reset it. While
 	// balanced is set, the columns of row balanceRow are that high.
@@ -199,7 +202,7 @@ func (cr *columnRegions) next(brk string) (region, error) {
 				return region{}, err
 			}
 		} else {
-			cr.startRow(cr.spanTop - cr.spanUsed)
+			cr.startRow(cr.spanTop - cr.spanUsed - cr.spanMargin)
 		}
 	case cr.span:
 		if err := cr.newPage(); err != nil {

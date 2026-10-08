@@ -318,3 +318,30 @@ func TestColumnRule(t *testing.T) {
 		t.Errorf("%d rules beside an empty column, want none", n)
 	}
 }
+
+// The margin below a spanner stays between it and the columns after it.
+func TestColumnSpannerMarginBottom(t *testing.T) {
+	html := `<html><body><div style="column-span: all; margin-bottom: 20pt">Spanner</div><p style="margin: 0">After</p></body></html>`
+	pages, _ := renderHTMLPagesCB(t, columnsCSS, html)
+	var spanner, after document.Object
+	for _, obj := range pages[0].Objects {
+		if obj.Vlist == nil {
+			continue
+		}
+		var sb strings.Builder
+		collectGlyphs(obj.Vlist.List, &sb)
+		switch sb.String() {
+		case "Spanner":
+			spanner = obj
+		case "After":
+			after = obj
+		}
+	}
+	if spanner.Vlist == nil || after.Vlist == nil {
+		t.Fatal("the spanner or the paragraph after it is missing")
+	}
+	gap := spanner.Y - spanner.Vlist.Height - spanner.Vlist.Depth - after.Y
+	if d := gap - bag.MustSP("20pt"); d < -bag.MustSP("0.5pt") || d > bag.MustSP("0.5pt") {
+		t.Errorf("%s between the spanner and the columns, want 20pt", gap)
+	}
+}
