@@ -1840,18 +1840,19 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		return nil, err
 	}
 	if m := styles.multicol; m.count > 1 {
-		if item.Data == "body" {
-			if !m.gapSet {
-				m.gap = styles.Fontsize
-			}
-			if cb.multicols == nil {
-				cb.multicols = map[*frontend.Text]multicol{}
-			}
-			cb.multicols[newte] = m
-		} else if !cb.warnedColumns {
-			cb.warnedColumns = true
-			bag.Logger.Warn("column-count is laid out only on body yet, the content is set in one column", "element", item.Data, "column-count", m.count)
+		if !m.gapSet {
+			m.gap = styles.Fontsize
 		}
+		m.boxed = styles.BackgroundColor != nil ||
+			styles.BorderTopWidth > 0 || styles.BorderBottomWidth > 0 || styles.BorderLeftWidth > 0 || styles.BorderRightWidth > 0 ||
+			styles.PaddingTop > 0 || styles.PaddingBottom > 0 || styles.PaddingLeft > 0 || styles.PaddingRight > 0
+		if cb.multicols == nil {
+			cb.multicols = map[*frontend.Text]multicol{}
+		}
+		cb.multicols[newte] = m
+	}
+	if styles.multicol.spanAll {
+		cb.markSpanner(newte)
 	}
 	if styles.textBoxTrim != (textBoxTrim{}) {
 		if cb.trims == nil {

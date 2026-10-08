@@ -139,6 +139,10 @@ func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 		cb.restorePageState(saved)
 	}()
 	cb.dropPageLevelContent()
+	if len(cb.multicols) > 0 {
+		bag.Logger.Warn("FlowText does not lay out column-count, the content is set in one column")
+	}
+	cb.multicols, cb.spanners = nil, nil
 	fc := &flowCursor{regions: &callerRegions{cb: cb, r: r}, caller: true}
 	cb.callerFlow = fc
 	marginAfter, err := cb.flowText(te, fc)
@@ -251,6 +255,12 @@ type region struct {
 	sink *regionSink
 	// inserts is where the floats and footnotes of the region are placed.
 	inserts insertArea
+	// truncates is set for an occupied region whose top margins are
+	// truncated at an automatic break all the same, such as the second
+	// column of a row below a spanner.
+	truncates bool
+	// trial is set for a region of a trial run, which paints nothing.
+	trial bool
 }
 
 // insertArea is the rectangle the top and bottom floats and the footnotes of
@@ -425,7 +435,9 @@ type sinkEntry struct {
 	child  *flowChild
 }
 
-func (s *regionSink) empty() bool { return len(s.entries) == 0 }
+// empty reports whether nothing is in the sink; a page or column region,
+// which paints onto the page, has none.
+func (s *regionSink) empty() bool { return s == nil || len(s.entries) == 0 }
 
 func (s *regionSink) add(off bag.ScaledPoint, box *node.VList, h bag.ScaledPoint) {
 	// The spacer only moves the body below the table rows placed before it.
@@ -830,7 +842,7 @@ func (fc *flowCursor) breakTo(brk string, n node.Node) error {
 	fc.serial++
 	fc.movedOn = false
 	fc.top = topKept
-	if brk == "" && !reg.occupied {
+	if brk == "" && (!reg.occupied || reg.truncates) {
 		fc.top = topTruncated
 	}
 	return nil
@@ -851,7 +863,7 @@ func (fc *flowCursor) moveOn(cb *CSSBuilder, n node.Node) error {
 		return err
 	}
 	fc.movedOn = occupiedOnly
-	if fc.cur.occupied && margin > 0 {
+	if fc.cur.occupied && !fc.cur.truncates && margin > 0 {
 		k := node.NewKern()
 		k.Kern = max(margin, fc.cur.marginBefore)
 		k.Attributes = node.H{"origin": "margin"}

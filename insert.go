@@ -724,6 +724,12 @@ func (cb *CSSBuilder) flushInserts() error {
 // flushInsertsIn is flushInserts with the body painted into reg, a region
 // on the current page.
 func (cb *CSSBuilder) flushInsertsIn(reg region) error {
+	if reg.trial {
+		cb.pageBuf, cb.pageBufHeight = nil, 0
+		cb.pageInserts = map[InsertClass][]*Insert{}
+		cb.pageInsertHeight = map[InsertClass]bag.ScaledPoint{}
+		return nil
+	}
 	// Snapshot the top-float reservation height *before* placeFloatTopInserts
 	// clears it, so we know where the body cursor starts.
 	topFloatHeight := cb.pageInsertHeight[InsertFloatTop]

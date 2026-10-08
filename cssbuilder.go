@@ -188,11 +188,11 @@ type CSSBuilder struct {
 	strutFonts       map[strutKey]*font.Font
 	warnedLineModels map[string]bool
 	warnedBreakers   map[string]bool
-	// warnedColumns is set once column-count has been warned about.
-	warnedColumns bool
-	// multicols holds the column properties of a body with column-count,
-	// gap resolved.
+	// multicols holds the column properties of the elements with
+	// column-count, gap resolved, and spanners the elements that span the
+	// columns. OutputPagesFromText reads and clears both.
 	multicols map[*frontend.Text]multicol
+	spanners  map[*frontend.Text]bool
 	// inlineNodes are the nodes InlineNode stands in for, by element.
 	inlineNodes      map[*html.Node]node.Node
 	ElementCallback  ElementCallbackFunc
@@ -1088,9 +1088,17 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	defer func() { cb.fragLines = nil }()
 
 	fc := &flowCursor{regions: &pageRegions{cb: cb}}
-	if count, gap := cb.columns(findBody(te)); count > 1 {
-		fc.regions, fc.columns = &columnRegions{cb: cb, count: count, gap: gap}, true
+	if flow, m := cb.multicolBody(findBody(te)); flow != nil {
+		fc.regions = &columnRegions{cb: cb, count: m.count, gap: m.gap, fillAuto: m.fillAuto, body: flow}
+		fc.columns = true
+		if len(cb.multicols) > 1 {
+			bag.Logger.Warn("column-count is laid out only on body or a direct child of body, other elements are set in one column")
+		}
+	} else if len(cb.multicols) > 0 {
+		bag.Logger.Warn("column-count is laid out only on body or a direct child of body, the content is set in one column")
 	}
+	cb.multicols = nil
+	defer func() { cb.spanners = nil }()
 	if _, err := cb.flowText(te, fc); err != nil {
 		return err
 	}
@@ -1113,9 +1121,18 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoint, error) {
 	// Find the body-level Text element (unwrap html > body wrappers).
 	body := findBody(te)
+	cr, _ := fc.regions.(*columnRegions)
+	if cr != nil {
+		body = cr.body
+	}
 
-	// Split body items into groups at pageBreakBefore boundaries.
+	// Split body items into groups at pageBreakBefore boundaries, and in
+	// columns before and after every element that spans them.
 	groups := splitTextAtPageBreaks(body, fc.forcedKeyword)
+	var spans []bool
+	if cr != nil {
+		groups, spans = cb.splitAtSpanners(groups)
+	}
 
 	var marginAfter bag.ScaledPoint
 	var children *flowChildren
@@ -1130,6 +1147,9 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 		var brk string
 		if t, ok := group[0].(*frontend.Text); ok {
 			brk = textBreakBefore(t, fc.forcedKeyword)
+		}
+		if cr != nil {
+			cr.wantSpan = spans[i]
 		}
 		if i == 0 {
 			if err := fc.start(brk); err != nil {
@@ -1174,6 +1194,9 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 				applyReflowCarry(vl, carry)
 			}
 			marginAfter, _ = wrapper.Settings[frontend.SettingMarginBottom].(bag.ScaledPoint)
+			if cr != nil && !rebuild && !spans[i] && cr.balances(i, spans) {
+				cb.balanceColumns(vl, fc, cr)
+			}
 
 			// Place nodes from this group's vlist onto pages.
 			// Within a group there are no forced page breaks, but content may
