@@ -126,3 +126,23 @@ func TestInlineBeforeStillWorks(t *testing.T) {
 		t.Errorf("inline ::before regressed: %q", all)
 	}
 }
+
+// Generated content resolves against the element's styles, less htmlbag's
+// sentinels for the element: -bag-bookmark or page-break-inside on a heading
+// with ::before or ::after stopped the document with "Unknown setting".
+func TestGeneratedContentDropsElementSentinels(t *testing.T) {
+	for name, decl := range map[string]string{
+		"-bag-bookmark":     "-bag-bookmark: 2",
+		"page-break-inside": "page-break-inside: avoid",
+	} {
+		for _, pseudo := range []string{"before", "after"} {
+			t.Run(name+"/"+pseudo, func(t *testing.T) {
+				css := "h2 { " + decl + " } h2::" + pseudo + ` { content: "1 " }`
+				pages, _ := renderHTMLPagesCB(t, css, `<!DOCTYPE html><html><body><h2>Intro</h2><p>Text.</p></body></html>`)
+				if len(pages) != 1 {
+					t.Errorf("%d pages, want 1", len(pages))
+				}
+			})
+		}
+	}
+}

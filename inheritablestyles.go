@@ -2276,6 +2276,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		if beforeContent, ok := item.Styles["before::content"]; ok && !beforeContent.isEmpty() {
 			beforeRun = frontend.NewText()
 			cb.applySettings(beforeRun.Settings, blockStyles)
+			dropElementSentinels(beforeRun.Settings)
 			appendGeneratedContent(cb, beforeRun, beforeContent, blockStyles, item, ss, anchorPages)
 			if len(beforeRun.Items) == 0 {
 				beforeRun = nil
@@ -2456,6 +2457,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				} else {
 					run = frontend.NewText()
 					cb.applySettings(run.Settings, blockStyles)
+					dropElementSentinels(run.Settings)
 				}
 			}
 			appendGeneratedContent(cb, run, afterContent, blockStyles, item, ss, anchorPages)
@@ -2558,6 +2560,7 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue Styl
 		}
 		txt := frontend.NewText()
 		cb.applySettings(txt.Settings, sty)
+		dropElementSentinels(txt.Settings)
 		if sty.smallCaps {
 			txt.Items = append(txt.Items, cb.smallCapsItems(cb.frontend, sty, s)...)
 		} else {
@@ -2573,6 +2576,7 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue Styl
 			buf.Reset()
 			leaderTxt := frontend.NewText()
 			cb.applySettings(leaderTxt.Settings, sty)
+			dropElementSentinels(leaderTxt.Settings)
 			leaderTxt.Settings[frontend.SettingLeader] = tok.Value
 			te.Items = append(te.Items, leaderTxt)
 			continue
@@ -2582,6 +2586,16 @@ func appendGeneratedContent(cb *CSSBuilder, te *frontend.Text, contentValue Styl
 		buf.WriteString(evaluateContentWithStack(single, ss, anchorPages, cb.anchorTexts, cb.anchorCounters, attrLookup))
 	}
 	flushString(buf.String())
+}
+
+// dropElementSentinels removes the sentinels that describe an element, not
+// its text, from the settings of its generated content. ::before and ::after
+// resolve against the element's styles, and -bag-bookmark or
+// page-break-inside on them stopped the document in the strict switch of
+// BuildNodelistFromString.
+func dropElementSentinels(s frontend.TypesettingSettings) {
+	delete(s, settingBookmark)
+	delete(s, settingPageBreakInside)
 }
 
 func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, ss StylesStack, currentFontsize bag.ScaledPoint, defaultFontsize bag.ScaledPoint, df *frontend.Document, anchorPages map[string]int) error {
