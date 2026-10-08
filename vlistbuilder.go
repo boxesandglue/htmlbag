@@ -68,11 +68,14 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// into nested *frontend.Text). Catches block-level markers that sit
 	// as siblings of paragraph subtrees in a body container; inline
 	// markers (footnote inside a span inside a <p>) stay nested and are
-	// caught by the paragraph-branch's deep extractFootnotes below.
-	inserts, err := cb.extractFootnotesShallow(te, wd)
-	if err != nil {
+	// caught by the paragraph-branch's deep extractFootnotes below. A
+	// footnote is not attached to the block: its call carries a marker
+	// into the line that holds it, and the page builder commits it with
+	// that line (insertsOnNode).
+	if _, err := cb.extractFootnotesShallow(te, wd); err != nil {
 		return nil, err
 	}
+	var inserts []*Insert
 	topFloats, err := cb.extractFloatsShallow(te, wd, InsertFloatTop)
 	if err != nil {
 		return nil, err
@@ -898,8 +901,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// DEEP extract: nested insertMarkers (e.g. footnote inside a span
 	// inside this <p>). Top-of-function shallow only caught direct
 	// te.Items, so inline markers still need a recursive pass here.
-	deepFootnotes, err := cb.extractFootnotes(te, contentWidth)
-	if err != nil {
+	// As above, the footnotes travel with their lines.
+	if _, err := cb.extractFootnotes(te, contentWidth); err != nil {
 		return nil, err
 	}
 	deepTopFloats, err := cb.extractFloats(te, contentWidth, InsertFloatTop)
@@ -910,7 +913,6 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	if err != nil {
 		return nil, err
 	}
-	inserts = append(inserts, deepFootnotes...)
 	inserts = append(inserts, deepTopFloats...)
 	inserts = append(inserts, deepBottomFloats...)
 

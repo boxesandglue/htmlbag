@@ -586,6 +586,9 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 			// dispatches each by class.
 			fns, err := cb.extractFootnotes(t, cb.tableInsertWidth)
 			if err == nil && len(fns) > 0 {
+				for _, fn := range fns {
+					fn.table = true
+				}
 				cb.tableInserts = append(cb.tableInserts, fns...)
 			}
 			topFls, err := cb.extractFloats(t, cb.tableInsertWidth, InsertFloatTop)

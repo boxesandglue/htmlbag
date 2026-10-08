@@ -1802,21 +1802,15 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			if isSplittable, _ := vlS.Attributes["_splittable"].(bool); isSplittable {
 				keepWhole := avoidBreakInside(vlS) && h <= contentArea
 				if (trialPageHeight(incoming, fit) > contentArea && !keepWhole) || forcedInside(splitChildren(vlS), fc.forcedKeyword) {
-					// Commit incoming inserts so outputBlockSplit's
-					// availOnPage sees the correct float/footnote
-					// reservations. Don't ship pageBuf here — the splitter
-					// appends its first fragment after whatever's already
-					// buffered (e.g. a heading just placed via the
-					// avoidBreakAfter relaxation), and only breaks
-					// between fragments.
-					if len(incoming) > 0 {
-						for _, ins := range incoming {
-							cb.pageInserts[ins.Class] = append(cb.pageInserts[ins.Class], ins)
-						}
-						cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
-						cb.pageInsertHeight[InsertFloatBottom] = cb.totalFloatBottomHeight(cb.pageInserts[InsertFloatBottom])
-						cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
-					}
+					// Commit the block's own inserts (its floats) so
+					// outputBlockSplit's availOnPage sees the correct
+					// reservations; the footnotes marked in its lines go
+					// with the fragment that holds them. Don't ship pageBuf
+					// here — the splitter appends its first fragment after
+					// whatever's already buffered (e.g. a heading just
+					// placed via the avoidBreakAfter relaxation), and only
+					// breaks between fragments.
+					cb.commitInserts(fc.ownInsertsOn(vlS))
 					if err := cb.outputBlockSplit(vlS, fc); err != nil {
 						return -1, nil, err
 					}
@@ -2269,8 +2263,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			topOverhead, bottomOverhead, cutOverhead = top, bottom, bottom
 		}
 		remaining := childrenHeight(children[i:])
+		restInserts := fc.insertsIn(children[i:])
 
-		if topOverhead+remaining+bottomOverhead <= avail && !forcedInside(children[i:], fc.forcedKeyword) {
+		if topOverhead+remaining+bottomOverhead+cb.insertsGrowth(restInserts) <= avail && !forcedInside(children[i:], fc.forcedKeyword) {
 			kind := fragBottom
 			if isFirst {
 				kind = fragOnly
@@ -2281,6 +2276,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 				carryMarks(blockVL, wrapped)
 			}
 			cb.bufferBody(wrapped, h)
+			cb.commitInserts(restInserts)
 			return nil
 		}
 
@@ -2358,6 +2354,11 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		}
 		if inner == nil {
 			batch, i = keepFloatWithChild(children, batch, i)
+			// A line with a footnote call needs the room of the footnote
+			// too: lines move on with their footnotes until the rest fits.
+			if splitTe != nil {
+				batch, i = cb.makeRoomForInserts(fc, batch, i, avail-topOverhead-cutOverhead)
+			}
 		} else {
 			// The cut runs through children[i]: its part before the cut
 			// ends this fragment, its rest takes its place.
@@ -2397,6 +2398,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			carryMarks(blockVL, wrapped)
 		}
 		cb.bufferBody(wrapped, h)
+		cb.commitInserts(fc.insertsIn(batch))
 		isFirst = false
 		placedLines += countLines(batch)
 
@@ -3751,4 +3753,38 @@ func shiftChildren(vl *node.VList) {
 			c.ShiftX += vl.ShiftX
 		}
 	}
+}
+
+// makeRoomForInserts drops lines from the end of batch, a fragment of a
+// paragraph that ends before children[i], until the lines and the
+// footnotes marked in them fit into room. A batch without inserts is left
+// as the fitting chose it, and the first line stays, as on an empty page.
+// It returns the batch and the index the rest starts at.
+func (cb *CSSBuilder) makeRoomForInserts(fc *flowCursor, batch []node.Node, i int, room bag.ScaledPoint) ([]node.Node, int) {
+	for countContent(batch) > 1 {
+		grow := cb.insertsGrowth(fc.insertsIn(batch))
+		if grow == 0 || childrenHeight(batch)+grow <= room {
+			break
+		}
+		// Drop the last line and what follows it.
+		k := len(batch) - 1
+		for k > 0 {
+			if _, ok := batch[k].(*node.HList); ok {
+				break
+			}
+			k--
+		}
+		i -= len(batch) - k
+		batch = batch[:k]
+		// The batch ends with its last line, not with the glue before
+		// the line that moved on.
+		for len(batch) > 0 {
+			if _, ok := batch[len(batch)-1].(*node.HList); ok {
+				break
+			}
+			batch = batch[:len(batch)-1]
+			i--
+		}
+	}
+	return batch, i
 }

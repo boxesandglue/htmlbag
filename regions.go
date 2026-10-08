@@ -952,7 +952,26 @@ func (fc *flowCursor) marginBefore(cb *CSSBuilder, cur node.Node) node.Node {
 // insertsOn is insertsOnNode, less the page-level inserts a caller's region
 // does not take.
 func (fc *flowCursor) insertsOn(n node.Node) []*Insert {
-	ins := insertsOnNode(n)
+	return fc.pageLevel(insertsOnNode(n))
+}
+
+// ownInsertsOn is insertsOn without the footnotes marked in n's lines.
+func (fc *flowCursor) ownInsertsOn(n node.Node) []*Insert {
+	return fc.pageLevel(ownInserts(n))
+}
+
+// insertsIn is insertsOn for every node of nodes.
+func (fc *flowCursor) insertsIn(nodes []node.Node) []*Insert {
+	var out []*Insert
+	for _, n := range nodes {
+		out = append(out, fc.insertsOn(n)...)
+	}
+	return out
+}
+
+// pageLevel is ins, less the page-level inserts a caller's region does not
+// take.
+func (fc *flowCursor) pageLevel(ins []*Insert) []*Insert {
 	if !fc.caller || len(ins) == 0 {
 		return ins
 	}

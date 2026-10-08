@@ -82,6 +82,40 @@ type Insert struct {
 	Class  InsertClass
 	Number int
 	Body   *node.VList
+	// table is set for a footnote a table took out of a cell: the table
+	// commits it, so its marker in the cell's line is passed over.
+	table bool
+}
+
+// attrInsertMarker is the attribute of the marker node that a footnote call
+// carries behind its number: the footnote's *Insert. The marker goes into
+// the line that holds the call, so the page builder commits the footnote
+// with that line, also when its paragraph is split across pages.
+const attrInsertMarker = "_insert"
+
+// newInsertMarker is an empty box that carries ins into a line. Mknodes sets
+// a copy of it into every build of the paragraph, with ins along.
+func newInsertMarker(ins *Insert) *node.HList {
+	m := node.NewHList()
+	m.Attributes = node.H{"origin": "insert marker", attrInsertMarker: ins}
+	return m
+}
+
+// markedInserts appends the inserts whose markers are in the list n, at any
+// depth, to out. Those of a table are passed over.
+func markedInserts(n node.Node, out []*Insert) []*Insert {
+	for ; n != nil; n = n.Next() {
+		switch t := n.(type) {
+		case *node.HList:
+			if ins, ok := t.Attributes[attrInsertMarker].(*Insert); ok && !ins.table {
+				out = append(out, ins)
+			}
+			out = markedInserts(t.List, out)
+		case *node.VList:
+			out = markedInserts(t.List, out)
+		}
+	}
+	return out
 }
 
 // insertMarker is a sentinel value placed inside frontend.Text.Items at
@@ -265,8 +299,11 @@ func (cb *CSSBuilder) extractFootnotesShallow(te *frontend.Text, footnoteWidth b
 			cb.structureCurrent.AddChild(noteSE)
 			tagVList(body, noteSE)
 		}
-		te.Items[i] = cb.makeFootnoteCall(te.Settings, number)
-		ins = append(ins, &Insert{Class: InsertFootnote, Number: number, Body: body})
+		fn := &Insert{Class: InsertFootnote, Number: number, Body: body}
+		call := cb.makeFootnoteCall(te.Settings, number)
+		call.Items = append(call.Items, newInsertMarker(fn))
+		te.Items[i] = call
+		ins = append(ins, fn)
 	}
 	return ins, nil
 }
@@ -350,8 +387,11 @@ func (cb *CSSBuilder) extractFootnotesInto(te *frontend.Text, footnoteWidth bag.
 				tagVList(body, noteSE)
 			}
 
-			te.Items[i] = cb.makeFootnoteCall(te.Settings, number)
-			*out = append(*out, &Insert{Class: InsertFootnote, Number: number, Body: body})
+			fn := &Insert{Class: InsertFootnote, Number: number, Body: body}
+			call := cb.makeFootnoteCall(te.Settings, number)
+			call.Items = append(call.Items, newInsertMarker(fn))
+			te.Items[i] = call
+			*out = append(*out, fn)
 
 		case *frontend.Text:
 			if err := cb.extractFootnotesInto(t, footnoteWidth, out); err != nil {
@@ -520,14 +560,28 @@ func filterInserts(ins []*Insert, class InsertClass) []*Insert {
 	return out
 }
 
-// insertsOnNode returns the []*Insert stored in n.Attributes["inserts"], or
-// nil if absent or of unexpected type. Used by the page builder.
+// insertsOnNode returns the inserts n brings to the page: those stored in
+// n.Attributes["inserts"] (floats, a table's footnotes) and the footnotes
+// whose markers are in n's lines. Used by the page builder.
 //
 // Recognises both *node.VList and *node.HList because the unwrap step in
 // outputGroupNodes strips outer VLists and propagates the
 // attribute onto the first remaining node — which is typically the HList
 // of the paragraph's first line.
 func insertsOnNode(n node.Node) []*Insert {
+	ins := ownInserts(n)
+	switch t := n.(type) {
+	case *node.VList:
+		return markedInserts(t.List, ins)
+	case *node.HList:
+		return markedInserts(t.List, ins)
+	}
+	return ins
+}
+
+// ownInserts returns the []*Insert stored in n.Attributes["inserts"], or nil
+// if absent or of unexpected type.
+func ownInserts(n node.Node) []*Insert {
 	var attrs node.H
 	switch t := n.(type) {
 	case *node.VList:
@@ -535,15 +589,8 @@ func insertsOnNode(n node.Node) []*Insert {
 	case *node.HList:
 		attrs = t.Attributes
 	}
-	if attrs == nil {
-		return nil
-	}
-	v, ok := attrs["inserts"]
-	if !ok {
-		return nil
-	}
-	ins, _ := v.([]*Insert)
-	return ins
+	ins, _ := attrs["inserts"].([]*Insert)
+	return slices.Clip(ins)
 }
 
 // hasBoxMarks reports whether vl carries a heading index, an anchor index or
@@ -676,6 +723,47 @@ func propagateInsertsAttr(from *node.VList, to node.Node) {
 			return
 		}
 	}
+}
+
+// commitInserts puts ins on the page being filled and updates the heights
+// the page reserves for them.
+func (cb *CSSBuilder) commitInserts(ins []*Insert) {
+	if len(ins) == 0 {
+		return
+	}
+	for _, in := range ins {
+		cb.pageInserts[in.Class] = append(cb.pageInserts[in.Class], in)
+	}
+	cb.pageInsertHeight[InsertFloatTop] = cb.totalFloatTopHeight(cb.pageInserts[InsertFloatTop])
+	cb.pageInsertHeight[InsertFloatBottom] = cb.totalFloatBottomHeight(cb.pageInserts[InsertFloatBottom])
+	cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
+}
+
+// insertsGrowth is how much more height the page reserves for its inserts
+// once ins are committed: a first footnote brings its separator along.
+func (cb *CSSBuilder) insertsGrowth(ins []*Insert) bag.ScaledPoint {
+	if len(ins) == 0 {
+		return 0
+	}
+	byClass := map[InsertClass][]*Insert{}
+	for _, in := range ins {
+		byClass[in.Class] = append(byClass[in.Class], in)
+	}
+	var grow bag.ScaledPoint
+	for class, add := range byClass {
+		all := append(slices.Clip(cb.pageInserts[class]), add...)
+		var total bag.ScaledPoint
+		switch class {
+		case InsertFloatTop:
+			total = cb.totalFloatTopHeight(all)
+		case InsertFloatBottom:
+			total = cb.totalFloatBottomHeight(all)
+		default:
+			total = cb.totalFootnoteHeight(all)
+		}
+		grow += total - cb.pageInsertHeight[class]
+	}
+	return grow
 }
 
 // makeFootnoteSeparator builds the horizontal rule that visually separates
