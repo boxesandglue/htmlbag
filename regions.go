@@ -249,6 +249,15 @@ type region struct {
 	// sink collects the boxes of a caller's region; nil for a page region,
 	// whose boxes are painted onto the page.
 	sink *regionSink
+	// inserts is where the floats and footnotes of the region are placed.
+	inserts insertArea
+}
+
+// insertArea is the rectangle the top and bottom floats and the footnotes of
+// a region are placed in: the top floats from its top edge down, the bottom
+// floats and footnotes from its bottom edge up, all at its left edge.
+type insertArea struct {
+	left, top, bottom, width bag.ScaledPoint
 }
 
 // bottom is the y coordinate of the region's bottom edge.
@@ -340,6 +349,14 @@ func (cb *CSSBuilder) pageRegion() (region, error) {
 		top:     pd.Height - pd.PageAreaTop,
 		page:    cb.frontend.Doc.CurrentPage,
 		pageNum: len(cb.frontend.Doc.Pages),
+		// The inserts of a page sit within its margins, outside the @page
+		// border and padding that indent the body.
+		inserts: insertArea{
+			left:   pd.MarginLeft,
+			top:    pd.Height - pd.MarginTop,
+			bottom: pd.MarginBottom,
+			width:  pd.Width - pd.MarginLeft - pd.MarginRight,
+		},
 	}, nil
 }
 
@@ -373,6 +390,8 @@ func (cr *callerRegions) next(brk string) (region, error) {
 		marginBefore: rg.MarginBefore,
 		occupied:     rg.Occupied,
 		sink:         &regionSink{},
+		// FlowText drops the inserts, the area is never used.
+		inserts: insertArea{left: rg.Left, top: rg.Top, bottom: rg.Top - rg.Height, width: rg.Width},
 	}
 	cr.started = true
 	return cr.cur, nil

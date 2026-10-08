@@ -728,7 +728,7 @@ func (cb *CSSBuilder) flushInsertsIn(reg region) error {
 	// clears it, so we know where the body cursor starts.
 	topFloatHeight := cb.pageInsertHeight[InsertFloatTop]
 
-	if err := cb.placeFloatTopInserts(); err != nil {
+	if err := cb.placeFloatTopInserts(reg.inserts); err != nil {
 		return err
 	}
 
@@ -758,31 +758,27 @@ func (cb *CSSBuilder) flushInsertsIn(reg region) error {
 
 	// Bottom-floats first (they need pageInsertHeight[InsertFootnote] to
 	// know their floor), then footnotes.
-	if err := cb.placeFloatBottomInserts(); err != nil {
+	if err := cb.placeFloatBottomInserts(reg.inserts); err != nil {
 		return err
 	}
-	return cb.placeFootnoteInserts()
+	return cb.placeFootnoteInserts(reg.inserts)
 }
 
-// placeFloatTopInserts paints the top-float inserts at the top of the
-// current page's content area and clears that class's accumulators. The body
+// placeFloatTopInserts paints the top-float inserts at the top of area and
+// clears that class's accumulators. The body
 // cursor was already started below the reserved zone (see drainDeferredFloats),
 // so this method only renders.
 //
 // No-op if nothing accumulated. Stack order is document order: first marker
 // → top of stack.
-func (cb *CSSBuilder) placeFloatTopInserts() error {
+func (cb *CSSBuilder) placeFloatTopInserts(area insertArea) error {
 	fls := cb.pageInserts[InsertFloatTop]
 	if len(fls) == 0 {
 		return nil
 	}
-	pd, err := cb.PageSize()
-	if err != nil {
-		return err
-	}
-	yTop := pd.Height - pd.MarginTop
+	yTop := area.top
 	for i, fl := range fls {
-		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, yTop, fl.Body)
+		cb.frontend.Doc.CurrentPage.OutputAt(area.left, yTop, fl.Body)
 		yTop -= fl.Body.Height + fl.Body.Depth
 		if i < len(fls)-1 {
 			yTop -= cb.FloatTopInterSkip
@@ -794,27 +790,24 @@ func (cb *CSSBuilder) placeFloatTopInserts() error {
 }
 
 // placeFloatBottomInserts paints the bottom-float stack just above the
-// footnote zone. The floor is yLimit + footnoteHeight; the stack grows
-// upward from there to yLimit + footnoteHeight + bottomFloatHeight.
+// footnote zone of area. The floor is area.bottom + footnoteHeight; the
+// stack grows upward from there to area.bottom + footnoteHeight +
+// bottomFloatHeight.
 // First insert in document order ends up at the top of the stack.
 //
 // Reads cb.pageInsertHeight[InsertFootnote] (must still be valid — call
 // before placeFootnoteInserts clears it).
 //
 // No-op if nothing accumulated.
-func (cb *CSSBuilder) placeFloatBottomInserts() error {
+func (cb *CSSBuilder) placeFloatBottomInserts(area insertArea) error {
 	fls := cb.pageInserts[InsertFloatBottom]
 	if len(fls) == 0 {
 		return nil
 	}
-	pd, err := cb.PageSize()
-	if err != nil {
-		return err
-	}
-	// Top of the bottom-float zone = yLimit + footnoteHeight + stackHeight.
-	yTop := pd.MarginBottom + cb.pageInsertHeight[InsertFootnote] + cb.pageInsertHeight[InsertFloatBottom]
+	// Top of the bottom-float zone = bottom + footnoteHeight + stackHeight.
+	yTop := area.bottom + cb.pageInsertHeight[InsertFootnote] + cb.pageInsertHeight[InsertFloatBottom]
 	for i, fl := range fls {
-		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, yTop, fl.Body)
+		cb.frontend.Doc.CurrentPage.OutputAt(area.left, yTop, fl.Body)
 		yTop -= fl.Body.Height + fl.Body.Depth
 		if i < len(fls)-1 {
 			yTop -= cb.FloatBottomInterSkip
@@ -919,27 +912,21 @@ func (cb *CSSBuilder) extractFloatsInto(te *frontend.Text, floatWidth bag.Scaled
 }
 
 // placeFootnoteInserts writes the footnote-class inserts at the bottom of
-// the current page, above pd.MarginBottom, and clears that class's
-// accumulators. No-op if nothing accumulated.
-func (cb *CSSBuilder) placeFootnoteInserts() error {
+// area, above area.bottom, with a separator as wide as area, and clears
+// that class's accumulators. No-op if nothing accumulated.
+func (cb *CSSBuilder) placeFootnoteInserts(area insertArea) error {
 	fns := cb.pageInserts[InsertFootnote]
 	if len(fns) == 0 {
 		return nil
 	}
-	pd, err := cb.PageSize()
-	if err != nil {
-		return err
-	}
-	contentWidth := pd.Width - pd.MarginLeft - pd.MarginRight
-
-	// Top of footnote area = MarginBottom + total height. The skip above
-	// the rule is the first thing to subtract.
-	yTop := pd.MarginBottom + cb.pageInsertHeight[InsertFootnote] - cb.FootnoteSeparatorSkip
-	sep := cb.makeFootnoteSeparator(contentWidth)
-	cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, yTop, sep)
+	// Top of footnote area = bottom + total height. The skip above the rule
+	// is the first thing to subtract.
+	yTop := area.bottom + cb.pageInsertHeight[InsertFootnote] - cb.FootnoteSeparatorSkip
+	sep := cb.makeFootnoteSeparator(area.width)
+	cb.frontend.Doc.CurrentPage.OutputAt(area.left, yTop, sep)
 	yTop -= cb.FootnoteSeparatorHeight
 	for i, fn := range fns {
-		cb.frontend.Doc.CurrentPage.OutputAt(pd.MarginLeft, yTop, fn.Body)
+		cb.frontend.Doc.CurrentPage.OutputAt(area.left, yTop, fn.Body)
 		yTop -= fn.Body.Height + fn.Body.Depth
 		if i < len(fns)-1 {
 			yTop -= cb.FootnoteInterSkip
