@@ -1839,9 +1839,19 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err
 	}
-	if styles.multicol.count > 1 && !cb.warnedColumns {
-		cb.warnedColumns = true
-		bag.Logger.Warn("column-count is not laid out yet, the content is set in one column", "element", item.Data, "column-count", styles.multicol.count)
+	if m := styles.multicol; m.count > 1 {
+		if item.Data == "body" {
+			if !m.gapSet {
+				m.gap = styles.Fontsize
+			}
+			if cb.multicols == nil {
+				cb.multicols = map[*frontend.Text]multicol{}
+			}
+			cb.multicols[newte] = m
+		} else if !cb.warnedColumns {
+			cb.warnedColumns = true
+			bag.Logger.Warn("column-count is laid out only on body yet, the content is set in one column", "element", item.Data, "column-count", m.count)
+		}
 	}
 	if styles.textBoxTrim != (textBoxTrim{}) {
 		if cb.trims == nil {

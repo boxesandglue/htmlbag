@@ -788,8 +788,11 @@ type flowCursor struct {
 	// as it always has, except that a margin at the top of a page after an
 	// automatic break is truncated as in a caller's region.
 	caller bool
-	top    regionTop
-	warned map[InsertClass]bool
+	// columns is set for the columns of a body with column-count, where a
+	// forced column break is taken too.
+	columns bool
+	top     regionTop
+	warned  map[InsertClass]bool
 	// serial numbers the regions from 1, as pages cannot: a caller's
 	// regions may share one.
 	serial int
@@ -962,9 +965,10 @@ func (fc *flowCursor) insertsOn(n node.Node) []*Insert {
 }
 
 // forcedKeyword is the forced break keyword of a break-before or break-after
-// value, or "" when it is not one. A caller's regions also take column.
+// value, or "" when it is not one. A caller's regions and columns also take
+// column.
 func (fc *flowCursor) forcedKeyword(v any) string {
-	if s, _ := v.(string); fc.caller && s == "column" {
+	if s, _ := v.(string); (fc.caller || fc.columns) && s == "column" {
 		return s
 	}
 	return breakKeyword(v)

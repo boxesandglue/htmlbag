@@ -190,6 +190,9 @@ type CSSBuilder struct {
 	warnedBreakers   map[string]bool
 	// warnedColumns is set once column-count has been warned about.
 	warnedColumns bool
+	// multicols holds the column properties of a body with column-count,
+	// gap resolved.
+	multicols map[*frontend.Text]multicol
 	// inlineNodes are the nodes InlineNode stands in for, by element.
 	inlineNodes      map[*html.Node]node.Node
 	ElementCallback  ElementCallbackFunc
@@ -1085,6 +1088,9 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	defer func() { cb.fragLines = nil }()
 
 	fc := &flowCursor{regions: &pageRegions{cb: cb}}
+	if count, gap := cb.columns(findBody(te)); count > 1 {
+		fc.regions, fc.columns = &columnRegions{cb: cb, count: count, gap: gap}, true
+	}
 	if _, err := cb.flowText(te, fc); err != nil {
 		return err
 	}
