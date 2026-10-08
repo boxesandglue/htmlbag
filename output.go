@@ -471,15 +471,17 @@ func (cb *CSSBuilder) outputMarginBoxes(dimensions PageDimensions) error {
 				// FormatParagraph (SettingHeight + SettingVAlign); a
 				// running element arrives as a finished VList at its
 				// natural height, so align it here within the margin
-				// box area. Default (VAlignDefault/Top) keeps the top
-				// edge at the area's top.
+				// box area. Without vertical-align it is centered, as
+				// the text is and as CSS Paged Media 3 (§5.3) has it for
+				// the top and bottom boxes and the corners.
 				if isRunningElement {
 					if free := pmb.ht - (vl.Height + vl.Depth); free > 0 {
 						switch styles.Valign {
-						case frontend.VAlignMiddle:
-							outputY -= free / 2
+						case frontend.VAlignTop:
 						case frontend.VAlignBottom:
 							outputY -= free
+						default:
+							outputY -= free / 2
 						}
 					}
 				}

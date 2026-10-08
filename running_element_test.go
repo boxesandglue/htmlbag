@@ -39,6 +39,13 @@ func fillerParagraphs(n int) string {
 // footerObjectY returns the page Y coordinate of the object carrying the
 // footer text, or -1 when the footer is not on the page.
 func footerObjectY(pg *document.Page) bag.ScaledPoint {
+	y, _ := footerObject(pg)
+	return y
+}
+
+// footerObject returns the page Y coordinate and the height of the object
+// carrying the footer text, y -1 when the footer is not on the page.
+func footerObject(pg *document.Page) (y, height bag.ScaledPoint) {
 	for _, obj := range pg.Objects {
 		if obj.Vlist == nil {
 			continue
@@ -46,10 +53,10 @@ func footerObjectY(pg *document.Page) bag.ScaledPoint {
 		var sb strings.Builder
 		collectComponents(obj.Vlist.List, &sb)
 		if strings.Contains(sb.String(), "IBAN") {
-			return obj.Y
+			return obj.Y, obj.Vlist.Height + obj.Vlist.Depth
 		}
 	}
-	return -1
+	return -1, 0
 }
 
 // TestRunningElementFooter: a footer removed from the flow via
@@ -71,17 +78,27 @@ func TestRunningElementFooter(t *testing.T) {
 			}
 		}
 	}
-	// Fixed position: the footer starts at the top of the bottom margin
-	// band (margin-bottom: 30mm) on every page, regardless of how much
-	// body content the page carries.
-	wantY := bag.MustSP("30mm")
+	// Fixed position: the footer is centered in the bottom margin band
+	// (margin-bottom: 30mm) on every page, regardless of how much body
+	// content the page carries; CSS Paged Media gives the bottom boxes
+	// vertical-align: middle.
+	band := bag.MustSP("30mm")
 	for i, pg := range pages {
-		y := footerObjectY(pg)
+		y, h := footerObject(pg)
 		if y == -1 {
 			t.Fatalf("page %d: footer object not found", i+1)
 		}
-		if y != wantY {
-			t.Errorf("page %d: footer at y=%s, want %s (top edge of the bottom margin band)", i+1, y, wantY)
+		if want := band - (band-h)/2; y != want {
+			t.Errorf("page %d: footer at y=%s, want %s (centered in the bottom margin band)", i+1, y, want)
+		}
+	}
+
+	// vertical-align: top puts it at the top edge of the band.
+	css := strings.Replace(runningFooterCSS, "content: element(pagefooter);", "content: element(pagefooter); vertical-align: top;", 1)
+	pages = renderHTMLPages(t, css, html)
+	for i, pg := range pages {
+		if y := footerObjectY(pg); y != band {
+			t.Errorf("vertical-align: top, page %d: footer at y=%s, want %s (top edge of the band)", i+1, y, band)
 		}
 	}
 }
