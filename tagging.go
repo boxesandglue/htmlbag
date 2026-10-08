@@ -126,6 +126,13 @@ var pdf17OnlyRoles = map[string]bool{
 	"Code": true,
 }
 
+// pdf20Renamed maps the canonical PDF 1.7 role names that PDF 2.0 SSN
+// replaced to their PDF 2.0 names (ISO 32000-2 §14.8.4): under PDF/UA-2 a
+// Note in the PDF 2.0 namespace is no standard type, and veraPDF rejects it.
+var pdf20Renamed = map[string]string{
+	"Note": "FENote",
+}
+
 // html5RoleMap returns the RoleMapNS contents for the HTML5 namespace
 // under PDF/UA-2: each HTML5 element name we may emit as a structure
 // role is mapped to its canonical equivalent in a standard namespace.
@@ -156,14 +163,17 @@ func html5RoleMap() map[string]document.NamespaceRoleEntry {
 //     no /NS attribute is written; the element falls into the default PDF 1.7
 //     SSN, which is what UA-1 expects.
 //   - UA-2: returns the HTML5-equivalent lowercase role with the HTML5
-//     namespace if known, otherwise falls back to the canonical role with the
-//     PDF 2.0 SSN namespace.
+//     namespace if known, otherwise falls back to the canonical role, or its
+//     PDF 2.0 name from pdf20Renamed, with the PDF 2.0 SSN namespace.
 func roleAndNS(canonical string, format document.Format) (role, ns string) {
 	if !format.IsPDFUA2() {
 		return canonical, ""
 	}
 	if html5, ok := canonicalToHTML5[canonical]; ok && html5 != "" {
 		return html5, document.NamespaceHTML5
+	}
+	if renamed, ok := pdf20Renamed[canonical]; ok {
+		return renamed, document.NamespacePDF20SSN
 	}
 	return canonical, document.NamespacePDF20SSN
 }
