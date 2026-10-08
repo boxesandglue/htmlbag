@@ -41,7 +41,7 @@ func loadSVGForMarginBox(filename string, boxHt bag.ScaledPoint, df *frontend.Do
 	} else {
 		wd = boxHt
 	}
-	tr := frontend.NewSVGTextRenderer(df)
+	tr := svgTextRenderer(df, nil)
 	return df.Doc.CreateSVGNodeFromDocument(svgDoc, wd, boxHt, tr), true
 }
 

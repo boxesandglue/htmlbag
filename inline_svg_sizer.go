@@ -48,9 +48,9 @@ import (
 // "vertical cell part" VList. A bare Rule sitting directly under a
 // nested VList would not reach the horizontal emit path that knows
 // how to write the Pre stream with positioning.
-func newInlineSVGFormatter(doc *svgreader.Document, dims imageDims, df *frontend.Document) frontend.FormatToVList {
+func newInlineSVGFormatter(doc *svgreader.Document, dims imageDims, df *frontend.Document, family *frontend.FontFamily) frontend.FormatToVList {
 	return func(containerWidth bag.ScaledPoint) (*node.VList, error) {
-		tr := frontend.NewSVGTextRenderer(df)
+		tr := svgTextRenderer(df, family)
 
 		naturalW := bag.ScaledPointFromFloat(doc.Width)
 		if naturalW <= 0 {
@@ -108,4 +108,18 @@ func parseSVGPercentWidth(raw string) (float64, bool) {
 		return 0, false
 	}
 	return f, true
+}
+
+// svgTextRenderer sets the text of an SVG. Text without a font-family, or
+// with one the document does not know, takes family: the font of the element
+// around an inline <svg>, which SVG inherits from HTML. An SVG in <img> or a
+// page margin box passes nil and takes serif, as a browser sets it with its
+// default font.
+func svgTextRenderer(df *frontend.Document, family *frontend.FontFamily) *frontend.SVGTextRenderer {
+	tr := frontend.NewSVGTextRenderer(df)
+	if family == nil {
+		family = df.FindFontFamily("serif")
+	}
+	tr.DefaultFamily = family
+	return tr
 }
