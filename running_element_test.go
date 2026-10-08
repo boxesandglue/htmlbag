@@ -1,12 +1,15 @@
 package htmlbag
 
 import (
+	"bytes"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/document"
+	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
 const runningFooterCSS = `@page {
@@ -144,5 +147,53 @@ func TestRunningElementNotInFlow(t *testing.T) {
 	}
 	if gotY != wantY {
 		t.Errorf("body paragraph at y=%s, control without footer has y=%s (footer must not occupy flow space)", gotY, wantY)
+	}
+}
+
+// A running element in a page margin box is part of a pagination artifact
+// and carries no structure tags: tagged, it put a Div with marked content
+// into the artifact, which PDF/UA does not allow. It did so when the margin
+// box had padding, which wraps the element in a box of its own.
+func TestRunningElementUntagged(t *testing.T) {
+	var buf bytes.Buffer
+	fe, err := frontend.NewForWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fe.Doc.Format = document.FormatPDFUA2
+	fe.Doc.DefaultLanguageTag = "en"
+	if l, err := frontend.GetLanguage("en"); err == nil {
+		fe.Doc.DefaultLanguage = l
+	}
+	// Plain content streams, so the marked content can be counted.
+	fe.Doc.CompressLevel = 0
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatal(err)
+	}
+	cb, err := New(fe, NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.AddCSS(`@page { size: a5; margin: 2cm; @top-center { content: element(rh); padding-bottom: 6mm; } } .rh { position: running(rh); }`); err != nil {
+		t.Fatal(err)
+	}
+	te, err := cb.HTMLToText(`<!DOCTYPE html><html lang="en"><body><h1>Title</h1><div class="rh">Running head</div><p>Body text.</p></body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.OutputPagesFromText(te); err != nil {
+		t.Fatal(err)
+	}
+	if err := fe.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	pdf := buf.String()
+	if !strings.Contains(pdf, "/Artifact <</Type /Pagination>> BDC") {
+		t.Fatal("no margin box artifact in the PDF")
+	}
+	// The heading and the paragraph of the body are the only tagged
+	// content.
+	if n := regexp.MustCompile(`<</MCID \d+>> BDC`).FindAllStringIndex(pdf, -1); len(n) != 2 {
+		t.Errorf("%d marked content sequences with an MCID, want 2 for the heading and the paragraph", len(n))
 	}
 }

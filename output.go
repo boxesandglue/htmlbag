@@ -386,7 +386,15 @@ func (cb *CSSBuilder) outputMarginBoxes(dimensions PageDimensions) error {
 				if vl.List == nil {
 					if elName := firstContentElement(contentTokens); elName != "" {
 						if runTe, ok := cb.runningElements[elName]; ok {
+							// The margin box is a pagination artifact:
+							// its running element is built untagged, or
+							// it would bring structure elements and
+							// marked content into the artifact, which
+							// PDF/UA does not allow.
+							tagging := cb.enableTagging
+							cb.enableTagging = false
 							vl, err = cb.CreateVlist(runTe, pmb.wd-styles.BorderLeftWidth-styles.BorderRightWidth)
+							cb.enableTagging = tagging
 							if err != nil {
 								return err
 							}
