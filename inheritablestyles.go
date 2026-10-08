@@ -2496,6 +2496,9 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			// whose whole rendering is its border), and a cell's
 			// placeholders for a pre-rendered VList, and one among blocks.
 			isPlaceholder := te.Settings[frontend.SettingPrerenderedVListID] != nil
+			if itm.Data == "table" {
+				newte.Items = append(newte.Items, liftCaptions(te)...)
+			}
 			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" || te.Settings[settingCSSHeight] != nil || hasVisibleDecoration(te.Settings) || isPlaceholder {
 				newte.Items = append(newte.Items, te)
 			}
@@ -2672,6 +2675,31 @@ func (cb *CSSBuilder) applyFootnoteSettings(settings frontend.TypesettingSetting
 	applyLangAndHyphens(sty, fn.Attributes, df)
 	cb.applySettings(settings, sty)
 	return nil
+}
+
+// liftCaptions takes the <caption> children out of the table te and returns
+// them, to be set as blocks above the table (caption-side: top): the table
+// builder reads rows only. A caption keeps with the table at a break unless
+// it declares break-after itself.
+func liftCaptions(te *frontend.Text) []any {
+	var captions []any
+	rest := te.Items[:0:0]
+	for _, itm := range te.Items {
+		if t, ok := itm.(*frontend.Text); ok {
+			if elt, _ := t.Settings[frontend.SettingDebug].(string); elt == "caption" {
+				if _, ok := t.Settings[frontend.SettingPageBreakAfter]; !ok {
+					t.Settings[frontend.SettingPageBreakAfter] = "avoid"
+				}
+				captions = append(captions, t)
+				continue
+			}
+		}
+		rest = append(rest, itm)
+	}
+	if len(captions) > 0 {
+		te.Items = rest
+	}
+	return captions
 }
 
 // hyperlinkOf returns the link of an <a> element: its href, or the target

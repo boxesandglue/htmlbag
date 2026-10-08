@@ -226,7 +226,7 @@ func (c *CSS) getHTMLItem(thisNode *html.Node, direction Mode, firstItem *HTMLIt
 			tabs := inherited.tabStops
 			eltname := thisNode.Data
 			switch eltname {
-			case "body", "address", "article", "aside", "blockquote", "canvas", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
+			case "body", "address", "article", "aside", "blockquote", "canvas", "caption", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "noscript", "ol", "p", "pre", "section", "table", "tfoot", "thead", "tbody", "tr", "td", "th", "ul", "video":
 				newDir = ModeVertical
 			case "b", "big", "i", "small", "tt", "abbr", "acronym", "cite", "code", "dfn", "em", "kbd", "strong", "samp", "var", "a", "barcode", "bdo", "img", "map", "object", "q", "script", "span", "sub", "sup", "button", "input", "label", "select", "textarea", "svg", "math", inlineNodeElement:
 				newDir = ModeHorizontal
