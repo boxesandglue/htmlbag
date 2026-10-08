@@ -88,3 +88,23 @@ func TestCellHyperlinkAnnotation(t *testing.T) {
 		t.Errorf("two cell links: /GoTo = %d, want 1 (internal)", got)
 	}
 }
+
+// A link whose text is only generated content, such as a cross reference
+// from target-counter(), is clickable: ::before and ::after are part of it.
+func TestGeneratedContentLink(t *testing.T) {
+	for name, css := range map[string]string{
+		"::before": `a.ref::before { content: "Section 1"; }`,
+		"::after":  `a.ref::after { content: " (see there)"; }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			html := `<!DOCTYPE html><html><head><style>` + css + `</style></head><body>
+				<h2 id="target">Target heading</h2>
+				<p>See <a class="ref" href="#target"></a>.</p>
+			</body></html>`
+			pf := renderHTMLToPDF(t, html)
+			if got := strings.Count(pf, "/Link"); got != 1 {
+				t.Errorf("/Link = %d, want 1", got)
+			}
+		})
+	}
+}

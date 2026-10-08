@@ -2674,6 +2674,24 @@ func (cb *CSSBuilder) applyFootnoteSettings(settings frontend.TypesettingSetting
 	return nil
 }
 
+// hyperlinkOf returns the link of an <a> element: its href, or the target
+// of href="#id" or of a link attribute inside the document. ok is false for
+// another element or an <a> without either.
+func hyperlinkOf(item *HTMLItem) (document.Hyperlink, bool) {
+	if item.Data != "a" {
+		return document.Hyperlink{}, false
+	}
+	href, link := item.Attributes["href"], item.Attributes["link"]
+	if strings.HasPrefix(href, "#") {
+		link = strings.TrimPrefix(href, "#")
+		href = ""
+	}
+	if href == "" && link == "" {
+		return document.Hyperlink{}, false
+	}
+	return document.Hyperlink{URI: href, Local: link}, true
+}
+
 // dropElementSentinels removes the sentinels that describe an element, not
 // its text, from the settings of its generated content. ::before and ::after
 // resolve against the element's styles, and -bag-bookmark or
@@ -2754,7 +2772,19 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			}
 			applyLangAndHyphens(sty, item.Attributes, df)
 			applyInlineRelativeOffset(sty, item.Styles)
+			start := len(te.Items)
 			appendGeneratedContent(cb, te, contentValue, sty, item, ss, anchorPages)
+			// The generated content of a link is part of it: a cross
+			// reference whose text comes from target-counter() alone is
+			// clickable too. A leader is not: its pattern repeats, and
+			// the link with it.
+			if hl, ok := hyperlinkOf(item); ok {
+				for _, itm := range te.Items[start:] {
+					if t, ok := itm.(*frontend.Text); ok && t.Settings[frontend.SettingLeader] == nil {
+						t.Settings[frontend.SettingHyperlink] = hl
+					}
+				}
+			}
 			ss.PopStyles()
 			return nil
 		}
@@ -2773,21 +2803,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 
 		switch item.Data {
 		case "a":
-			var href, link string
-			for k, v := range item.Attributes {
-				switch k {
-				case "href":
-					href = v
-				case "link":
-					link = v
-				}
-			}
-			if strings.HasPrefix(href, "#") {
-				link = strings.TrimPrefix(href, "#")
-				href = ""
-			}
-			if href != "" || link != "" {
-				hl := document.Hyperlink{URI: href, Local: link}
+			if hl, ok := hyperlinkOf(item); ok {
 				childSettings[frontend.SettingHyperlink] = hl
 			}
 		case "svg":
