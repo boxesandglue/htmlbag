@@ -1,6 +1,7 @@
 package htmlbag
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -90,5 +91,55 @@ func TestFootnoteMovesOnWithItsLine(t *testing.T) {
 	call, note := pageOf(pages, "Callhere."), pageOf(pages, "Alongfootnote")
 	if call == 0 || note != call {
 		t.Errorf("the note is on page %d, its call on page %d", note, call)
+	}
+}
+
+// textInFootnoteArea returns the first page on which body text reaches into
+// the room reserved for the footnotes, the skip above the separator
+// included, and by how much; 0 when the text keeps clear everywhere.
+func textInFootnoteArea(pages []*document.Page, skip bag.ScaledPoint) (int, bag.ScaledPoint) {
+	for i, pg := range pages {
+		sep := slices.IndexFunc(pg.Objects, func(obj document.Object) bool {
+			o, _ := obj.Vlist.Attributes["origin"].(string)
+			return o == "footnote separator vlist"
+		})
+		if sep < 0 {
+			continue
+		}
+		top := pg.Objects[sep].Y + skip
+		// The body is painted before the footnotes.
+		for _, obj := range pg.Objects[:sep] {
+			var sb strings.Builder
+			collectGlyphs(obj.Vlist.List, &sb)
+			if sb.Len() == 0 {
+				continue
+			}
+			if bottom := obj.Y - obj.Vlist.Height - obj.Vlist.Depth; bottom < top {
+				return i + 1, top - bottom
+			}
+		}
+	}
+	return 0, 0
+}
+
+// A block split across pages keeps the room of the footnotes in its first
+// part free. The split of a container went by the height of its children
+// alone, and the lines of a paragraph after the call ran into the footnote
+// (#99). The paragraph before the container keeps the container from being
+// unwrapped to its sections.
+func TestFootnoteRoomInSplitContainer(t *testing.T) {
+	note := strings.Repeat("A long footnote that takes up room at the foot of the page. ", 4)
+	words := strings.Repeat("Text of the paragraph. ", 70)
+	html := `<html><body><p>Intro.</p><div><section><p>Short. Callhere.<span class="footnote">` + note + `</span></p></section>` +
+		`<section><p>` + words + ` Laststands.</p></section></div></body></html>`
+	pages, cb := renderHTMLPagesCB(t, `@page { size: a6; margin: 1cm } body { font-size: 9pt }`, html)
+	if call, fn := pageOf(pages, "Callhere."), pageOf(pages, "Alongfootnote"); call != 1 || fn != 1 {
+		t.Fatalf("the call is on page %d, the note on page %d; the test needs both on page 1", call, fn)
+	}
+	if pg, by := textInFootnoteArea(pages, cb.FootnoteSeparatorSkip); pg != 0 {
+		t.Errorf("the text on page %d runs %s into the footnotes", pg, by)
+	}
+	if last := pageOf(pages, "Laststands."); last != 2 {
+		t.Errorf("the paragraph ends on page %d, want 2", last)
 	}
 }

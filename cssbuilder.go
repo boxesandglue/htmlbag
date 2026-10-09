@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -2296,7 +2297,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		var overflow bool
 		var inner *splitPlan
 		var brk string
-		batch, i, overflow, inner, brk = cb.fitChildren(children, i, avail-topOverhead-cutOverhead, fc.forcedKeyword, trim)
+		batch, i, overflow, inner, brk = cb.fitChildren(fc, children, i, avail-topOverhead-cutOverhead, nil, trim)
 		// A paragraph keeps orphans and widows lines (CSS Fragmentation 3
 		// §4.4); a container cuts between its blocks, or through one, as
 		// long as something goes before the cut and the cut does not fall
@@ -2364,11 +2365,6 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		}
 		if inner == nil {
 			batch, i = keepFloatWithChild(children, batch, i)
-			// A line with a footnote call needs the room of the footnote
-			// too: lines move on with their footnotes until the rest fits.
-			if splitTe != nil {
-				batch, i = cb.makeRoomForInserts(fc, batch, i, avail-topOverhead-cutOverhead)
-			}
 		} else {
 			// The cut runs through children[i]: its part before the cut
 			// ends this fragment, its rest takes its place.
@@ -2478,8 +2474,13 @@ func countContent(items []node.Node) int {
 // through it, and the batch ends before it. Otherwise the first child goes
 // in even when it does not fit, which only an empty page may take; overflow
 // reports that. A forced break between two blocks, or inside a block, ends
-// the batch there; brk is its keyword, as forced reports it.
-func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPoint, forced func(any) string, trim breakTrim) (batch []node.Node, next int, overflow bool, inner *splitPlan, brk string) {
+// the batch there; brk is its keyword, as fc.forcedKeyword reports it.
+//
+// The inserts a child brings to the page, its footnotes and floats, take
+// their room from room along with the child. held are the inserts of the
+// fragment the children are cut from, which room already makes way for.
+func (cb *CSSBuilder) fitChildren(fc *flowCursor, children []node.Node, i int, room bag.ScaledPoint, held []*Insert, trim breakTrim) (batch []node.Node, next int, overflow bool, inner *splitPlan, brk string) {
+	forced := fc.forcedKeyword
 	if trim.end && trim.clone {
 		defer func() {
 			if inner == nil && brk == "" && next < len(children) {
@@ -2488,6 +2489,18 @@ func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPo
 		}()
 	}
 	var batchH bag.ScaledPoint
+	var batchIns []*Insert
+	// grow is the room the inserts of the batch and add take beyond what
+	// held takes: the first footnote brings the separator along.
+	grow := func(add []*Insert) bag.ScaledPoint {
+		all := append(append(slices.Clip(held), batchIns...), add...)
+		return cb.insertsGrowth(all) - cb.insertsGrowth(held)
+	}
+	// split plans a cut through n after the batch. n weighs the inserts of
+	// its parts itself.
+	split := func(n node.Node) *splitPlan {
+		return cb.planSplit(fc, n, room-batchH-grow(nil), append(slices.Clip(held), batchIns...))
+	}
 	var last node.Node
 	for ; i < len(children); i++ {
 		if last != nil && isContentNode(children[i]) {
@@ -2496,6 +2509,10 @@ func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPo
 			}
 		}
 		ch := vlistNodeHeight(children[i])
+		ins := fc.insertsOn(children[i])
+		// left is the room children[i] has once the batch and the inserts
+		// of both are placed.
+		left := room - batchH - grow(ins)
 		// A float box has no height of its own; what has to fit is its
 		// painted extent together with the child beside it, or the float is
 		// parted from that child by the page break.
@@ -2504,16 +2521,16 @@ func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPo
 		}
 		// The overhang of a float that overflows the page ends at the page
 		// break; the caller shortens it once the batch is placed.
-		if _, ok := floatOverhang(children[i]); ok && batchH+ch > room {
-			ch = max(room-batchH, 0)
+		if _, ok := floatOverhang(children[i]); ok && ch > left {
+			ch = max(left, 0)
 		}
-		if batchH+ch > room {
+		if ch > left {
 			// A line whose end is trimmed at the break fits by its text, and
 			// the fragment ends after it.
-			if t := lineTrimEnd(children[i]); trim.end && t > 0 && batchH+ch-t <= room {
+			if t := lineTrimEnd(children[i]); trim.end && t > 0 && ch-t <= left {
 				return append(batch, children[i]), i + 1, false, nil, ""
 			}
-			if p := cb.planSplit(children[i], room-batchH, forced); p != nil {
+			if p := split(children[i]); p != nil {
 				return batch, i, false, p, p.brk
 			}
 			if len(batch) > 0 {
@@ -2521,11 +2538,12 @@ func (cb *CSSBuilder) fitChildren(children []node.Node, i int, room bag.ScaledPo
 			}
 			overflow = true
 		} else if vl, ok := children[i].(*node.VList); ok && forcedInside(splitChildren(vl), forced) {
-			if p := cb.planSplit(vl, room-batchH, forced); p != nil && p.brk != "" {
+			if p := split(vl); p != nil && p.brk != "" {
 				return batch, i, false, p, p.brk
 			}
 		}
 		batch = append(batch, children[i])
+		batchIns = append(batchIns, ins...)
 		if _, ok := floatOverhang(children[i]); ok {
 			batchH += ch
 		} else {
@@ -2691,7 +2709,7 @@ const attrSplitRest = "_splitRest"
 // or no part of it fits: not its first line or block, fewer lines than
 // orphans, a rest of fewer lines than widows, or blocks that a break-after:
 // avoid keeps with the rest.
-func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint, forced func(any) string) *splitPlan {
+func (cb *CSSBuilder) planSplit(fc *flowCursor, n node.Node, room bag.ScaledPoint, held []*Insert) *splitPlan {
 	if k, ok := cssHeight(n); ok {
 		if room <= 0 || room >= k.Kern {
 			return nil
@@ -2722,7 +2740,7 @@ func (cb *CSSBuilder) planSplit(n node.Node, room bag.ScaledPoint, forced func(a
 		hv, _ := vl.Attributes["_splittableHv"].(HTMLValues)
 		room -= hv.PaddingTop + hv.BorderTopWidth
 	}
-	batch, next, overflow, inner, brk := cb.fitChildren(children, 0, room, forced, cb.fragmentTrim(vl))
+	batch, next, overflow, inner, brk := cb.fitChildren(fc, children, 0, room, held, cb.fragmentTrim(vl))
 	if overflow || next >= len(children) {
 		return nil
 	}
@@ -2770,6 +2788,17 @@ func (cb *CSSBuilder) cutBlock(p *splitPlan) (node.Node, node.Node) {
 	vl := p.vl
 	headItems := append([]node.Node(nil), p.children[:p.n]...)
 	restItems := append([]node.Node(nil), p.children[p.n:]...)
+	// A margin at an unforced break is truncated (CSS Fragmentation 3
+	// §5.2). A region drops one at its top, but not one at the top of the
+	// rest of a block.
+	if p.brk == "" && p.inner == nil {
+		for len(restItems) > 1 {
+			if _, ok := marginKern(restItems[0]); !ok {
+				break
+			}
+			restItems = restItems[1:]
+		}
+	}
 	if p.inner != nil {
 		h, r := cb.cutBlock(p.inner)
 		headItems = append(headItems, h)
@@ -3763,38 +3792,4 @@ func shiftChildren(vl *node.VList) {
 			c.ShiftX += vl.ShiftX
 		}
 	}
-}
-
-// makeRoomForInserts drops lines from the end of batch, a fragment of a
-// paragraph that ends before children[i], until the lines and the
-// footnotes marked in them fit into room. A batch without inserts is left
-// as the fitting chose it, and the first line stays, as on an empty page.
-// It returns the batch and the index the rest starts at.
-func (cb *CSSBuilder) makeRoomForInserts(fc *flowCursor, batch []node.Node, i int, room bag.ScaledPoint) ([]node.Node, int) {
-	for countContent(batch) > 1 {
-		grow := cb.insertsGrowth(fc.insertsIn(batch))
-		if grow == 0 || childrenHeight(batch)+grow <= room {
-			break
-		}
-		// Drop the last line and what follows it.
-		k := len(batch) - 1
-		for k > 0 {
-			if _, ok := batch[k].(*node.HList); ok {
-				break
-			}
-			k--
-		}
-		i -= len(batch) - k
-		batch = batch[:k]
-		// The batch ends with its last line, not with the glue before
-		// the line that moved on.
-		for len(batch) > 0 {
-			if _, ok := batch[len(batch)-1].(*node.HList); ok {
-				break
-			}
-			batch = batch[:len(batch)-1]
-			i--
-		}
-	}
-	return batch, i
 }
