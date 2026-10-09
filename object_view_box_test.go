@@ -313,3 +313,41 @@ func TestObjectViewBoxNoneUnchanged(t *testing.T) {
 		t.Error("test harness broken: inset(1pt) leaves the PDF unchanged")
 	}
 }
+
+func TestObjectViewBoxSVGMaxWidth(t *testing.T) {
+	svgPath := writeTestSVG(t, t.TempDir())
+	te := renderToText(t, `<p><img src="`+svgPath+`" style="object-view-box: inset(0 50% 0 0); max-width: 150pt"></p>`)
+	var rule *node.Rule
+	if vl := findSVGImage(te); vl != nil {
+		rule = findFirstRule(vl.List)
+	}
+	if rule == nil {
+		t.Fatal("no SVG rule")
+	}
+	if rule.Width != bag.MustSP("100pt") || rule.Height != bag.MustSP("100pt") {
+		t.Errorf("size = %s×%s, want 100pt×100pt (the region is under the cap)", rule.Width, rule.Height)
+	}
+}
+
+func TestObjectViewBoxSVGPercentMaxWidth(t *testing.T) {
+	svgPath := writeTestSVG(t, t.TempDir())
+	te := renderToText(t, `<p><img src="`+svgPath+`" style="object-view-box: inset(0 50% 0 0); max-width: 100%"></p>`)
+	vl := findSVGImage(te)
+	if vl == nil || getDeferredFormatter(vl) == nil {
+		t.Fatal("no deferred SVG wrapper")
+	}
+	resolveDeferredSizing([]any{vl}, bag.MustSP("150pt"))
+	if vl.Width != bag.MustSP("100pt") || vl.Depth != bag.MustSP("100pt") {
+		t.Errorf("size = %s×%s, want 100pt×100pt (the region is under the cap)", vl.Width, vl.Depth)
+	}
+}
+
+func TestObjectViewBoxSVGRegion(t *testing.T) {
+	svgPath := writeTestSVG(t, t.TempDir())
+	render := func(inset string) []byte {
+		return renderPDF(t, "", `<p><img src="`+svgPath+`" style="object-view-box: inset(`+inset+`)"></p>`)
+	}
+	if bytes.Equal(render("0 50% 0 0"), render("0 0 0 50%")) {
+		t.Error("the left and right halves render the same PDF")
+	}
+}
