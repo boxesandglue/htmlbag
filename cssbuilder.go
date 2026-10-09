@@ -1147,6 +1147,10 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 	if fc.caller {
 		children = newFlowChildren(body, cb.sourceNodes)
 	}
+	var bal *flowBalance
+	if c, ok := fc.regions.(*callerRegions); ok {
+		bal = c.bal
+	}
 	groupStart := 0
 	for i, group := range groups {
 		if i > 0 {
@@ -1209,6 +1213,9 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 			marginAfter, _ = wrapper.Settings[frontend.SettingMarginBottom].(bag.ScaledPoint)
 			if cr != nil && !rebuild && !spans[i] && cr.balances(i, spans) {
 				cb.balanceColumns(vl, fc, cr)
+			}
+			if bal != nil && i == len(groups)-1 {
+				cb.balanceGroup(bal, vl, fc)
 			}
 
 			// Place nodes from this group's vlist onto pages.

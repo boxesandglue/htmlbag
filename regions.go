@@ -113,6 +113,9 @@ type Fragment struct {
 // box with a border or background, and a paragraph whose rest fails to
 // re-break.
 //
+// When r is a RemainingRegions whose BalanceEnd is set, the end of the flow
+// is balanced over the regions of its last page.
+//
 // Nothing of the flow is left in the builder when FlowText returns, and the
 // page content the builder holds is kept as it was. As with
 // OutputPagesFromText, that includes the widows and orphans HTMLToText
@@ -143,7 +146,11 @@ func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 		bag.Logger.Warn("FlowText does not lay out column-count, the content is set in one column")
 	}
 	cb.multicols, cb.spanners = nil, nil
-	fc := &flowCursor{regions: &callerRegions{cb: cb, r: r}, caller: true}
+	cr := &callerRegions{cb: cb, r: r}
+	if rr, ok := r.(RemainingRegions); ok && rr.BalanceEnd() {
+		cr.bal = &flowBalance{rr: rr}
+	}
+	fc := &flowCursor{regions: cr, caller: true}
 	cb.callerFlow = fc
 	marginAfter, err := cb.flowText(te, fc)
 	if err != nil {
@@ -260,7 +267,10 @@ type region struct {
 	// column of a row below a spanner.
 	truncates bool
 	// trial is set for a region of a trial run, which paints nothing.
-	trial bool
+	// collects is set for one that stands for a caller's region: its sink
+	// takes the boxes as the caller's would, so that the trial sees the
+	// region holding them.
+	trial, collects bool
 }
 
 // insertArea is the rectangle the top and bottom floats and the footnotes of
@@ -380,6 +390,10 @@ type callerRegions struct {
 	count   int
 	// seen holds the flow children placed in an earlier region.
 	seen map[*flowChild]bool
+	// pageNum is the PageNum of the current region.
+	pageNum int
+	// bal balances the end of the flow, nil unless the caller asks for it.
+	bal *flowBalance
 }
 
 func (cr *callerRegions) next(brk string) (region, error) {
@@ -391,7 +405,20 @@ func (cr *callerRegions) next(brk string) (region, error) {
 	if rg.Width <= 0 || rg.Height <= 0 {
 		return region{}, fmt.Errorf("htmlbag: region %d is %s × %s, it needs a width and a height", cr.count, rg.Width, rg.Height)
 	}
-	cr.cur = region{
+	cr.cur = callerRegion(rg)
+	if cr.bal != nil {
+		// Regions without a page number may each start a page.
+		pageStart := cr.count == 1 || rg.PageNum == 0 || rg.PageNum != cr.pageNum
+		cr.cur = cr.bal.entered(cr.cb, rg, cr.cur, pageStart)
+	}
+	cr.pageNum = rg.PageNum
+	cr.started = true
+	return cr.cur, nil
+}
+
+// callerRegion is the region the paginator fills for rg.
+func callerRegion(rg Region) region {
+	return region{
 		width:        rg.Width,
 		height:       rg.Height,
 		left:         rg.Left,
@@ -403,8 +430,6 @@ func (cr *callerRegions) next(brk string) (region, error) {
 		// FlowText drops the inserts, the area is never used.
 		inserts: insertArea{left: rg.Left, top: rg.Top, bottom: rg.Top - rg.Height, width: rg.Width},
 	}
-	cr.started = true
-	return cr.cur, nil
 }
 
 func (cr *callerRegions) filled(f filled) error {
@@ -417,7 +442,11 @@ func (cr *callerRegions) filled(f filled) error {
 	if cr.seen == nil {
 		cr.seen = map[*flowChild]bool{}
 	}
-	return cr.r.Filled(cr.cur.sink.filled(cr.cur.width, f, cr.seen))
+	out := cr.cur.sink.filled(cr.cur.width, f, cr.seen)
+	if cr.bal != nil {
+		cr.bal.consumed += out.Used
+	}
+	return cr.r.Filled(out)
 }
 
 // regionSink collects the boxes of a caller's region, each at its offset
