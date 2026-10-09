@@ -132,6 +132,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// with lang=en in a German document) → /Lang; the
 					// structure tree inherits it to all children.
 					containerSE.Lang = langTag
+					id, _ := settings[frontend.SettingElementID].(string)
+					cb.registerDestination(id, containerSE)
 					cb.structureCurrent.AddChild(containerSE)
 					savedStructureCurrent = cb.structureCurrent
 					cb.structureCurrent = containerSE
@@ -1211,6 +1213,15 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						vl.Attributes = node.H{}
 					}
 					vl.Attributes["_heading_se"] = se
+				}
+				// A link to the block or to an inline id inside it leads to
+				// this element (PDF/UA-2 §8.8).
+				id, _ := te.Settings[frontend.SettingElementID].(string)
+				cb.registerDestination(id, se)
+				for _, idx := range inlineAnchorIndices {
+					if idx >= 0 && idx < len(cb.Anchors) {
+						cb.registerDestination(cb.Anchors[idx].ID, se)
+					}
 				}
 				// contentSE is the structure element that directly owns the
 				// block's inline content (glyphs and any inline Formula). For

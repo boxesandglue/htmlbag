@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
@@ -106,5 +107,51 @@ func TestGeneratedContentLink(t *testing.T) {
 				t.Errorf("/Link = %d, want 1", got)
 			}
 		})
+	}
+}
+
+// Under PDF/UA-2 an internal link has a structure destination (ISO 14289-2
+// §8.8): its GoTo action points with /SD to the structure element of the
+// target, also when the target comes after the link.
+func TestInternalLinkStructureDestination(t *testing.T) {
+	render := func(format document.Format) string {
+		var buf bytes.Buffer
+		fe, err := frontend.NewForWriter(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fe.Doc.Format = format
+		fe.Doc.DefaultLanguageTag = "en"
+		if l, err := frontend.GetLanguage("en"); err == nil {
+			fe.Doc.DefaultLanguage = l
+		}
+		if err := LoadIncludedFonts(fe); err != nil {
+			t.Fatal(err)
+		}
+		cb, err := New(fe, NewCSSParserWithDefaults())
+		if err != nil {
+			t.Fatal(err)
+		}
+		te, err := cb.HTMLToText(`<!DOCTYPE html><html lang="en"><body>
+			<p>See <a href="#target">the section</a> and <a href="#word">a word</a>.</p>
+			<h2 id="target">Target heading</h2>
+			<p>A <span id="word">word</span> in a paragraph.</p>
+		</body></html>`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cb.OutputPagesFromText(te); err != nil {
+			t.Fatal(err)
+		}
+		if err := fe.Finish(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+	if got := strings.Count(render(document.FormatPDFUA2), "/SD ["); got != 2 {
+		t.Errorf("PDF/UA-2: %d structure destinations, want 2", got)
+	}
+	if got := strings.Count(render(document.Format{}), "/SD ["); got != 0 {
+		t.Errorf("plain PDF: %d structure destinations, want none", got)
 	}
 }

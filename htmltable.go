@@ -311,7 +311,9 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	// Repeated headers on continuation pages are left untagged
 	// (the backend will wrap them as artifacts in PDF/UA mode).
 	if cb.enableTagging {
-		cb.tagTable(vl, tbl, langTag)
+		tableSE := cb.tagTable(vl, tbl, langTag)
+		id, _ := te.Settings[frontend.SettingElementID].(string)
+		cb.registerDestination(id, tableSE)
 	}
 
 	// Source Text and its formatting width: lets outputTableRows rebuild
@@ -741,10 +743,10 @@ func hasSideMargin(t *frontend.Text) bool {
 }
 
 // tagTable walks the table VList and creates Table/TR/TH/TD structure
-// elements. langTag is a language switch declared on the <table> element
-// itself (empty if none); it becomes /Lang on the Table element and is
-// inherited by the whole subtree.
-func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table, langTag string) {
+// elements, and returns the Table element. langTag is a language switch
+// declared on the <table> element itself (empty if none); it becomes /Lang
+// on the Table element and is inherited by the whole subtree.
+func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table, langTag string) *document.StructureElement {
 	format := cb.frontend.Doc.Format
 	tableSE := newSE("Table", format)
 	tableSE.Lang = langTag
@@ -823,6 +825,7 @@ func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table, langTag
 		}
 		rowIdx++
 	}
+	return tableSE
 }
 
 // extractCellText extracts text content from a table cell's contents.

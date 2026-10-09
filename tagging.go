@@ -220,3 +220,18 @@ func tagVListAsXObjectFigure(vl *node.VList, se *document.StructureElement) {
 	vl.Attributes["tag"] = se
 	vl.Attributes["xobject-figure"] = true
 }
+
+// registerDestination makes se the structure destination of links to id,
+// unless an element closer to the start of the document has it already.
+func (cb *CSSBuilder) registerDestination(id string, se *document.StructureElement) {
+	if id == "" || se == nil {
+		return
+	}
+	doc := cb.frontend.Doc
+	if doc.StructureDestinations == nil {
+		doc.StructureDestinations = map[string]*document.StructureElement{}
+	}
+	if _, ok := doc.StructureDestinations[id]; !ok {
+		doc.StructureDestinations[id] = se
+	}
+}
