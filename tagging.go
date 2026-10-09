@@ -5,6 +5,7 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
+	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
 // mathMLNamespace is the MathML namespace URI required on the root <math>
@@ -58,6 +59,8 @@ var htmlToPDFTag = map[string]pdfTagInfo{
 	"a":          {"Link", "a"},
 	"img":        {"Figure", "img"},
 	"figure":     {"Figure", "figure"},
+	"figcaption": {"Caption", "figcaption"},
+	"caption":    {"Caption", "caption"},
 	"table":      {"Table", "table"},
 	"thead":      {"THead", "thead"},
 	"tbody":      {"TBody", "tbody"},
@@ -234,4 +237,14 @@ func (cb *CSSBuilder) registerDestination(id string, se *document.StructureEleme
 	if _, ok := doc.StructureDestinations[id]; !ok {
 		doc.StructureDestinations[id] = se
 	}
+}
+
+// noteCaption records that caption, a block set above table, is the
+// table's caption, so that its structure element goes into the Table.
+func (cb *CSSBuilder) noteCaption(caption, table *frontend.Text) {
+	if cb.captionTables == nil {
+		cb.captionTables = map[*frontend.Text]*frontend.Text{}
+		cb.pendingCaptions = map[*frontend.Text][]*document.StructureElement{}
+	}
+	cb.captionTables[caption] = table
 }

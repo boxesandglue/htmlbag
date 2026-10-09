@@ -311,7 +311,8 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 	// Repeated headers on continuation pages are left untagged
 	// (the backend will wrap them as artifacts in PDF/UA mode).
 	if cb.enableTagging {
-		tableSE := cb.tagTable(vl, tbl, langTag)
+		tableSE := cb.tagTable(vl, tbl, langTag, cb.pendingCaptions[te])
+		delete(cb.pendingCaptions, te)
 		id, _ := te.Settings[frontend.SettingElementID].(string)
 		cb.registerDestination(id, tableSE)
 	}
@@ -745,12 +746,17 @@ func hasSideMargin(t *frontend.Text) bool {
 // tagTable walks the table VList and creates Table/TR/TH/TD structure
 // elements, and returns the Table element. langTag is a language switch
 // declared on the <table> element itself (empty if none); it becomes /Lang
-// on the Table element and is inherited by the whole subtree.
-func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table, langTag string) *document.StructureElement {
+// on the Table element and is inherited by the whole subtree. captions are
+// the Caption elements of the table's <caption>, set above it as blocks of
+// their own; they become the Table's first children (ISO 32005).
+func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table, langTag string, captions []*document.StructureElement) *document.StructureElement {
 	format := cb.frontend.Doc.Format
 	tableSE := newSE("Table", format)
 	tableSE.Lang = langTag
 	cb.structureCurrent.AddChild(tableSE)
+	for _, c := range captions {
+		tableSE.AddChild(c)
+	}
 
 	// Create THead/TBody/TFoot grouping SEs. PDF/UA-1 §7.5 maps these
 	// directly to the HTML element names; TFoot is added in source

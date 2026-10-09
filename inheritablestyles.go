@@ -2497,7 +2497,11 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			// placeholders for a pre-rendered VList, and one among blocks.
 			isPlaceholder := te.Settings[frontend.SettingPrerenderedVListID] != nil
 			if itm.Data == "table" {
-				newte.Items = append(newte.Items, liftCaptions(te)...)
+				captions := liftCaptions(te)
+				for _, c := range captions {
+					cb.noteCaption(c.(*frontend.Text), te)
+				}
+				newte.Items = append(newte.Items, captions...)
 			}
 			if len(te.Items) > 0 || itm.Data == "td" || itm.Data == "th" || itm.Data == "col" || te.Settings[settingCSSHeight] != nil || hasVisibleDecoration(te.Settings) || isPlaceholder {
 				newte.Items = append(newte.Items, te)

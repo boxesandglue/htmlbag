@@ -127,6 +127,16 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		if cb.enableTagging {
 			if tag, ok := settings[frontend.SettingDebug].(string); ok {
 				if canonical := canonicalRoleForTag(tag); canonical != "" {
+					// A <figure> with blocks inside, such as a figcaption,
+					// groups them: the image in it is a Figure of its own
+					// with the Alt, and a Figure around the caption would
+					// hide it behind that Alt.
+					// Sect, not Div: ISO 32005 sees through a Div, and
+					// a Caption in it would count as the child of the
+					// element around the figure.
+					if tag == "figure" {
+						canonical = "Sect"
+					}
 					containerSE = newSE(canonical, cb.frontend.Doc.Format)
 					// lang= switch on the container (e.g. a fenced div
 					// with lang=en in a German document) → /Lang; the
@@ -1174,13 +1184,15 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		}
 	}
 
-	// PDF/UA: tag leaf block elements (p, h1-h6, pre, code)
+	// PDF/UA: tag leaf block elements (p, h1-h6, pre, code), and an
+	// anonymous run that holds an image, such as the image of a <figure>
+	// beside its figcaption.
 	if cb.enableTagging {
-		if tag, ok := settings[frontend.SettingDebug].(string); ok {
+		if tag, _ := settings[frontend.SettingDebug].(string); tag != "" || findImageAlt(te) != "" {
 			canonical := canonicalRoleForTag(tag)
 
 			// If this paragraph contains an image, use Figure role with alt text
-			if canonical == "P" {
+			if canonical == "P" || canonical == "" {
 				if alt := findImageAlt(te); alt != "" {
 					canonical = "Figure"
 				}
@@ -1230,6 +1242,12 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				contentSE := se
 				// LI must contain exactly one LBody (PDF/UA 7.2)
 				switch {
+				case cb.captionTables[te] != nil:
+					// The caption of a table is the first child of the
+					// Table element, which buildTable creates next.
+					table := cb.captionTables[te]
+					cb.pendingCaptions[table] = append(cb.pendingCaptions[table], se)
+					tagVList(vl, se)
 				case canonical == "LI":
 					cb.structureCurrent.AddChild(se)
 					lbody := newSE("LBody", format)

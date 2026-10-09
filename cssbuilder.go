@@ -193,6 +193,11 @@ type CSSBuilder struct {
 	// columns. OutputPagesFromText reads and clears both.
 	multicols map[*frontend.Text]multicol
 	spanners  map[*frontend.Text]bool
+	// captionTables maps the Text of a <caption> to the Text of its table,
+	// pendingCaptions a table to the Caption elements tagged for it before
+	// the table is built.
+	captionTables   map[*frontend.Text]*frontend.Text
+	pendingCaptions map[*frontend.Text][]*document.StructureElement
 	// inlineNodes are the nodes InlineNode stands in for, by element.
 	inlineNodes      map[*html.Node]node.Node
 	ElementCallback  ElementCallbackFunc
