@@ -60,7 +60,8 @@ func floatPage(pages []*document.Page) int {
 }
 
 // assertFloatsKeepTheirText fails when a page ends with a float box: the
-// block beside a float goes with it to the next page.
+// block beside a float goes with it to the next page. Floats in a row, side
+// by side, go with the block after the last of them.
 func assertFloatsKeepTheirText(t *testing.T, pages []*document.Page) {
 	t.Helper()
 	for i, pg := range pages {
@@ -69,7 +70,11 @@ func assertFloatsKeepTheirText(t *testing.T, pages []*document.Page) {
 			if tok != "float" {
 				continue
 			}
-			if j == len(flow)-1 || flow[j+1] != "line" {
+			k := j + 1
+			for k < len(flow) && flow[k] == "float" {
+				k++
+			}
+			if k == len(flow) || flow[k] != "line" {
 				t.Errorf("page %d: a float box is the last thing on the page, parted from the text beside it", i+1)
 			}
 		}

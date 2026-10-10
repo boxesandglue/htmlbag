@@ -2005,7 +2005,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 	bandRows := 0
 	var bandSettings frontend.TypesettingSettings
 	if hasBand {
-		bandRows = bandIndent.rows
+		bandRows = bandIndent.rows()
 		bandSettings = bandIndent.settings()
 	}
 
@@ -3529,10 +3529,17 @@ func splittablePeekHeight(n node.Node) (bag.ScaledPoint, bool) {
 // the block starts level with the float, so the taller of the two decides.
 // Margin kerns between them belong to the block. A splittable block needs
 // only its foothold, the lines the splitter's orphan rule keeps on the page
-// (see splittablePeekHeight).
+// (see splittablePeekHeight). A float box before the block stands beside
+// this one or below it, and goes with the block too, so its painted extent
+// counts from where it starts.
 func floatKeepWithNext(fh bag.ScaledPoint, rest []node.Node) bag.ScaledPoint {
+	need := fh
 	var beside bag.ScaledPoint
 	for _, n := range rest {
+		if h, isFloat := floatBoxHeight(n); isFloat {
+			need = max(need, beside+h)
+			continue
+		}
 		if !isContentNode(n) {
 			beside += vlistNodeHeight(n)
 			continue
@@ -3544,10 +3551,7 @@ func floatKeepWithNext(fh bag.ScaledPoint, rest []node.Node) bag.ScaledPoint {
 		}
 		break
 	}
-	if fh > beside {
-		return fh
-	}
-	return beside
+	return max(need, beside)
 }
 
 // siblingsFrom collects a chain into a slice, up to and including the first

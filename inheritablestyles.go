@@ -88,14 +88,12 @@ const settingTraceBoxModel frontend.SettingType = -11
 //
 // settingFloat and attrFloat mark the float itself — the first for an element,
 // the second for a replaced one, which never becomes a frontend.Text.
-// settingClear marks a child that ends the band. The remaining three describe
-// the band a child sits in.
+// settingClear marks a child that ends the band. settingFloatBands carries the
+// bands a child sits in (a bandStamp).
 const (
-	settingFloat       frontend.SettingType = -5
-	settingClear       frontend.SettingType = -6
-	settingFloatInset  frontend.SettingType = -7
-	settingFloatHeight frontend.SettingType = -8
-	settingFloatSide   frontend.SettingType = -9
+	settingFloat      frontend.SettingType = -5
+	settingClear      frontend.SettingType = -6
+	settingFloatBands frontend.SettingType = -7
 )
 
 const attrFloat = "float"
