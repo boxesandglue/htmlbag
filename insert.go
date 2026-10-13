@@ -813,6 +813,13 @@ func (cb *CSSBuilder) flushInserts() error {
 // on the current page.
 func (cb *CSSBuilder) flushInsertsIn(reg region) error {
 	if reg.trial {
+		if reg.collects {
+			y := reg.top
+			for _, e := range cb.pageBuf {
+				reg.output(y, e.box, e.height)
+				y -= e.height
+			}
+		}
 		cb.pageBuf, cb.pageBufHeight = nil, 0
 		cb.pageInserts = map[InsertClass][]*Insert{}
 		cb.pageInsertHeight = map[InsertClass]bag.ScaledPoint{}

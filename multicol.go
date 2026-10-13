@@ -376,16 +376,11 @@ func (cb *CSSBuilder) balanceColumns(vl *node.VList, fc *flowCursor, cr *columnR
 	if !ok || end.row == 0 && cr.col == cr.count-1 {
 		return
 	}
-	lo, hi := bag.ScaledPoint(0), end.rowTop-end.pageBottom()
-	for hi-lo > bag.MustSP("0.5pt") {
-		mid := lo + (hi-lo)/2
-		if _, fits := cb.columnTrial(vl, fc, cr, end.row, mid); fits {
-			hi = mid
-		} else {
-			lo = mid
-		}
-	}
-	cr.balanceRow, cr.balanced = end.row, hi
+	h := bisectTrial(end.rowTop-end.pageBottom(), func(h bag.ScaledPoint) bool {
+		_, fits := cb.columnTrial(vl, fc, cr, end.row, h)
+		return fits
+	})
+	cr.balanceRow, cr.balanced = end.row, h
 	cr.cur = cr.current()
 	fc.cur = cr.cur
 }
@@ -408,23 +403,53 @@ func (cb *CSSBuilder) columnTrial(vl *node.VList, fc *flowCursor, cr *columnRegi
 	t.cur = t.current()
 	tfc.cur = t.cur
 
+	fits := false
+	cb.onTrialPage(cb.pageState(), func() {
+		restart, _, err := cb.outputGroupNodes(trialCopy(vl), &tfc)
+		if err != nil || restart >= 0 {
+			return
+		}
+		if err := t.filled(filled{}); err != nil {
+			return
+		}
+		fits = !t.tooTall
+	})
+	return &t, fits
+}
+
+// bisectTrial returns the smallest height up to hi, to 0.5pt, at which fits
+// holds, given that it holds at hi. Where fits is not monotone it may miss a
+// lower one, never return one that does not fit.
+func bisectTrial(hi bag.ScaledPoint, fits func(bag.ScaledPoint) bool) bag.ScaledPoint {
+	lo := bag.ScaledPoint(0)
+	for hi-lo > bag.MustSP("0.5pt") {
+		mid := lo + (hi-lo)/2
+		if fits(mid) {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+	return hi
+}
+
+// pageState is the page being filled, without setting it aside.
+func (cb *CSSBuilder) pageState() pageState {
+	return pageState{cb.pageBuf, cb.pageBufHeight, cb.pageInserts, cb.pageInsertHeight}
+}
+
+// onTrialPage runs trial on a copy of the page s, and puts the builder's
+// page back as it was afterwards.
+func (cb *CSSBuilder) onTrialPage(s pageState, trial func()) {
 	saved := cb.takePageState()
-	cb.pageBuf = append([]pageBufEntry(nil), saved.buf...)
-	cb.pageBufHeight = saved.bufHeight
-	for k, v := range saved.inserts {
+	cb.pageBuf = append([]pageBufEntry(nil), s.buf...)
+	cb.pageBufHeight = s.bufHeight
+	for k, v := range s.inserts {
 		cb.pageInserts[k] = append([]*Insert(nil), v...)
 	}
-	maps.Copy(cb.pageInsertHeight, saved.insertsHgt)
+	maps.Copy(cb.pageInsertHeight, s.insertsHgt)
 	defer cb.restorePageState(saved)
-
-	restart, _, err := cb.outputGroupNodes(trialCopy(vl), &tfc)
-	if err != nil || restart >= 0 {
-		return &t, false
-	}
-	if err := t.filled(filled{}); err != nil {
-		return &t, false
-	}
-	return &t, !t.tooTall
+	trial()
 }
 
 // trialCopy copies vl deeply for a trial run. Copy clones the attributes
