@@ -1998,6 +1998,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 	// and keep their built width.
 	splitTe, _ := blockVL.Attributes["_splittableTe"].(*frontend.Text)
 	teWidth, _ := blockVL.Attributes["_splittableTeWidth"].(bag.ScaledPoint)
+	lineShift, _ := blockVL.Attributes[attrLineShift].(bag.ScaledPoint)
 	curContentWidth := fc.cur.width
 	// A block container carries its source Text and offered width instead:
 	// children a page break parts from the float they were set beside are
@@ -2064,11 +2065,15 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		lt, hasLT := splitTe.Settings[settingLangTag]
 		delete(splitTe.Settings, settingLangTag)
 		restoreTrace := captureTraceSettings(splitTe)
+		// The side paddings are the box's, as in buildVlistInternal.
+		restorePadding := captureSidePadding(splitTe)
 		tailVL, err := cb.frontend.FormatParagraphTail(splitTe, steps, newTeWidth)
+		restorePadding()
 		restoreTrace()
 		if err == nil && tailVL != nil {
 			// The block's first line was placed already.
 			trimLines(tailVL, textBoxTrim{end: cb.trims[splitTe].end})
+			shiftLines(tailVL.List, lineShift)
 		}
 		if hasPBI {
 			splitTe.Settings[settingPageBreakInside] = pbi
@@ -2119,8 +2124,8 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		}
 
 		history = steps
+		innerWidth += newTeWidth - teWidth
 		teWidth = newTeWidth
-		innerWidth = newTeWidth
 		curContentWidth = fc.cur.width
 		placedLines = 0
 		bandRows = 0

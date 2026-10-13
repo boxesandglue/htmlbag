@@ -33,7 +33,7 @@ func linesAcross(v *node.VList) []lineAcross {
 				case *node.VList:
 					sx, h, d = k.ShiftX, k.Height, k.Depth
 				case *node.HList:
-					h, d = k.Height, k.Depth
+					sx, h, d = k.ShiftX, k.Height, k.Depth
 				case *node.Kern:
 					h = k.Kern
 				case *node.Glue:
@@ -106,6 +106,9 @@ func TestABandIsMeasuredFromTheFloatsEdge(t *testing.T) {
 		{"padding on top of a bare block", "left", `<div style="padding-top:20pt"><p>P</p></div>`, [2]string{"60pt", "200pt"}, 2, [2]string{"0pt", "200pt"}},
 		{"float in a block with padding", "left", `<div style="padding-left:20pt">FLOAT<p>P</p></div>`, [2]string{"80pt", "200pt"}, 4, [2]string{"20pt", "200pt"}},
 		{"right float, paragraph with padding", "right", `<p style="padding-right:20pt">P</p>`, [2]string{"0pt", "140pt"}, 4, [2]string{"0pt", "180pt"}},
+		{"paragraph with padding-left", "left", `<p style="padding-left:20pt">P</p>`, [2]string{"60pt", "200pt"}, 4, [2]string{"20pt", "200pt"}},
+		{"paragraph with padding on both sides", "left", `<p style="padding:0 10pt 0 20pt">P</p>`, [2]string{"60pt", "190pt"}, 4, [2]string{"20pt", "190pt"}},
+		{"right float, paragraph with padding-left", "right", `<p style="padding-left:20pt">P</p>`, [2]string{"20pt", "140pt"}, 4, [2]string{"20pt", "200pt"}},
 		{"flow-root", "left", `<div style="display:flow-root;background-color:#eee"><p>P</p></div>`, [2]string{"60pt", "200pt"}, 0, [2]string{"60pt", "200pt"}},
 		{"flow-root paragraph", "left", `<p style="display:flow-root;background-color:#eee">P</p>`, [2]string{"60pt", "200pt"}, 0, [2]string{"60pt", "200pt"}},
 		{"flow-root past the float", "left", `<div style="display:flow-root;margin-left:80pt"><p>P</p></div>`, [2]string{"80pt", "200pt"}, 0, [2]string{"80pt", "200pt"}},

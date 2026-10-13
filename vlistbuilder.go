@@ -983,25 +983,16 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// pass at a different width re-renders correctly.
 	resolveDeferredSizing(te.Items, contentWidth)
 
-	// If HTMLBorder will wrap this leaf (background or border set), the
-	// padding-left / padding-right are applied by HTMLBorder as glue
-	// around the inner vl. FormatParagraph also reads SettingPaddingLeft
-	// from te.Settings and adds it as paragraph IndentLeft for every
-	// line — which would double-apply the padding (once as IndentLeft
-	// inside the inner vl, once as paddingLeftGlue around it). Strip
-	// the padding settings here so FormatParagraph does not consume
-	// them; HTMLBorder still sees them via the hv struct captured above.
-	// Snapshot the padding settings: the border case strips them below and
-	// FormatParagraph itself consumes SettingPaddingLeft (it becomes the
-	// paragraph indent). Both are restored after FormatParagraph so a reflow
-	// rebuild at another page width sees the same input again.
-	paddingLeftSaved, hasPaddingLeftSaved := te.Settings[frontend.SettingPaddingLeft]
-	paddingRightSaved, hasPaddingRightSaved := te.Settings[frontend.SettingPaddingRight]
-	hasBorderOrBg := hv.hasBorder() || hv.BackgroundColor != nil
-	if hasBorderOrBg {
-		delete(te.Settings, frontend.SettingPaddingLeft)
-		delete(te.Settings, frontend.SettingPaddingRight)
-	}
+	// The side paddings belong to the box, not to its lines: the lines are
+	// set at contentWidth, HTMLBorder pads around them when the box has a
+	// border or background, and without one they are shifted by the
+	// padding-left (lineShift below). FormatParagraph would read
+	// SettingPaddingLeft as the paragraph indent, which takes the padding
+	// off a second time and gives way to any other indent, such as a
+	// float's band. So it never sees them; they are restored after it, as
+	// a table cell's measuring passes and a page-width reflow format this
+	// same Text again.
+	restoreSidePadding := captureSidePadding(te)
 
 	// Capture-and-strip settingPageBreakInside before FormatParagraph.
 	// Block-level Text that only contains inline children reaches the leaf
@@ -1051,20 +1042,14 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// per side. The row count is resolved here rather than in the container,
 	// because it is the band's height divided by the leading these lines will
 	// be set at — which only this point knows. The band is measured from the
-	// paragraph's edges. Inside a border or background the lines sit in the
-	// box HTMLBorder pads around them; without one they span contentWidth
-	// from the left edge and the linebreaker indents them by the
-	// padding-left, which a band only replaces where it asks for more.
-	lb := lineBox{top: hv.PaddingTop}
-	if hasBorderOrBg {
-		lb.left = hv.BorderLeftWidth + hv.PaddingLeft
-		lb.right = hv.BorderRightWidth + hv.PaddingRight
-		lb.top += hv.BorderTopWidth
-	} else {
-		lb.right = wd - contentWidth
-		lb.minLeft = hv.PaddingLeft
-	}
-	bandIndent := floatIndentFor(te.Settings, lb)
+	// paragraph's edges; the lines sit in its content box, with or without
+	// a border.
+	lineShift := hv.BorderLeftWidth + hv.PaddingLeft
+	bandIndent := floatIndentFor(te.Settings, lineBox{
+		left:  lineShift,
+		right: hv.BorderRightWidth + hv.PaddingRight,
+		top:   hv.BorderTopWidth + hv.PaddingTop,
+	})
 	if bandIndent.rows() > 0 {
 		// The indent channel is shared with text-indent and the initial-letter
 		// corner, and the band is derived per pass — so what was there before is
@@ -1088,21 +1073,16 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	if cb.breakTrims[te] {
 		vl.SetAttribute(attrTrimAtBreak, true)
 	}
-	// Restore the settings stripped before FormatParagraph (and the
-	// SettingPaddingLeft it consumed itself), so a reflow rebuild or a
-	// FormatParagraphTail pass at another page width sees the same input.
+	// Restore the settings stripped before FormatParagraph, so a reflow
+	// rebuild or a FormatParagraphTail pass at another page width sees the
+	// same input.
 	if hasPBI {
 		te.Settings[settingPageBreakInside] = pbi
 	}
 	if hasCSSHeight {
 		te.Settings[settingCSSHeight] = cssHeightRaw
 	}
-	if hasPaddingLeftSaved {
-		te.Settings[frontend.SettingPaddingLeft] = paddingLeftSaved
-	}
-	if hasPaddingRightSaved {
-		te.Settings[frontend.SettingPaddingRight] = paddingRightSaved
-	}
+	restoreSidePadding()
 	// Attach the captured page-break-inside value onto the returned VList.
 	// Done after FormatParagraph (and before HTMLBorder below) so the
 	// attribute sits on the outermost wrapper the paginator will see —
@@ -1183,6 +1163,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			cb.cloneDecoration(vl, te, nil, false, hv)
 		}
 	} else {
+		// Without a border or background the box is as wide as it was
+		// offered, and its lines start at the content edge.
+		shiftLines(vl.List, lineShift)
+		vl.Width = wd
 		// CSS padding-top/bottom without border/background: HTMLBorder
 		// does not run, so reserve the vertical padding as kerns around
 		// the lines. Inserted before the splittable snapshot so a
@@ -1217,11 +1201,15 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			vl.Attributes["_splittable"] = true
 			vl.Attributes["_splittableInner"] = splittableInner
 			vl.Attributes["_splittableHv"] = HTMLValues{}
-			vl.Attributes["_splittableInnerWidth"] = contentWidth
+			vl.Attributes["_splittableInnerWidth"] = wd
 			// Source Text and its formatting width for width-change reflow
-			// in outputBlockSplit (see the bordered branch above).
+			// in outputBlockSplit (see the bordered branch above), and the
+			// shift its lines take.
 			vl.Attributes["_splittableTe"] = te
 			vl.Attributes["_splittableTeWidth"] = contentWidth
+			if lineShift != 0 {
+				vl.Attributes[attrLineShift] = lineShift
+			}
 			cb.stampFragLines(vl.Attributes, te)
 			if bandIndent.rows() > 0 {
 				vl.Attributes[attrFloatBandIndent] = bandIndent
@@ -1680,4 +1668,34 @@ func isPlaceholderBox(n node.Node) bool {
 	}
 	p, _ := vl.Attributes[attrPlaceholder].(bool)
 	return p
+}
+
+// attrLineShift is the shift of the lines of a leaf paragraph without a border
+// or background: its border and padding on the left. A width reflow of the
+// paragraph's rest (outputBlockSplit) shifts the lines it sets by it as well.
+const attrLineShift = "_lineShift"
+
+// captureSidePadding removes padding-left and padding-right from te and returns
+// the restore. See the leaf branch of buildVlistInternal.
+func captureSidePadding(te *frontend.Text) func() {
+	restore := restoreSettings(te.Settings, []frontend.SettingType{frontend.SettingPaddingLeft, frontend.SettingPaddingRight})
+	delete(te.Settings, frontend.SettingPaddingLeft)
+	delete(te.Settings, frontend.SettingPaddingRight)
+	return restore
+}
+
+// shiftLines moves every box in the list n, the lines of a paragraph, right by
+// shift.
+func shiftLines(n node.Node, shift bag.ScaledPoint) {
+	if shift == 0 {
+		return
+	}
+	for ; n != nil; n = n.Next() {
+		switch c := n.(type) {
+		case *node.HList:
+			c.ShiftX += shift
+		case *node.VList:
+			c.ShiftX += shift
+		}
+	}
 }

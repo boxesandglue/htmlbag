@@ -909,10 +909,8 @@ func (b *floatBand) consume(height bag.ScaledPoint) bool {
 }
 
 // lineBox is where a paragraph's lines sit in its own box: left and right in
-// from its edges, top down from its top. minLeft is an indent the lines have
-// anyway (a padding-left the linebreaker sets as the paragraph indent); a
-// band that asks for no more than that does not replace it.
-type lineBox struct{ left, right, top, minLeft bag.ScaledPoint }
+// from its edges, top down from its top.
+type lineBox struct{ left, right, top bag.ScaledPoint }
 
 // floatIndentFor turns the bands into the linebreaker's per-row inset on each
 // side, consuming the stamp as it goes: the bands are derived afresh by the
@@ -921,9 +919,6 @@ type lineBox struct{ left, right, top, minLeft bag.ScaledPoint }
 // float/clear settings are not touched here — see stripFloatSettings.
 func floatIndentFor(settings frontend.TypesettingSettings, lb lineBox) floatBandIndent {
 	s := takeBandStamp(settings).within(lb.left, lb.right, lb.top)
-	if s.left.inset <= lb.minLeft {
-		s.left = sideBand{}
-	}
 	leading := paragraphLeading(settings)
 	if leading <= 0 {
 		return floatBandIndent{}
