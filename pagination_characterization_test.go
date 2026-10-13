@@ -93,8 +93,9 @@ func charLines(mark string, n int) string {
 // A margin at an automatic page break is spent at the foot of the page when
 // it fits there, so the block after it starts flush with the next page top.
 // A margin that does not fit is truncated at the top of the next page (CSS
-// Fragmentation 3 §5.2), so the block starts flush there too. After a forced
-// break, and at the top of the document, the margin is kept.
+// Fragmentation 3 §5.2), so the block starts flush there too, also inside
+// the rest of a block split across the pages. After a forced break, and at
+// the top of the document, the margin is kept.
 func TestCharacterizeMarginAtPageTop(t *testing.T) {
 	five := bag.MustSP("5pt")
 	cases := []struct {
@@ -105,6 +106,7 @@ func TestCharacterizeMarginAtPageTop(t *testing.T) {
 		{"first block", `<p style="margin-top: 5pt">` + charLines("B", 2) + `</p>`, 1, charTop - five},
 		{"margin fits at the foot", `<p>` + charLines("A", 12) + `</p><p style="margin-top: 5pt">` + charLines("B", 2) + `</p>`, 2, charTop},
 		{"margin does not fit", `<p>` + charLines("A", 13) + `</p><p style="margin-top: 5pt">` + charLines("B", 2) + `</p>`, 2, charTop},
+		{"margin does not fit in a split block", `<p>I</p><div><section><p>` + charLines("A", 12) + `</p><p style="margin-top: 5pt">` + charLines("B", 2) + `</p></section></div>`, 2, charTop},
 		{"break-before", `<p>` + charLines("A", 3) + `</p><p style="margin-top: 5pt; break-before: page">` + charLines("B", 2) + `</p>`, 2, charTop - five},
 		{"break-after", `<p style="break-after: page">` + charLines("A", 3) + `</p><p style="margin-top: 5pt">` + charLines("B", 2) + `</p>`, 2, charTop - five},
 	}

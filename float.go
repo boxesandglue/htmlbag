@@ -42,20 +42,25 @@ import (
 //     item or in a paragraph with a border or padding is left in flow. A
 //     lifted float stands at the container's edge, outside a side margin of
 //     the paragraph.
-//   - One band at a time: a float opening while a band is live starts below it
-//     rather than beside it, so two floats never overlap but neither do they sit
-//     side by side as a browser would place them.
+//   - One band per side: a left and a right float stand side by side, each
+//     with its own band, as long as they leave room for text between them.
+//     A float opening while a band on its own side is live starts below it
+//     rather than beside it, so two floats on one side never overlap but
+//     neither do they sit next to each other as a browser would place them:
+//     the lines beside both would need an inset that changes where the
+//     shorter float ends, which the linebreaker's one inset per side cannot
+//     give.
 //   - A float without a width shrinks to its longest line (floatFitWidth),
 //     but one holding a table in a bordered box, a block image or a rule is
 //     set at the container's width, and the text after it goes below it.
 //   - A margin declared as zero gets the default gutter, because a margin is
 //     stamped on every element whether or not it was written.
-//   - A negative margin is not what CSS would do with it: on the text side it
-//     falls back to the gutter (the margin has to beat zero to be used), and on
-//     the far side it flows into the shift and the inset unfiltered, pulling the
-//     float outside its container rather than overlapping the text beside it.
-//     Below the float it shortens the band, down to nothing at all, but never
-//     past the float box, which the container holds whatever the margin says.
+//   - A negative side margin works as in CSS (floatInset), but where the text
+//     runs over the float the float covers it: the float is painted last
+//     (PaintLast), and a browser paints the text on top. A negative margin
+//     above the float is ignored rather than raising it. Below the float it
+//     shortens the band, down to nothing at all, but never past the float box,
+//     which the container holds whatever the margin says.
 //
 // At a page break a float behaves as in CSS paged media: the band does not
 // cross it. The float box reserves no vertical space, so the paginator reads
@@ -69,7 +74,7 @@ import (
 // that height does, and the container it extends ends there (endOverhangAt).
 
 // floatGutter is the initial -bag-float-gutter: the space between a float and
-// the text beside it when the float's margin on that side is not positive. CSS
+// the text beside it when the float's margin on that side is zero. CSS
 // has no such space, but a picture butting against the text reads as a mistake
 // rather than as a layout. A declared margin replaces it; zero cannot, since
 // "margin: 0" and no margin at all arrive as the same value, so a stylesheet
@@ -77,7 +82,7 @@ import (
 const floatGutter = 9 * bag.Factor
 
 // floatMargins is what a float holds clear around itself: its margins, and
-// the gutter that stands in for a margin facing the text that is not positive.
+// the gutter that stands in for a zero margin facing the text.
 type floatMargins struct{ left, right, top, bottom, gutter bag.ScaledPoint }
 
 // marginsOf reads the margins declared on the float.
@@ -128,13 +133,15 @@ func (fs *FormattingStyles) floatMargins() floatMargins {
 }
 
 // textGap is the space between the float and the text: the margin on the side
-// the text is on, or the gutter where that margin is not positive.
+// the text is on, or the gutter where that margin is zero. Only zero stands for
+// "no margin" as well: a negative margin was written, and as in CSS it lets the
+// text run that far over the float, or past it altogether.
 func (m floatMargins) textGap(side string) bag.ScaledPoint {
 	margin := m.right
 	if side == "right" {
 		margin = m.left
 	}
-	if margin > 0 {
+	if margin != 0 {
 		return margin
 	}
 	return m.gutter
@@ -168,27 +175,34 @@ const (
 	attrFloatBandIndent = "floatBandIndent"
 )
 
-// floatBandIndent is what a band did to a leaf paragraph: the first rows lines
-// gave up inset on side.
-type floatBandIndent struct {
+// sideIndent is what a band did to one edge of a leaf paragraph: the first
+// rows lines gave up inset there.
+type sideIndent struct {
 	inset bag.ScaledPoint
 	rows  int
-	side  string
+}
+
+// floatBandIndent is what the bands did to a leaf paragraph, by side.
+type floatBandIndent struct{ left, right sideIndent }
+
+// rows is the number of lines a band narrowed, on either side.
+func (b floatBandIndent) rows() int {
+	return max(b.left.rows, b.right.rows)
 }
 
 // settings are the paragraph settings the indent was applied through, for a
 // FormatParagraphTail step that has to reproduce the narrowed lines.
 func (b floatBandIndent) settings() frontend.TypesettingSettings {
-	if b.side == "right" {
-		return frontend.TypesettingSettings{
-			frontend.SettingIndentRight:     b.inset,
-			frontend.SettingIndentRightRows: b.rows,
-		}
+	s := frontend.TypesettingSettings{}
+	if b.left.rows > 0 {
+		s[frontend.SettingIndentLeft] = b.left.inset
+		s[frontend.SettingIndentLeftRows] = b.left.rows
 	}
-	return frontend.TypesettingSettings{
-		frontend.SettingIndentLeft:     b.inset,
-		frontend.SettingIndentLeftRows: b.rows,
+	if b.right.rows > 0 {
+		s[frontend.SettingIndentRight] = b.right.inset
+		s[frontend.SettingIndentRightRows] = b.right.rows
 	}
+	return s
 }
 
 // floatBoxHeight reports the painted extent of a float box in a sibling chain,
@@ -349,9 +363,11 @@ func (m floatMargins) forPage(rightPage bool) floatMargins {
 
 // floatInset is what the content beside a float has to give up: the float,
 // the margin between the two, and the margin on the far side, which is space
-// the float holds against the container edge rather than against the text. A
-// negative far margin of width plus gutter brings it to zero: the float hangs
-// outside the text block and takes nothing from it.
+// the float holds against the container edge rather than against the text.
+// This is the width of the float's margin box, as in CSS, and a negative
+// margin on either side takes from it. On the far side the float moves out
+// past the container edge (floatShiftX), on the text side the text moves in
+// over the float; at zero or less the float takes nothing from the text.
 func floatInset(side string, width bag.ScaledPoint, m floatMargins) bag.ScaledPoint {
 	inset := width + m.textGap(side)
 	if side == "right" {
@@ -771,22 +787,67 @@ func openBand(vls *node.VList, box *node.VList, declared string, wd bag.ScaledPo
 	return &floatBand{side: side, rightPage: rightPage, inset: inset, remaining: height, boxRemaining: boxHeight}
 }
 
-// narrow marks a child as sitting in the band. The row count is left to the
-// paragraph: a container's child does not yet carry the leading its lines will
-// be set at, and the count is the band's height divided by exactly that.
-func (b *floatBand) narrow(itm any) {
+// floatBands are the live bands of a container, one per side. A left and a
+// right float stand side by side, each narrowing its own edge of the lines
+// for its own height.
+type floatBands struct{ left, right *floatBand }
+
+// of returns the slot of the band on side, a physical side.
+func (bs *floatBands) of(side string) **floatBand {
+	if side == "right" {
+		return &bs.right
+	}
+	return &bs.left
+}
+
+// opposite returns the slot of the band across from side.
+func (bs *floatBands) opposite(side string) **floatBand {
+	if side == "right" {
+		return &bs.left
+	}
+	return &bs.right
+}
+
+// live reports whether a band is live on either side.
+func (bs *floatBands) live() bool {
+	return bs.left != nil || bs.right != nil
+}
+
+// consume passes height of every live band and drops the ones it spends.
+func (bs *floatBands) consume(height bag.ScaledPoint) {
+	for _, b := range [...]**floatBand{&bs.left, &bs.right} {
+		if *b != nil && !(*b).consume(height) {
+			*b = nil
+		}
+	}
+}
+
+// narrow marks a child as sitting in the bands, with the inset and the
+// height each still has on its side. The row count is left to the paragraph:
+// a container's child does not yet carry the leading its lines will be set
+// at, and the count is the band's height divided by exactly that.
+func (bs *floatBands) narrow(itm any) {
 	t, ok := itm.(*frontend.Text)
-	if !ok || b.remaining <= 0 {
+	if !ok {
 		return
 	}
-	setFloatBand(t.Settings, b.inset, b.remaining, b.side)
+	var s bandStamp
+	if b := bs.left; b != nil && b.remaining > 0 {
+		s.left = sideBand{inset: b.inset, height: b.remaining}
+	}
+	if b := bs.right; b != nil && b.remaining > 0 {
+		s.right = sideBand{inset: b.inset, height: b.remaining}
+	}
+	if s != (bandStamp{}) {
+		t.Settings[settingFloatBands] = s
+	}
 }
 
 // clearBandStamp wipes any band a previous pass stamped on a child, so that a
 // child no longer covered by a float is not indented by a leftover.
 func clearBandStamp(itm any) {
 	if t, ok := itm.(*frontend.Text); ok {
-		clearFloatBand(t.Settings)
+		delete(t.Settings, settingFloatBands)
 	}
 }
 
@@ -808,26 +869,31 @@ func (b *floatBand) consume(height bag.ScaledPoint) bool {
 	return b.gap() > 0
 }
 
-// floatIndentFor turns a band into the linebreaker's per-row inset, consuming
-// the band as it goes: the band is derived afresh by the container on every
-// formatting pass, so a stamp left behind would be a phantom indent the next
-// time this paragraph is measured. The author's own float/clear settings are
-// not touched here — see stripFloatSettings.
-func floatIndentFor(settings frontend.TypesettingSettings) (inset bag.ScaledPoint, rows int, side string) {
-	raw, height, side := floatBandOf(settings)
-	if raw <= 0 {
-		return 0, 0, ""
-	}
-
+// floatIndentFor turns the bands into the linebreaker's per-row inset on each
+// side, consuming the stamp as it goes: the bands are derived afresh by the
+// container on every formatting pass, so a stamp left behind would be a
+// phantom indent the next time this paragraph is measured. The author's own
+// float/clear settings are not touched here — see stripFloatSettings.
+func floatIndentFor(settings frontend.TypesettingSettings) floatBandIndent {
+	s := takeBandStamp(settings)
 	leading := paragraphLeading(settings)
-	if leading <= 0 || height <= 0 {
-		return 0, 0, ""
+	if leading <= 0 {
+		return floatBandIndent{}
 	}
-	rows = int(height / leading)
-	if height%leading != 0 {
+	return floatBandIndent{left: s.left.indent(leading), right: s.right.indent(leading)}
+}
+
+// indent is the inset of one band on lines set at leading: as many rows as
+// it takes to pass the band's height.
+func (b sideBand) indent(leading bag.ScaledPoint) sideIndent {
+	if b.inset <= 0 || b.height <= 0 {
+		return sideIndent{}
+	}
+	rows := int(b.height / leading)
+	if b.height%leading != 0 {
 		rows++
 	}
-	return raw, rows, side
+	return sideIndent{inset: b.inset, rows: rows}
 }
 
 // paragraphLeading is what a float's height is divided by to count the lines it
@@ -842,14 +908,19 @@ func paragraphLeading(settings frontend.TypesettingSettings) bag.ScaledPoint {
 	return 0
 }
 
-func floatBandOf(settings frontend.TypesettingSettings) (inset bag.ScaledPoint, height bag.ScaledPoint, side string) {
-	inset, _ = settings[settingFloatInset].(bag.ScaledPoint)
-	height, _ = settings[settingFloatHeight].(bag.ScaledPoint)
-	side, _ = settings[settingFloatSide].(string)
-	delete(settings, settingFloatInset)
-	delete(settings, settingFloatHeight)
-	delete(settings, settingFloatSide)
-	return inset, height, side
+// sideBand is what a band asks of a child on its side: inset off the lines,
+// for height down from the child's top.
+type sideBand struct{ inset, height bag.ScaledPoint }
+
+// bandStamp is the stamp settingFloatBands carries: the bands a child sits
+// in, by side.
+type bandStamp struct{ left, right sideBand }
+
+// takeBandStamp removes the band stamp from settings and returns it.
+func takeBandStamp(settings frontend.TypesettingSettings) bandStamp {
+	s, _ := settings[settingFloatBands].(bandStamp)
+	delete(settings, settingFloatBands)
+	return s
 }
 
 // captureFloatSettings removes the author-declared float and clear sentinels
@@ -923,20 +994,4 @@ func restoreSettings(settings frontend.TypesettingSettings, keys []frontend.Sett
 			}
 		}
 	}
-}
-
-// clearFloatBand drops a band stamped by an earlier formatting pass. The stamp
-// is derived from where the float actually landed, so it has to be re-derived
-// rather than carried: at another page width the same child may be clear of the
-// float altogether.
-func clearFloatBand(settings frontend.TypesettingSettings) {
-	delete(settings, settingFloatInset)
-	delete(settings, settingFloatHeight)
-	delete(settings, settingFloatSide)
-}
-
-func setFloatBand(settings frontend.TypesettingSettings, inset, height bag.ScaledPoint, side string) {
-	settings[settingFloatInset] = inset
-	settings[settingFloatHeight] = height
-	settings[settingFloatSide] = side
 }

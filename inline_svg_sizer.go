@@ -48,11 +48,14 @@ import (
 // "vertical cell part" VList. A bare Rule sitting directly under a
 // nested VList would not reach the horizontal emit path that knows
 // how to write the Pre stream with positioning.
-func newInlineSVGFormatter(doc *svgreader.Document, dims imageDims, df *frontend.Document, family *frontend.FontFamily) frontend.FormatToVList {
+func newInlineSVGFormatter(doc *svgreader.Document, crop *node.ImageCrop, dims imageDims, df *frontend.Document, family *frontend.FontFamily) frontend.FormatToVList {
 	return func(containerWidth bag.ScaledPoint) (*node.VList, error) {
 		tr := svgTextRenderer(df, family)
 
 		naturalW := bag.ScaledPointFromFloat(doc.Width)
+		if crop != nil {
+			naturalW = bag.ScaledPointFromFloat(crop.Width)
+		}
 		if naturalW <= 0 {
 			naturalW = bag.MustSP("100pt")
 		}
@@ -72,7 +75,7 @@ func newInlineSVGFormatter(doc *svgreader.Document, dims imageDims, df *frontend
 		}
 
 		wd := dims.resolveWidth(containerWidth, naturalW)
-		svgNode := df.Doc.CreateSVGNodeFromDocument(doc, wd, dims.ht, tr)
+		svgNode := createSVGNode(df, doc, crop, wd, dims.ht, tr)
 
 		// Pure-Depth rule (see Geometry trick above).
 		svgHeight := svgNode.Height
@@ -91,6 +94,15 @@ func newInlineSVGFormatter(doc *svgreader.Document, dims imageDims, df *frontend
 		vl.Depth = svgHeight
 		return vl, nil
 	}
+}
+
+// createSVGNode renders doc, or the region crop of it (an object-view-box) when
+// crop is set.
+func createSVGNode(df *frontend.Document, doc *svgreader.Document, crop *node.ImageCrop, wd, ht bag.ScaledPoint, tr *frontend.SVGTextRenderer) *node.Rule {
+	if crop == nil {
+		return df.Doc.CreateSVGNodeFromDocument(doc, wd, ht, tr)
+	}
+	return df.Doc.CreateSVGNodeFromDocumentCrop(doc, *crop, wd, ht, tr)
 }
 
 // parseSVGPercentWidth interprets an SVG width="…" attribute.

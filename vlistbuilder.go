@@ -220,7 +220,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// lands on the paragraph that actually breaks the lines and only the rows
 		// the float covers are shortened.
 		defer captureFloatSettings(settings)()
-		inheritedInset, inheritedHeight, inheritedSide := floatBandOf(settings)
+		inheritedBands := takeBandStamp(settings)
 		var bandShiftX bag.ScaledPoint
 
 		// Track previous element's margin-bottom for margin collapsing
@@ -233,41 +233,56 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// the next in-flow child says which margin-top it ends in.
 		var floatMarginKern *node.Kern
 
-		// The band a float left behind, if the container is inside one. See
-		// float.go: the float itself is painted and leaves the vertical flow;
-		// the band is what keeps the content after it clear.
-		var band *floatBand
+		// The bands floats left behind, one per side, if the container is
+		// inside any. See float.go: the float itself is painted and leaves the
+		// vertical flow; the band is what keeps the content after it clear.
+		var bands floatBands
 		// hanger is the band of a float with no footprint in the text (a
 		// margin note pulled out of the block by a negative margin). It
-		// narrows nothing, so it lives beside a text-narrowing band: a note
+		// narrows nothing, so it lives beside the text-narrowing bands: a note
 		// and a figure written one after the other both start level with the
 		// paragraph they precede, as they would in a browser. All the hanger
 		// does is keep the container tall enough to hold its box.
 		var hanger *floatBand
 
-		if inheritedInset > 0 {
+		for _, side := range [...]string{"left", "right"} {
+			inherited := inheritedBands.left
+			if side == "right" {
+				inherited = inheritedBands.right
+			}
+			if inherited.inset <= 0 {
+				continue
+			}
 			if hasBorderOrBg {
-				childBaseWidth -= inheritedInset
-				if inheritedSide != "right" {
-					bandShiftX = inheritedInset
+				childBaseWidth -= inherited.inset
+				if side == "left" {
+					bandShiftX = inherited.inset
 				}
 			} else {
 				// Carried as a live band rather than stamped on every child at
 				// once: the band shortens as the children fill it, so only the
 				// children the float actually covers are narrowed, and a `clear`
 				// among them ends it like any other.
-				band = &floatBand{
-					side:      inheritedSide,
-					inset:     inheritedInset,
-					remaining: inheritedHeight,
+				*bands.of(side) = &floatBand{
+					side:      side,
+					inset:     inherited.inset,
+					remaining: inherited.height,
 					inherited: true,
 				}
 			}
 		}
 
+		// advance moves the cursor down by h past every live band.
+		advance := func(h bag.ScaledPoint) {
+			bands.consume(h)
+			if hanger != nil && !hanger.consume(h) {
+				hanger = nil
+			}
+		}
 		// skipBand moves the cursor past whatever is left of a live band, so
 		// that what comes next starts below the float rather than beside it.
-		// The caller drops its reference to the band.
+		// The other bands pass by as much. The caller drops its reference to
+		// the band.
 		skipBand := func(b *floatBand, origin string) {
 			if gap := b.gap(); gap > 0 {
 				k := node.NewKern()
@@ -275,19 +290,24 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				k.Attributes = node.H{"origin": origin}
 				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
 				vls.Height += gap
+				advance(gap)
+			}
+		}
+		// skip is skipBand for the band in a slot, which it empties.
+		skip := func(slot **floatBand, origin string) {
+			if b := *slot; b != nil {
+				*slot = nil
+				skipBand(b, origin)
 			}
 		}
 
 		te.Items = cb.liftLeadingFloats(te.Items)
 		cb.passTrimDown(te)
 		for i, itm := range te.Items {
-			if band != nil && clearsBand(itm, band) {
-				skipBand(band, "clear")
-				band = nil
-			}
-			if hanger != nil && clearsBand(itm, hanger) {
-				skipBand(hanger, "clear")
-				hanger = nil
+			for _, slot := range [...]**floatBand{&bands.left, &bands.right, &hanger} {
+				if *slot != nil && clearsBand(itm, *slot) {
+					skip(slot, "clear")
+				}
 			}
 			if side, float, isFloat := floatSideOf(itm); isFloat {
 				box, err := cb.buildFloat(float, childBaseWidth)
@@ -295,20 +315,25 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					return nil, err
 				}
 				if box != nil && box.Width > 0 {
-					// A float opening while a band of its own kind is live is
-					// placed below it: the band is what the second float would
-					// otherwise overwrite, leaving the first one overhanging
-					// everything after it by its unconsumed remainder. A float
-					// without a footprint and one that narrows the text do
-					// not compete, so those two share their position.
-					narrows := floatFootprint(side, box.Width, cb.marginsOf(float), cb.pageIsRight()) > 0
-					if narrows && band != nil {
-						skipBand(band, "float")
-						band = nil
-					}
-					if !narrows && hanger != nil {
-						skipBand(hanger, "float")
-						hanger = nil
+					// A float opening while a band of its own kind is live on
+					// its side is placed below it: the band is what the second
+					// float would otherwise overwrite, leaving the first one
+					// overhanging everything after it by its unconsumed
+					// remainder. One on the other side stands beside it, as
+					// long as the two leave room for the text between them;
+					// otherwise it goes below that one too. A float without a
+					// footprint and one that narrows the text do not compete,
+					// so those two share their position.
+					footprint := floatFootprint(side, box.Width, cb.marginsOf(float), cb.pageIsRight())
+					narrows := footprint > 0
+					if narrows {
+						physical := resolveFloatSide(side, cb.pageIsRight())
+						skip(bands.of(physical), "float")
+						if o := bands.opposite(physical); *o != nil && (*o).inset+footprint >= childBaseWidth {
+							skip(o, "float")
+						}
+					} else {
+						skip(&hanger, "float")
 					}
 					// The float sits below the previous sibling's bottom
 					// margin, where a browser puts it: that margin is laid
@@ -335,6 +360,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						k.Attributes = node.H{"origin": "margin", attrMarginTop: bag.ScaledPoint(0)}
 						vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
 						vls.Height += k.Kern
+						advance(k.Kern)
 						floatSpentMargin = floatMargin
 						floatMarginKern = k
 					}
@@ -350,7 +376,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						continue
 					}
 					if narrows {
-						band = opened
+						*bands.of(opened.side) = opened
 					} else {
 						hanger = opened
 					}
@@ -358,12 +384,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				}
 			}
 			clearBandStamp(itm)
-			if band != nil {
-				band.narrow(itm)
-			}
+			bands.narrow(itm)
 			// Remembered before the child is built: the band may be spent by
 			// the time it is, and the mark is about how it was built.
-			inBand := band != nil
+			inBand := bands.live()
 			heightBefore, depthBefore := vls.Height, vls.Depth
 			switch t := itm.(type) {
 			case *frontend.Text:
@@ -699,19 +723,14 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			// The advance is height + depth: a child's own depth becomes the
 			// container's depth rather than its height, so the height delta
 			// alone carries the PREVIOUS child's depth and misses this one's.
-			advance := (vls.Height + vls.Depth) - (heightBefore + depthBefore)
+			childAdvance := (vls.Height + vls.Depth) - (heightBefore + depthBefore)
 			// A child set beside a float is marked as such: a page break
 			// between the float and the child leaves the child beside
 			// nothing, and the paginator rebuilds it from the mark.
-			if inBand && advance > 0 {
+			if inBand && childAdvance > 0 {
 				markInFloatBand(vls)
 			}
-			if band != nil && !band.consume(advance) {
-				band = nil
-			}
-			if hanger != nil && !hanger.consume(advance) {
-				hanger = nil
-			}
+			advance(childAdvance)
 		}
 
 		// A float taller than everything beside it extends its container rather
@@ -721,11 +740,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// An inherited band is the ancestor's to extend: it painted the float and
 		// it is still counting this container's height against the band.
 		var overhang bag.ScaledPoint
-		if band != nil && !band.inherited {
-			overhang = band.gap()
-		}
-		if hanger != nil && hanger.gap() > overhang {
-			overhang = hanger.gap()
+		for _, b := range [...]*floatBand{bands.left, bands.right, hanger} {
+			if b != nil && !b.inherited {
+				overhang = max(overhang, b.gap())
+			}
 		}
 		if overhang > 0 {
 			k := node.NewKern()
@@ -1006,24 +1024,23 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	}
 
 	// Inside a float's band: the lines this paragraph contributes have to keep
-	// clear of the float, which is the linebreaker's own per-row inset. The row
-	// count is resolved here rather than in the container, because it is the
-	// band's height divided by the leading these lines will be set at — which
-	// only this point knows.
-	var bandIndent floatBandIndent
-	if inset, rows, side := floatIndentFor(te.Settings); rows > 0 {
-		bandIndent = floatBandIndent{inset: inset, rows: rows, side: side}
-		keys := [...]frontend.SettingType{frontend.SettingIndentLeft, frontend.SettingIndentLeftRows}
-		if side == "right" {
-			keys = [...]frontend.SettingType{frontend.SettingIndentRight, frontend.SettingIndentRightRows}
-		}
+	// clear of the float, which is the linebreaker's own per-row inset, one
+	// per side. The row count is resolved here rather than in the container,
+	// because it is the band's height divided by the leading these lines will
+	// be set at — which only this point knows.
+	bandIndent := floatIndentFor(te.Settings)
+	if bandIndent.rows() > 0 {
 		// The indent channel is shared with text-indent and the initial-letter
 		// corner, and the band is derived per pass — so what was there before is
 		// put back rather than left overwritten by a float that may not even be
 		// beside this paragraph at another page width.
-		defer restoreSettings(te.Settings, keys[:])()
-		te.Settings[keys[0]] = inset
-		te.Settings[keys[1]] = rows
+		defer restoreSettings(te.Settings, []frontend.SettingType{
+			frontend.SettingIndentLeft, frontend.SettingIndentLeftRows,
+			frontend.SettingIndentRight, frontend.SettingIndentRightRows,
+		})()
+		for key, value := range bandIndent.settings() {
+			te.Settings[key] = value
+		}
 	}
 
 	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points).
@@ -1124,7 +1141,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			vl.Attributes["_splittableTe"] = te
 			vl.Attributes["_splittableTeWidth"] = contentWidth
 			cb.stampFragLines(vl.Attributes, te)
-			if bandIndent.rows > 0 {
+			if bandIndent.rows() > 0 {
 				vl.Attributes[attrFloatBandIndent] = bandIndent
 			}
 			cb.cloneDecoration(vl, te, nil, false, hv)
@@ -1170,7 +1187,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			vl.Attributes["_splittableTe"] = te
 			vl.Attributes["_splittableTeWidth"] = contentWidth
 			cb.stampFragLines(vl.Attributes, te)
-			if bandIndent.rows > 0 {
+			if bandIndent.rows() > 0 {
 				vl.Attributes[attrFloatBandIndent] = bandIndent
 			}
 		}

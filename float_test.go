@@ -826,3 +826,73 @@ func TestFloatGutter(t *testing.T) {
 		})
 	}
 }
+
+// A negative margin on the side of the text lets the text run over the float
+// by that much, as in CSS: the inset is the width of the float's margin box,
+// and at zero or less the float takes nothing from the text. Only a zero
+// margin is replaced by the gutter, since only zero cannot be told from no
+// margin at all. The values are Chrome's for the same declarations. The
+// floats are 60pt wide.
+func TestANegativeMarginLetsTheTextRunOverTheFloat(t *testing.T) {
+	png, err := filepath.Abs("testdata/float.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Justified, so the line-end glue (lineRightInsets) holds the inset and
+	// no ragged rest.
+	box := func(side, style string) string {
+		return `<div><div style="float:` + side + `;width:60pt;height:40pt;` + style +
+			`"></div><p style="text-align:justify">` + floatProse + `</p></div>`
+	}
+	img := func(style string) string {
+		return `<div><img src="` + png + `" style="float:left;width:60pt;` + style +
+			`"><p style="text-align:justify">` + floatProse + `</p></div>`
+	}
+	for _, c := range []struct{ name, css, html, left, right string }{
+		{"left float", "", box("left", "margin-right:-10pt"), "50pt", "0pt"},
+		{"left float, no gutter", "* { -bag-float-gutter: 0 }", box("left", "margin-right:-10pt"), "50pt", "0pt"},
+		{"right float", "", box("right", "margin-left:-10pt"), "0pt", "50pt"},
+		{"both sides negative", "", box("left", "margin-left:-20pt;margin-right:-10pt"), "30pt", "0pt"},
+		{"far side positive", "", box("left", "margin-left:30pt;margin-right:-50pt"), "40pt", "0pt"},
+		{"as wide as the float", "", box("left", "margin-right:-60pt"), "0pt", "0pt"},
+		{"wider than the float", "", box("right", "margin-left:-80pt"), "0pt", "0pt"},
+		{"image", "", img("margin-right:-10pt"), "50pt", "0pt"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cb := floatBuilder(t)
+			if c.css != "" {
+				if err := cb.AddCSS(c.css); err != nil {
+					t.Fatal(err)
+				}
+			}
+			vl := buildHTML(t, cb, c.html)
+			left, right := lineIndents(vl), lineRightInsets(vl)
+			if len(left) == 0 || len(right) == 0 {
+				t.Fatal("no lines")
+			}
+			if want := bag.MustSP(c.left); left[0] != want {
+				t.Errorf("the first line is indented %s from the left, want %s", left[0], want)
+			}
+			if want := bag.MustSP(c.right); right[0] != want {
+				t.Errorf("the first line is indented %s from the right, want %s", right[0], want)
+			}
+		})
+	}
+}
+
+// A float the text runs past entirely narrows nothing, but it is still there:
+// the box is placed where it stands and the container holds it.
+func TestAFloatTheTextRunsPastIsStillHeld(t *testing.T) {
+	vl := buildHTML(t, floatBuilder(t),
+		`<div><div style="float:left;width:60pt;height:200pt;margin-right:-80pt"></div><p>one short line</p></div>`)
+	box := floatBox(vl)
+	if box == nil {
+		t.Fatal("no float box")
+	}
+	if box.ShiftX != 0 {
+		t.Errorf("the float sits at %s, want 0: a margin on the text side does not move it", box.ShiftX)
+	}
+	if got, want := vl.Height+vl.Depth, bag.MustSP("200pt"); got < want {
+		t.Errorf("the container is %s tall, less than the %s float it holds", got, want)
+	}
+}
