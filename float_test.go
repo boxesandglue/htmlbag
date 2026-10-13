@@ -342,21 +342,6 @@ func TestFloatSurvivesASecondFormattingPass(t *testing.T) {
 	}
 }
 
-// A float opening while a band is live must not simply replace it: the first
-// float would then overhang everything after it by whatever was left.
-func TestASecondFloatStartsBelowTheFirst(t *testing.T) {
-	cb := floatBuilder(t)
-	two := buildHTML(t, cb, `<div>`+
-		`<div style="float:left;width:60pt;height:40pt"></div>`+
-		`<div style="float:left;width:60pt;height:40pt"></div>`+
-		`<p>one short line</p></div>`)
-	got := two.Height + two.Depth
-	want := bag.MustSP("80pt")
-	if got < want {
-		t.Errorf("container is %s tall, want at least %s: the second float overwrote the first one's band", got, want)
-	}
-}
-
 // The band is consumed by what a child actually advances the cursor by. A
 // child's own depth becomes the container's depth rather than its height, so
 // measuring the height alone counts the previous child's depth and misses this

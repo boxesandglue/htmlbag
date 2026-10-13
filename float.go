@@ -46,14 +46,14 @@ import (
 //     item or in a paragraph with a border or padding is left in flow. A
 //     lifted float stands at the container's edge, outside a side margin of
 //     the paragraph.
-//   - One band per side: a left and a right float stand side by side, each
-//     with its own band, as long as they leave room for text between them.
-//     A float opening while a band on its own side is live starts below it
-//     rather than beside it, so two floats on one side never overlap but
-//     neither do they sit next to each other as a browser would place them:
-//     the lines beside both would need an inset that changes where the
-//     shorter float ends, which the linebreaker's one inset per side cannot
-//     give.
+//   - A float opening while others are live stands beside them, as in a
+//     browser: past the margin box of those on its own side, across from
+//     those on the other, each with a band of its own. The lines beside
+//     them give way to whichever reaches furthest in at their height, row by
+//     row (indentSteps). Where the text would keep no room, the float goes
+//     down past the float that ends first, as CSS has it, but the content
+//     after it goes down with it, where a browser leaves it beside the
+//     floats above.
 //   - A float without a width shrinks to its longest line (floatFitWidth),
 //     but one holding a table in a bordered box, a block image or a rule is
 //     set at the container's width, and the text after it goes below it.
@@ -80,7 +80,8 @@ import (
 // floatGutter is the initial -bag-float-gutter: the space between a float and
 // the text beside it when the float's margin on that side is zero. CSS
 // has no such space, but a picture butting against the text reads as a mistake
-// rather than as a layout. A declared margin replaces it; zero cannot, since
+// rather than as a layout. A float placed beside another one is not held off
+// by it: two floats without margins touch, as in a browser. A declared margin replaces it; zero cannot, since
 // "margin: 0" and no margin at all arrive as the same value, so a stylesheet
 // that wants the browser's behavior sets -bag-float-gutter: 0.
 const floatGutter = 9 * bag.Factor
@@ -164,6 +165,7 @@ const (
 	attrFloatWd          = "floatWd"
 	attrFloatX0          = "floatX0"
 	attrFloatDeclMargins = "floatDeclaredMargins"
+	attrFloatStack       = "floatStack"
 	attrFloatNarrows     = "floatNarrows"
 	// attrFloatHeight is the extent a float box paints, top margin included.
 	// The box itself reports no height, so the paginator reads this to know
@@ -180,32 +182,34 @@ const (
 	attrFloatBandIndent = "floatBandIndent"
 )
 
-// sideIndent is what a band did to one edge of a leaf paragraph: the first
-// rows lines gave up inset there.
-type sideIndent struct {
-	inset bag.ScaledPoint
-	rows  int
+// floatBandIndent is what the bands did to a leaf paragraph, by side: the
+// inset its first lines gave up there, row by row, as the linebreaker's
+// steps.
+type floatBandIndent struct{ left, right []node.IndentStep }
+
+// rows is the number of lines the bands narrowed, on either side.
+func (b floatBandIndent) rows() int {
+	return max(stepRows(b.left), stepRows(b.right))
 }
 
-// floatBandIndent is what the bands did to a leaf paragraph, by side.
-type floatBandIndent struct{ left, right sideIndent }
-
-// rows is the number of lines a band narrowed, on either side.
-func (b floatBandIndent) rows() int {
-	return max(b.left.rows, b.right.rows)
+// stepRows is the number of rows a list of steps covers.
+func stepRows(steps []node.IndentStep) int {
+	rows := 0
+	for _, s := range steps {
+		rows += s.Rows
+	}
+	return rows
 }
 
 // settings are the paragraph settings the indent was applied through, for a
 // FormatParagraphTail step that has to reproduce the narrowed lines.
 func (b floatBandIndent) settings() frontend.TypesettingSettings {
 	s := frontend.TypesettingSettings{}
-	if b.left.rows > 0 {
-		s[frontend.SettingIndentLeft] = b.left.inset
-		s[frontend.SettingIndentLeftRows] = b.left.rows
+	if len(b.left) > 0 {
+		s[frontend.SettingIndentLeftSteps] = b.left
 	}
-	if b.right.rows > 0 {
-		s[frontend.SettingIndentRight] = b.right.inset
-		s[frontend.SettingIndentRightRows] = b.right.rows
+	if len(b.right) > 0 {
+		s[frontend.SettingIndentRightSteps] = b.right
 	}
 	return s
 }
@@ -393,12 +397,13 @@ func floatFootprint(declared string, width bag.ScaledPoint, m floatMargins, righ
 }
 
 // floatShiftX is where a float box of the given width sits inside a container
-// of width wd.
-func floatShiftX(side string, wd, width bag.ScaledPoint, m floatMargins) bag.ScaledPoint {
+// of width wd, its margin box stack in from the edge of its side: past the
+// floats it stands beside.
+func floatShiftX(side string, wd, width, stack bag.ScaledPoint, m floatMargins) bag.ScaledPoint {
 	if side == "right" {
-		return wd - width - m.right
+		return wd - width - m.right - stack
 	}
-	return m.left
+	return stack + m.left
 }
 
 // fixLogicalFloats re-derives the shift of every inside/outside float in the
@@ -413,7 +418,8 @@ func fixLogicalFloats(vl *node.VList, rightPage bool) {
 			wd, _ := vl.Attributes[attrFloatWd].(bag.ScaledPoint)
 			x0, _ := vl.Attributes[attrFloatX0].(bag.ScaledPoint)
 			m, _ := vl.Attributes[attrFloatDeclMargins].(floatMargins)
-			vl.ShiftX = x0 + floatShiftX(resolveFloatSide(declared, rightPage), wd, vl.Width, m.forPage(rightPage))
+			stack, _ := vl.Attributes[attrFloatStack].(bag.ScaledPoint)
+			vl.ShiftX = x0 + floatShiftX(resolveFloatSide(declared, rightPage), wd, vl.Width, stack, m.forPage(rightPage))
 			vl.Attributes[attrFloatBuiltRight] = rightPage
 		}
 	}
@@ -429,6 +435,10 @@ type floatBand struct {
 	side      string          // "left" or "right", resolved for the page assumed at build time
 	rightPage bool            // the page parity the side was resolved against
 	inset     bag.ScaledPoint // what content has to give up to clear the float
+	// edge is where the float's margin box ends, measured from the same edge
+	// of the container as inset: a float placed beside this one starts there.
+	// It is inset without the gutter, which is space kept from the text only.
+	edge      bag.ScaledPoint
 	remaining bag.ScaledPoint // band height not yet passed
 	// boxRemaining is the float box's own extent not yet passed. It is the band
 	// itself until a negative bottom margin shortens the band below the box: the
@@ -721,11 +731,12 @@ func lineNaturalWidth(hl *node.HList) bag.ScaledPoint {
 
 // openBand places the float box in the container and returns the band it
 // leaves behind. The float sits in the container's content box, wd wide and
-// starting x0 in from the container's edge; the band is measured from that
-// box's edges. declared is the float side as written; inside and outside are
-// resolved against rightPage, the parity of the page current while the
-// container is built, and their margins are read as written for a right page.
-func openBand(vls *node.VList, box *node.VList, declared string, x0, wd bag.ScaledPoint, m floatMargins, rightPage bool) *floatBand {
+// starting x0 in from the container's edge, its margin box stack in from the
+// edge of its side; the band is measured from that box's edges. declared is
+// the float side as written; inside and outside are resolved against
+// rightPage, the parity of the page current while the container is built,
+// and their margins are read as written for a right page.
+func openBand(vls *node.VList, box *node.VList, declared string, x0, wd, stack bag.ScaledPoint, m floatMargins, rightPage bool) *floatBand {
 	side := resolveFloatSide(declared, rightPage)
 	declaredMargins := m
 	if isLogicalSide(declared) {
@@ -770,7 +781,7 @@ func openBand(vls *node.VList, box *node.VList, declared string, x0, wd bag.Scal
 	// zero, and clamping it here would be a branch nothing can observe.
 	height := boxHeight + m.bottom
 	width := box.Width
-	box.ShiftX = x0 + floatShiftX(side, wd, width, m)
+	box.ShiftX = x0 + floatShiftX(side, wd, width, stack, m)
 	// Zero height is what takes the box out of the vertical flow: the parent
 	// reserves nothing for it and the following content is held clear by the
 	// band instead. A box with no height above its reference point already hangs
@@ -782,35 +793,39 @@ func openBand(vls *node.VList, box *node.VList, declared string, x0, wd bag.Scal
 	// list order, the blocks it narrows come later and would cover it.
 	box.Attributes[document.PaintLast] = true
 	vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), box)
-	inset := floatInset(side, width, m)
+	inset := stack + floatInset(side, width, m)
 	if isLogicalSide(declared) {
 		box.Attributes[attrFloatLogical] = declared
 		box.Attributes[attrFloatBuiltRight] = rightPage
 		box.Attributes[attrFloatWd] = wd
 		box.Attributes[attrFloatX0] = x0
 		box.Attributes[attrFloatDeclMargins] = declaredMargins
+		box.Attributes[attrFloatStack] = stack
 		if inset > 0 {
 			box.Attributes[attrFloatNarrows] = true
 		}
 	}
-	return &floatBand{side: side, rightPage: rightPage, inset: inset, remaining: height, boxRemaining: boxHeight}
+	edge := stack + m.left + width + m.right
+	return &floatBand{side: side, rightPage: rightPage, inset: inset, edge: edge, remaining: height, boxRemaining: boxHeight}
 }
 
-// floatBands are the live bands of a container, one per side. A left and a
-// right float stand side by side, each narrowing its own edge of the lines
-// for its own height.
-type floatBands struct{ left, right *floatBand }
+// floatBands are the live bands of a container, by side. A left and a right
+// float stand side by side, each narrowing its own edge of the lines for its
+// own height, and floats on one side stand next to each other, each past the
+// margin box of the one before it (see stackEdge), so the lines beside them
+// give way to whichever reaches furthest in at their height.
+type floatBands struct{ left, right []*floatBand }
 
-// of returns the slot of the band on side, a physical side.
-func (bs *floatBands) of(side string) **floatBand {
+// of returns the bands on side, a physical side.
+func (bs *floatBands) of(side string) *[]*floatBand {
 	if side == "right" {
 		return &bs.right
 	}
 	return &bs.left
 }
 
-// opposite returns the slot of the band across from side.
-func (bs *floatBands) opposite(side string) **floatBand {
+// opposite returns the bands across from side.
+func (bs *floatBands) opposite(side string) *[]*floatBand {
 	if side == "right" {
 		return &bs.left
 	}
@@ -819,29 +834,87 @@ func (bs *floatBands) opposite(side string) **floatBand {
 
 // live reports whether a band is live on either side.
 func (bs *floatBands) live() bool {
-	return bs.left != nil || bs.right != nil
+	return len(bs.left) > 0 || len(bs.right) > 0
 }
 
 // consume passes height of every live band and drops the ones it spends.
 func (bs *floatBands) consume(height bag.ScaledPoint) {
-	for _, b := range [...]**floatBand{&bs.left, &bs.right} {
-		if *b != nil && !(*b).consume(height) {
-			*b = nil
+	for _, side := range [...]*[]*floatBand{&bs.left, &bs.right} {
+		kept := (*side)[:0]
+		for _, b := range *side {
+			if b.consume(height) {
+				kept = append(kept, b)
+			}
 		}
+		clear((*side)[len(kept):])
+		*side = kept
 	}
 }
 
+// first returns the band on either side that ends first: the one whose
+// remaining extent is the shortest.
+func (bs *floatBands) first() *floatBand {
+	var first *floatBand
+	for _, side := range [...][]*floatBand{bs.left, bs.right} {
+		for _, b := range side {
+			if first == nil || b.gap() < first.gap() {
+				first = b
+			}
+		}
+	}
+	return first
+}
+
+// gapOf is what is left of the longest of bands, see floatBand.gap.
+func gapOf(bands []*floatBand) bag.ScaledPoint {
+	var gap bag.ScaledPoint
+	for _, b := range bands {
+		gap = max(gap, b.gap())
+	}
+	return gap
+}
+
+// stackEdge is where a float opening beside bands starts, measured from
+// their edge of the container: past the margin box of every float still
+// beside the cursor (CSS 2.1 §9.5.1, rules 2 and 1), and no further out
+// than the container's edge.
+func stackEdge(bands []*floatBand) bag.ScaledPoint {
+	var edge bag.ScaledPoint
+	for _, b := range bands {
+		if b.remaining > 0 {
+			edge = max(edge, b.edge)
+		}
+	}
+	return edge
+}
+
+// textInset is what bands take from the lines at the cursor: the widest
+// inset among them.
+func textInset(bands []*floatBand) bag.ScaledPoint {
+	var inset bag.ScaledPoint
+	for _, b := range bands {
+		if b.remaining > 0 {
+			inset = max(inset, b.inset)
+		}
+	}
+	return inset
+}
+
 // stamp is what the live bands ask of a child whose margin box starts at the
-// cursor: the inset and the height each still has on its side, moved into the
-// child's box by its side margins and by the margin laid out above it (see
-// bandStamp.within).
+// cursor: the inset, edge and height each still has on its side, moved into
+// the child's box by its side margins and by the margin laid out above it
+// (see bandStamp.within).
 func (bs *floatBands) stamp(left, right, top bag.ScaledPoint) bandStamp {
 	var s bandStamp
-	if b := bs.left; b != nil && b.remaining > 0 {
-		s.left = sideBand{inset: b.inset, height: b.remaining}
+	for _, b := range bs.left {
+		if b.remaining > 0 {
+			s.left = append(s.left, sideBand{inset: b.inset, edge: b.edge, height: b.remaining})
+		}
 	}
-	if b := bs.right; b != nil && b.remaining > 0 {
-		s.right = sideBand{inset: b.inset, height: b.remaining}
+	for _, b := range bs.right {
+		if b.remaining > 0 {
+			s.right = append(s.right, sideBand{inset: b.inset, edge: b.edge, height: b.remaining})
+		}
 	}
 	return s.within(left, right, top)
 }
@@ -851,7 +924,7 @@ func (bs *floatBands) stamp(left, right, top bag.ScaledPoint) bandStamp {
 // its lines will be set at, and the count is the band's height divided by
 // exactly that.
 func (s bandStamp) put(t *frontend.Text) {
-	if s != (bandStamp{}) {
+	if len(s.left) > 0 || len(s.right) > 0 {
 		t.Settings[settingFloatBands] = s
 	}
 }
@@ -913,7 +986,7 @@ func (b *floatBand) consume(height bag.ScaledPoint) bool {
 type lineBox struct{ left, right, top bag.ScaledPoint }
 
 // floatIndentFor turns the bands into the linebreaker's per-row inset on each
-// side, consuming the stamp as it goes: the bands are derived afresh by the
+// side (see indentSteps), consuming the stamp as it goes: the bands are derived afresh by the
 // container on every formatting pass, so a stamp left behind would be a
 // phantom indent the next time this paragraph is measured. The author's own
 // float/clear settings are not touched here — see stripFloatSettings.
@@ -923,20 +996,47 @@ func floatIndentFor(settings frontend.TypesettingSettings, lb lineBox) floatBand
 	if leading <= 0 {
 		return floatBandIndent{}
 	}
-	return floatBandIndent{left: s.left.indent(leading), right: s.right.indent(leading)}
+	return floatBandIndent{left: indentSteps(s.left, leading), right: indentSteps(s.right, leading)}
 }
 
-// indent is the inset of one band on lines set at leading: as many rows as
-// it takes to pass the band's height.
-func (b sideBand) indent(leading bag.ScaledPoint) sideIndent {
+// indentSteps is the inset the bands on one side take from lines set at
+// leading, row by row: row r gives way to every band that reaches into it
+// (r times leading is above the band's end), by the widest inset among them.
+// Two floats of different heights next to each other thus narrow the lines
+// beside both by the outer one's inset, and those beside the taller one
+// alone by its own.
+func indentSteps(bands []sideBand, leading bag.ScaledPoint) []node.IndentStep {
+	rows := 0
+	for _, b := range bands {
+		rows = max(rows, b.rows(leading))
+	}
+	var steps []node.IndentStep
+	for r := range rows {
+		var inset bag.ScaledPoint
+		for _, b := range bands {
+			if b.rows(leading) > r {
+				inset = max(inset, b.inset)
+			}
+		}
+		if n := len(steps); n > 0 && steps[n-1].Inset == inset {
+			steps[n-1].Rows++
+		} else {
+			steps = append(steps, node.IndentStep{Inset: inset, Rows: 1})
+		}
+	}
+	return steps
+}
+
+// rows is the number of lines set at leading that the band reaches into.
+func (b sideBand) rows(leading bag.ScaledPoint) int {
 	if b.inset <= 0 || b.height <= 0 {
-		return sideIndent{}
+		return 0
 	}
 	rows := int(b.height / leading)
 	if b.height%leading != 0 {
 		rows++
 	}
-	return sideIndent{inset: b.inset, rows: rows}
+	return rows
 }
 
 // paragraphLeading is what a float's height is divided by to count the lines it
@@ -952,12 +1052,23 @@ func paragraphLeading(settings frontend.TypesettingSettings) bag.ScaledPoint {
 }
 
 // sideBand is what a band asks of a child on its side: inset off the lines,
-// for height down from the child's top.
-type sideBand struct{ inset, height bag.ScaledPoint }
+// for height down from the child's top. edge is where the float's margin
+// box ends, for a float the child opens beside it.
+type sideBand struct{ inset, edge, height bag.ScaledPoint }
 
 // bandStamp is the stamp settingFloatBands carries: the bands a child sits
 // in, by side.
-type bandStamp struct{ left, right sideBand }
+type bandStamp struct{ left, right []sideBand }
+
+// widest is the widest inset among bands, what a box kept clear of them as
+// a whole gives up.
+func widest(bands []sideBand) bag.ScaledPoint {
+	var inset bag.ScaledPoint
+	for _, b := range bands {
+		inset = max(inset, b.inset)
+	}
+	return inset
+}
 
 // within moves the stamp into a box that starts left, right and top in from
 // the edges of the one it was made for: a child's margins, a container's
@@ -967,17 +1078,23 @@ type bandStamp struct{ left, right sideBand }
 // however far in their box starts, and a box that starts past the float
 // is not narrowed at all.
 func (s bandStamp) within(left, right, top bag.ScaledPoint) bandStamp {
-	return bandStamp{left: s.left.within(left, top), right: s.right.within(right, top)}
+	return bandStamp{left: bandsWithin(s.left, left, top), right: bandsWithin(s.right, right, top)}
 }
 
-// within is bandStamp.within for one side.
-func (b sideBand) within(edge, top bag.ScaledPoint) sideBand {
-	b.inset -= edge
-	b.height -= top
-	if b.inset <= 0 || b.height <= 0 {
-		return sideBand{}
+// bandsWithin is bandStamp.within for the bands on one side. A band that
+// takes nothing from the box any more is dropped: its float ends above the
+// box or does not reach into it.
+func bandsWithin(bands []sideBand, edge, top bag.ScaledPoint) []sideBand {
+	var out []sideBand
+	for _, b := range bands {
+		b.inset -= edge
+		b.edge -= edge
+		b.height -= top
+		if b.inset > 0 && b.height > 0 {
+			out = append(out, b)
+		}
 	}
-	return b
+	return out
 }
 
 // takeBandStamp removes the band stamp from settings and returns it.

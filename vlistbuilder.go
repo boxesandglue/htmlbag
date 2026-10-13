@@ -250,8 +250,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// inFlowSeen is set once a child in flow has been laid out.
 		var inFlowSeen bool
 
-		// The bands floats left behind, one per side, if the container is
-		// inside any. See float.go: the float itself is painted and leaves the
+		// The bands floats left behind, by side, if the container is inside
+		// any. See float.go: the float itself is painted and leaves the
 		// vertical flow; the band is what keeps the content after it clear.
 		var bands floatBands
 		// hanger is the band of a float with no footprint in the text (a
@@ -267,18 +267,18 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			if side == "right" {
 				inherited = inheritedBands.right
 			}
-			if inherited.inset <= 0 {
-				continue
-			}
-			// Carried as a live band rather than stamped on every child at
-			// once: the band shortens as the children fill it, so only the
+			// Carried as live bands rather than stamped on every child at
+			// once: a band shortens as the children fill it, so only the
 			// children the float actually covers are narrowed, and a `clear`
 			// among them ends it like any other.
-			*bands.of(side) = &floatBand{
-				side:      side,
-				inset:     inherited.inset,
-				remaining: inherited.height,
-				inherited: true,
+			for _, ib := range inherited {
+				*bands.of(side) = append(*bands.of(side), &floatBand{
+					side:      side,
+					inset:     ib.inset,
+					edge:      ib.edge,
+					remaining: ib.height,
+					inherited: true,
+				})
 			}
 		}
 
@@ -293,8 +293,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// that what comes next starts below the float rather than beside it.
 		// The other bands pass by as much. The caller drops its reference to
 		// the band.
-		skipBand := func(b *floatBand, origin string) {
-			if gap := b.gap(); gap > 0 {
+		skipGap := func(gap bag.ScaledPoint, origin string) {
+			if gap > 0 {
 				k := node.NewKern()
 				k.Kern = gap
 				k.Attributes = node.H{"origin": origin}
@@ -303,21 +303,28 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				advance(gap)
 			}
 		}
-		// skip is skipBand for the band in a slot, which it empties.
-		skip := func(slot **floatBand, origin string) {
-			if b := *slot; b != nil {
-				*slot = nil
-				skipBand(b, origin)
+		skipBand := func(b *floatBand, origin string) {
+			skipGap(b.gap(), origin)
+		}
+		// skipSide is skipBand for every band on one side, which it empties.
+		skipSide := func(side *[]*floatBand, origin string) {
+			if bs := *side; len(bs) > 0 {
+				*side = nil
+				skipGap(gapOf(bs), origin)
 			}
 		}
 
 		te.Items = cb.liftLeadingFloats(te.Items)
 		cb.passTrimDown(te)
 		for i, itm := range te.Items {
-			for _, slot := range [...]**floatBand{&bands.left, &bands.right, &hanger} {
-				if *slot != nil && clearsBand(itm, *slot) {
-					skip(slot, "clear")
+			for _, side := range [...]*[]*floatBand{&bands.left, &bands.right} {
+				if len(*side) > 0 && clearsBand(itm, (*side)[0]) {
+					skipSide(side, "clear")
 				}
+			}
+			if hanger != nil && clearsBand(itm, hanger) {
+				skipBand(hanger, "clear")
+				hanger = nil
 			}
 			if side, float, isFloat := floatSideOf(itm); isFloat {
 				box, err := cb.buildFloat(float, contentWd)
@@ -325,25 +332,32 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					return nil, err
 				}
 				if box != nil && box.Width > 0 {
-					// A float opening while a band of its own kind is live on
-					// its side is placed below it: the band is what the second
-					// float would otherwise overwrite, leaving the first one
-					// overhanging everything after it by its unconsumed
-					// remainder. One on the other side stands beside it, as
-					// long as the two leave room for the text between them;
-					// otherwise it goes below that one too. A float without a
-					// footprint and one that narrows the text do not compete,
-					// so those two share their position.
+					// A float opening while floats are live stands beside them
+					// (CSS 2.1 §9.5.1): past the margin box of those on its
+					// own side, across from those on the other, as long as
+					// the text keeps room between them. Where it does not,
+					// it goes down past the float that ends first, and on
+					// until it fits. CSS moves only the float down; here the
+					// content after it goes down with it, as below a float
+					// that leaves no room beside it. A float without a
+					// footprint and one that narrows the text do not
+					// compete, so those two share their position; two of the
+					// former stack.
 					footprint := floatFootprint(side, box.Width, cb.marginsOf(float), cb.pageIsRight())
 					narrows := footprint > 0
+					var stack bag.ScaledPoint
 					if narrows {
 						physical := resolveFloatSide(side, cb.pageIsRight())
-						skip(bands.of(physical), "float")
-						if o := bands.opposite(physical); *o != nil && (*o).inset+footprint >= contentWd {
-							skip(o, "float")
+						for {
+							stack = stackEdge(*bands.of(physical))
+							if !bands.live() || stack+footprint+textInset(*bands.opposite(physical)) < contentWd {
+								break
+							}
+							skipBand(bands.first(), "float")
 						}
-					} else {
-						skip(&hanger, "float")
+					} else if hanger != nil {
+						skipBand(hanger, "float")
+						hanger = nil
 					}
 					// The float sits below the previous sibling's bottom
 					// margin, where a browser puts it: that margin is laid
@@ -388,7 +402,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// The float, not the item it arrived in: a replaced element
 					// comes wrapped in an anonymous inline run whose margins are
 					// its own, which is to say zeros.
-					opened := openBand(vls, box, side, contentX, contentWd, cb.marginsOf(float), cb.pageIsRight())
+					opened := openBand(vls, box, side, contentX, contentWd, stack, cb.marginsOf(float), cb.pageIsRight())
 					if narrows && opened.inset >= contentWd {
 						// No room beside the float: the content after it goes
 						// below it (CSS 2.1 §9.5), as after a clear, rather
@@ -397,7 +411,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						continue
 					}
 					if narrows {
-						*bands.of(opened.side) = opened
+						*bands.of(opened.side) = append(*bands.of(opened.side), opened)
 					} else {
 						hanger = opened
 					}
@@ -462,7 +476,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				stamp := bands.stamp(ml, mr, max(marginGlue, 0))
 				var asideLeft, asideRight bag.ScaledPoint
 				if isFlowRoot(t) {
-					asideLeft, asideRight = stamp.left.inset, stamp.right.inset
+					asideLeft, asideRight = widest(stamp.left), widest(stamp.right)
 				} else {
 					stamp.put(t)
 				}
@@ -770,7 +784,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// An inherited band is the ancestor's to extend: it painted the float and
 		// it is still counting this container's height against the band.
 		var overhang bag.ScaledPoint
-		for _, b := range [...]*floatBand{bands.left, bands.right, hanger} {
+		for _, b := range append(append([]*floatBand{hanger}, bands.left...), bands.right...) {
 			if b != nil && !b.inherited {
 				overhang = max(overhang, b.gap())
 			}
@@ -1038,8 +1052,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	}
 
 	// Inside a float's band: the lines this paragraph contributes have to keep
-	// clear of the float, which is the linebreaker's own per-row inset, one
-	// per side. The row count is resolved here rather than in the container,
+	// clear of the float, which is the linebreaker's own per-row inset, a
+	// staircase per side that follows the floats beside it. The row count is resolved here rather than in the container,
 	// because it is the band's height divided by the leading these lines will
 	// be set at — which only this point knows. The band is measured from the
 	// paragraph's edges; the lines sit in its content box, with or without
@@ -1056,8 +1070,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// put back rather than left overwritten by a float that may not even be
 		// beside this paragraph at another page width.
 		defer restoreSettings(te.Settings, []frontend.SettingType{
-			frontend.SettingIndentLeft, frontend.SettingIndentLeftRows,
-			frontend.SettingIndentRight, frontend.SettingIndentRightRows,
+			frontend.SettingIndentLeftSteps, frontend.SettingIndentRightSteps,
 		})()
 		for key, value := range bandIndent.settings() {
 			te.Settings[key] = value

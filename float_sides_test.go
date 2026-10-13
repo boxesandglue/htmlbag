@@ -97,12 +97,15 @@ func TestFloatsThatLeaveNoRoomBetweenThemStack(t *testing.T) {
 }
 
 // Skipping one band moves the cursor past the other one too: a second left
-// float goes below the first, and the right float beside both is passed by
-// as much, so that it ends where it does, 80pt down. Left at its full height
-// after the skip, it would hold the container open 40pt below that.
+// float too wide to stand beside the first with the text keeping room goes
+// below it, past the band that ends first, and the right float beside both
+// is passed by as much, so that it ends where it does, 80pt down. Left at
+// its full height after the skip, it would hold the container open 40pt
+// below that. Chrome puts the float 40pt down too, but leaves the text
+// beside the first float.
 func TestSkippingABandPassesTheOtherBy(t *testing.T) {
 	vl := buildHTML(t, floatBuilder(t), `<div>`+leftFloat60x40+rightFloat50x80+
-		`<div style="float:left;width:60pt;height:20pt"></div>`+
+		`<div style="float:left;width:90pt;height:20pt"></div>`+
 		`<p style="margin:0">a</p></div>`)
 	if got, want := strings.Join(verticalOrder(vl), " "), "float float kern:40 float block kern:28"; got != want {
 		t.Errorf("got %q, want %q", got, want)
