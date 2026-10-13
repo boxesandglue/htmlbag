@@ -55,12 +55,12 @@ import (
 //     set at the container's width, and the text after it goes below it.
 //   - A margin declared as zero gets the default gutter, because a margin is
 //     stamped on every element whether or not it was written.
-//   - A negative margin is not what CSS would do with it: on the text side it
-//     falls back to the gutter (the margin has to beat zero to be used), and on
-//     the far side it flows into the shift and the inset unfiltered, pulling the
-//     float outside its container rather than overlapping the text beside it.
-//     Below the float it shortens the band, down to nothing at all, but never
-//     past the float box, which the container holds whatever the margin says.
+//   - A negative side margin works as in CSS (floatInset), but where the text
+//     runs over the float the float covers it: the float is painted last
+//     (PaintLast), and a browser paints the text on top. A negative margin
+//     above the float is ignored rather than raising it. Below the float it
+//     shortens the band, down to nothing at all, but never past the float box,
+//     which the container holds whatever the margin says.
 //
 // At a page break a float behaves as in CSS paged media: the band does not
 // cross it. The float box reserves no vertical space, so the paginator reads
@@ -74,7 +74,7 @@ import (
 // that height does, and the container it extends ends there (endOverhangAt).
 
 // floatGutter is the initial -bag-float-gutter: the space between a float and
-// the text beside it when the float's margin on that side is not positive. CSS
+// the text beside it when the float's margin on that side is zero. CSS
 // has no such space, but a picture butting against the text reads as a mistake
 // rather than as a layout. A declared margin replaces it; zero cannot, since
 // "margin: 0" and no margin at all arrive as the same value, so a stylesheet
@@ -82,7 +82,7 @@ import (
 const floatGutter = 9 * bag.Factor
 
 // floatMargins is what a float holds clear around itself: its margins, and
-// the gutter that stands in for a margin facing the text that is not positive.
+// the gutter that stands in for a zero margin facing the text.
 type floatMargins struct{ left, right, top, bottom, gutter bag.ScaledPoint }
 
 // marginsOf reads the margins declared on the float.
@@ -133,13 +133,15 @@ func (fs *FormattingStyles) floatMargins() floatMargins {
 }
 
 // textGap is the space between the float and the text: the margin on the side
-// the text is on, or the gutter where that margin is not positive.
+// the text is on, or the gutter where that margin is zero. Only zero stands for
+// "no margin" as well: a negative margin was written, and as in CSS it lets the
+// text run that far over the float, or past it altogether.
 func (m floatMargins) textGap(side string) bag.ScaledPoint {
 	margin := m.right
 	if side == "right" {
 		margin = m.left
 	}
-	if margin > 0 {
+	if margin != 0 {
 		return margin
 	}
 	return m.gutter
@@ -361,9 +363,11 @@ func (m floatMargins) forPage(rightPage bool) floatMargins {
 
 // floatInset is what the content beside a float has to give up: the float,
 // the margin between the two, and the margin on the far side, which is space
-// the float holds against the container edge rather than against the text. A
-// negative far margin of width plus gutter brings it to zero: the float hangs
-// outside the text block and takes nothing from it.
+// the float holds against the container edge rather than against the text.
+// This is the width of the float's margin box, as in CSS, and a negative
+// margin on either side takes from it. On the far side the float moves out
+// past the container edge (floatShiftX), on the text side the text moves in
+// over the float; at zero or less the float takes nothing from the text.
 func floatInset(side string, width bag.ScaledPoint, m floatMargins) bag.ScaledPoint {
 	inset := width + m.textGap(side)
 	if side == "right" {
