@@ -148,14 +148,16 @@ func TestAFloatsMarginPassesTheOtherBandBy(t *testing.T) {
 	}
 }
 
-// A bare container passes both bands down to its paragraph, a bordered one is
-// narrowed by both and moved by the left one.
+// A bare and a bordered container pass both bands down to their paragraph;
+// one with display: flow-root is narrowed by both and moved by the left one.
 func TestAContainerSitsBetweenBothFloats(t *testing.T) {
-	bare := buildHTML(t, floatBuilder(t), `<div>`+leftFloat60x40+rightFloat50x80+`<div><p style="margin:0">`+floatProse+`</p></div></div>`)
-	if indents, rights := lineIndents(bare), lineRightInsets(bare); len(indents) == 0 || indents[0] == 0 || rights[0] < bag.MustSP("50pt")+floatGutter {
-		t.Errorf("bare container: the first line must clear both floats, indents %v, room at the end %v", indents, rights)
+	for _, style := range []string{"", "border:1pt solid black"} {
+		vl := buildHTML(t, floatBuilder(t), `<div>`+leftFloat60x40+rightFloat50x80+`<div style="`+style+`"><p style="margin:0">`+floatProse+`</p></div></div>`)
+		if indents, rights := lineIndents(vl), lineRightInsets(vl); len(indents) == 0 || indents[0] == 0 || rights[0] < bag.MustSP("50pt")+floatGutter {
+			t.Errorf("container %q: the first line must clear both floats, indents %v, room at the end %v", style, indents, rights)
+		}
 	}
-	bordered := buildHTML(t, floatBuilder(t), `<div>`+leftFloat60x40+rightFloat50x80+`<div style="border:1pt solid black"><p style="margin:0">a</p></div></div>`)
+	bordered := buildHTML(t, floatBuilder(t), `<div>`+leftFloat60x40+rightFloat50x80+`<div style="display:flow-root;border:1pt solid black"><p style="margin:0">a</p></div></div>`)
 	var box *node.VList
 	for _, n := range verticalChildren(bordered) {
 		if v, ok := n.(*node.VList); ok {
@@ -165,11 +167,11 @@ func TestAContainerSitsBetweenBothFloats(t *testing.T) {
 		}
 	}
 	if box == nil {
-		t.Fatal("no bordered box")
+		t.Fatal("no flow-root box")
 	}
 	left, right := bag.MustSP("60pt")+floatGutter, bag.MustSP("50pt")+floatGutter
 	if box.ShiftX != left || box.Width != bag.MustSP(floatMeasure)-left-right {
-		t.Errorf("bordered box at %s, %s wide; want at %s, %s wide", box.ShiftX, box.Width, left, bag.MustSP(floatMeasure)-left-right)
+		t.Errorf("flow-root box at %s, %s wide; want at %s, %s wide", box.ShiftX, box.Width, left, bag.MustSP(floatMeasure)-left-right)
 	}
 }
 

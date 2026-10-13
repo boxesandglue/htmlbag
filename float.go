@@ -17,17 +17,21 @@ import (
 // point it appeared, painted after the rest of the page (document.PaintLast).
 // What it leaves behind is a BAND: a vertical extent, as tall as the float,
 // over which the content that follows has to keep clear of it.
-// Every following child consumes part of the band and narrows itself by the
-// float's width until the band is used up, after which content runs full width
+// Every following child consumes part of the band and its lines keep clear of
+// the float until the band is used up, after which content runs full width
 // again. `clear` ends the band early.
 //
-// Two deliberate simplifications, both visible only with borders or backgrounds:
+// A float shortens line boxes, not the blocks they are in. The band is measured
+// in the content box of the container that holds the float, and each box it
+// passes into on the way down to a paragraph moves it into its own: the box's
+// margin, border and padding are under the float already, on the side and at
+// the top (bandStamp.within). A box with a border or background thus runs on
+// under the float while its lines keep clear of the float's edge. A box with
+// display: flow-root establishes its own formatting context and is narrowed as
+// a whole instead, by the container it sits in.
 //
-//   - A following block box is narrowed wholesale, as if it established a block
-//     formatting context, rather than having only its line boxes shortened while
-//     its border and background run on under the float. The narrowing is applied
-//     as the paragraph indent, so a box's own border is drawn at the narrowed
-//     width.
+// One deliberate simplification:
+//
 //   - The container is extended to hold a float taller than the content beside
 //     it, rather than letting it overflow as a browser does. This engine does not
 //     paint out-of-flow content over the following flow (see settingCSSHeight),
@@ -158,6 +162,7 @@ const (
 	attrFloatLogical     = "floatLogical"
 	attrFloatBuiltRight  = "floatBuiltRight"
 	attrFloatWd          = "floatWd"
+	attrFloatX0          = "floatX0"
 	attrFloatDeclMargins = "floatDeclaredMargins"
 	attrFloatNarrows     = "floatNarrows"
 	// attrFloatHeight is the extent a float box paints, top margin included.
@@ -406,8 +411,9 @@ func fixLogicalFloats(vl *node.VList, rightPage bool) {
 	if declared, ok := vl.Attributes[attrFloatLogical].(string); ok {
 		if built, _ := vl.Attributes[attrFloatBuiltRight].(bool); built != rightPage {
 			wd, _ := vl.Attributes[attrFloatWd].(bag.ScaledPoint)
+			x0, _ := vl.Attributes[attrFloatX0].(bag.ScaledPoint)
 			m, _ := vl.Attributes[attrFloatDeclMargins].(floatMargins)
-			vl.ShiftX = floatShiftX(resolveFloatSide(declared, rightPage), wd, vl.Width, m.forPage(rightPage))
+			vl.ShiftX = x0 + floatShiftX(resolveFloatSide(declared, rightPage), wd, vl.Width, m.forPage(rightPage))
 			vl.Attributes[attrFloatBuiltRight] = rightPage
 		}
 	}
@@ -714,10 +720,12 @@ func lineNaturalWidth(hl *node.HList) bag.ScaledPoint {
 }
 
 // openBand places the float box in the container and returns the band it
-// leaves behind. declared is the float side as written; inside and outside are
+// leaves behind. The float sits in the container's content box, wd wide and
+// starting x0 in from the container's edge; the band is measured from that
+// box's edges. declared is the float side as written; inside and outside are
 // resolved against rightPage, the parity of the page current while the
 // container is built, and their margins are read as written for a right page.
-func openBand(vls *node.VList, box *node.VList, declared string, wd bag.ScaledPoint, m floatMargins, rightPage bool) *floatBand {
+func openBand(vls *node.VList, box *node.VList, declared string, x0, wd bag.ScaledPoint, m floatMargins, rightPage bool) *floatBand {
 	side := resolveFloatSide(declared, rightPage)
 	declaredMargins := m
 	if isLogicalSide(declared) {
@@ -762,7 +770,7 @@ func openBand(vls *node.VList, box *node.VList, declared string, wd bag.ScaledPo
 	// zero, and clamping it here would be a branch nothing can observe.
 	height := boxHeight + m.bottom
 	width := box.Width
-	box.ShiftX = floatShiftX(side, wd, width, m)
+	box.ShiftX = x0 + floatShiftX(side, wd, width, m)
 	// Zero height is what takes the box out of the vertical flow: the parent
 	// reserves nothing for it and the following content is held clear by the
 	// band instead. A box with no height above its reference point already hangs
@@ -779,6 +787,7 @@ func openBand(vls *node.VList, box *node.VList, declared string, wd bag.ScaledPo
 		box.Attributes[attrFloatLogical] = declared
 		box.Attributes[attrFloatBuiltRight] = rightPage
 		box.Attributes[attrFloatWd] = wd
+		box.Attributes[attrFloatX0] = x0
 		box.Attributes[attrFloatDeclMargins] = declaredMargins
 		if inset > 0 {
 			box.Attributes[attrFloatNarrows] = true
@@ -822,15 +831,11 @@ func (bs *floatBands) consume(height bag.ScaledPoint) {
 	}
 }
 
-// narrow marks a child as sitting in the bands, with the inset and the
-// height each still has on its side. The row count is left to the paragraph:
-// a container's child does not yet carry the leading its lines will be set
-// at, and the count is the band's height divided by exactly that.
-func (bs *floatBands) narrow(itm any) {
-	t, ok := itm.(*frontend.Text)
-	if !ok {
-		return
-	}
+// stamp is what the live bands ask of a child whose margin box starts at the
+// cursor: the inset and the height each still has on its side, moved into the
+// child's box by its side margins and by the margin laid out above it (see
+// bandStamp.within).
+func (bs *floatBands) stamp(left, right, top bag.ScaledPoint) bandStamp {
 	var s bandStamp
 	if b := bs.left; b != nil && b.remaining > 0 {
 		s.left = sideBand{inset: b.inset, height: b.remaining}
@@ -838,9 +843,43 @@ func (bs *floatBands) narrow(itm any) {
 	if b := bs.right; b != nil && b.remaining > 0 {
 		s.right = sideBand{inset: b.inset, height: b.remaining}
 	}
+	return s.within(left, right, top)
+}
+
+// put marks a child as sitting in the bands of the stamp. The row count is
+// left to the paragraph: a container's child does not yet carry the leading
+// its lines will be set at, and the count is the band's height divided by
+// exactly that.
+func (s bandStamp) put(t *frontend.Text) {
 	if s != (bandStamp{}) {
 		t.Settings[settingFloatBands] = s
 	}
+}
+
+// nextInFlowMarginTop returns the top margin of the first child in items that
+// is laid out in flow, skipping floats and whitespace.
+func nextInFlowMarginTop(items []any) bag.ScaledPoint {
+	for _, itm := range items {
+		if _, _, isFloat := floatSideOf(itm); isFloat {
+			continue
+		}
+		t, ok := itm.(*frontend.Text)
+		if !ok {
+			return 0
+		}
+		if _, hasTag := t.Settings[frontend.SettingDebug]; !hasTag && isWhitespaceOnly(t) {
+			continue
+		}
+		mt, _ := t.Settings[frontend.SettingMarginTop].(bag.ScaledPoint)
+		return mt
+	}
+	return 0
+}
+
+// isFlowRoot reports whether a child has display: flow-root.
+func isFlowRoot(t *frontend.Text) bool {
+	_, ok := t.Settings[settingFlowRoot]
+	return ok
 }
 
 // clearBandStamp wipes any band a previous pass stamped on a child, so that a
@@ -869,13 +908,22 @@ func (b *floatBand) consume(height bag.ScaledPoint) bool {
 	return b.gap() > 0
 }
 
+// lineBox is where a paragraph's lines sit in its own box: left and right in
+// from its edges, top down from its top. minLeft is an indent the lines have
+// anyway (a padding-left the linebreaker sets as the paragraph indent); a
+// band that asks for no more than that does not replace it.
+type lineBox struct{ left, right, top, minLeft bag.ScaledPoint }
+
 // floatIndentFor turns the bands into the linebreaker's per-row inset on each
 // side, consuming the stamp as it goes: the bands are derived afresh by the
 // container on every formatting pass, so a stamp left behind would be a
 // phantom indent the next time this paragraph is measured. The author's own
 // float/clear settings are not touched here — see stripFloatSettings.
-func floatIndentFor(settings frontend.TypesettingSettings) floatBandIndent {
-	s := takeBandStamp(settings)
+func floatIndentFor(settings frontend.TypesettingSettings, lb lineBox) floatBandIndent {
+	s := takeBandStamp(settings).within(lb.left, lb.right, lb.top)
+	if s.left.inset <= lb.minLeft {
+		s.left = sideBand{}
+	}
 	leading := paragraphLeading(settings)
 	if leading <= 0 {
 		return floatBandIndent{}
@@ -916,6 +964,27 @@ type sideBand struct{ inset, height bag.ScaledPoint }
 // in, by side.
 type bandStamp struct{ left, right sideBand }
 
+// within moves the stamp into a box that starts left, right and top in from
+// the edges of the one it was made for: a child's margins, a container's
+// border and padding. That space is under the float already, so the inset
+// and the height shrink by it. A float shortens line boxes, not the blocks
+// around them (CSS 2.1 §9.5): the lines keep clear of the float's edge
+// however far in their box starts, and a box that starts past the float
+// is not narrowed at all.
+func (s bandStamp) within(left, right, top bag.ScaledPoint) bandStamp {
+	return bandStamp{left: s.left.within(left, top), right: s.right.within(right, top)}
+}
+
+// within is bandStamp.within for one side.
+func (b sideBand) within(edge, top bag.ScaledPoint) sideBand {
+	b.inset -= edge
+	b.height -= top
+	if b.inset <= 0 || b.height <= 0 {
+		return sideBand{}
+	}
+	return b
+}
+
 // takeBandStamp removes the band stamp from settings and returns it.
 func takeBandStamp(settings frontend.TypesettingSettings) bandStamp {
 	s, _ := settings[settingFloatBands].(bandStamp)
@@ -923,8 +992,8 @@ func takeBandStamp(settings frontend.TypesettingSettings) bandStamp {
 	return s
 }
 
-// captureFloatSettings removes the author-declared float and clear sentinels
-// from one element's settings and returns the restore. They are captured rather
+// captureFloatSettings removes the author-declared float, clear and flow-root
+// sentinels from one element's settings and returns the restore. They are captured rather
 // than consumed because the same Text is formatted more than once — a table
 // cell measures min/max/final, a page-width reflow rebuilds the page — and a
 // float stripped of what makes it a float renders in flow the second time.
@@ -933,7 +1002,7 @@ func captureFloatSettings(settings frontend.TypesettingSettings) func() {
 		key   frontend.SettingType
 		value any
 	}
-	for _, key := range [...]frontend.SettingType{settingFloat, settingClear} {
+	for _, key := range [...]frontend.SettingType{settingFloat, settingClear, settingFlowRoot} {
 		if v, ok := settings[key]; ok {
 			saved = append(saved, struct {
 				key   frontend.SettingType

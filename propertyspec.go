@@ -101,7 +101,7 @@ var Properties = []PropertySpec{
 	{Name: "object-view-box", Values: "`none`, or `inset()` with one to four lengths or percentages, on images (`<img>`, also with an SVG or PDF source)", Example: "object-view-box: inset(10% 20%);", Note: "Not inherited. The region becomes the image's natural size and aspect ratio, and `width`, `height` and `max-width` size it as they size a whole image. `xywh()` and `rect()` are not supported and warn, as do the `round` corners of `inset()`, which are ignored. A bitmap's natural size is one point per pixel, as for its sizing, so `inset(10pt)` takes 10 pixels off each edge. Not read on an inline `<svg>`", Group: GroupBox},
 	{Name: "background-color", Values: "Color value, painted on block elements, inline elements and table cells", Example: "background-color: #ffffcc;", Group: GroupBox},
 	{Name: "background", Values: "Shorthand, only the color is read", Example: "background: #ffffcc;", Group: GroupBox},
-	{Name: "display", Values: "`block`, `inline`, `none`", Example: "display: none;", Note: "Other values are ignored, the table parts follow from the HTML tags", Group: GroupBox},
+	{Name: "display", Values: "`block`, `inline`, `flow-root`, `none`", Example: "display: none;", Note: "`flow-root` is a block that keeps clear of a float as a whole, where a block runs on under it. Other values are ignored, the table parts follow from the HTML tags", Group: GroupBox},
 
 	// Borders
 	{Name: "border", Values: "Width, style and color in any order, all four sides", Example: "border: 1pt solid black;", Group: GroupBorder},

@@ -449,14 +449,14 @@ func boxAfterTheFloat(v *node.VList) *node.VList {
 	return found
 }
 
-// A container with a border or background is narrowed whole rather than having
+// A container with display: flow-root is narrowed whole rather than having
 // only its lines shortened, so it has to move clear of the float as well. The
 // shift belongs on the box HTMLBorder returns: applied to the box inside it, the
 // frame stays behind under the float while its content moves out.
-func TestABorderedContainerInABandMovesItsFrameToo(t *testing.T) {
+func TestAFlowRootInABandMovesItsFrameToo(t *testing.T) {
 	cb := floatBuilder(t)
 	vl := buildHTML(t, cb, `<div><div style="float:left;width:60pt;height:120pt"></div>`+
-		`<div style="border:1pt solid black"><p>one</p></div></div>`)
+		`<div style="display:flow-root;border:1pt solid black"><p>one</p></div></div>`)
 
 	box := boxAfterTheFloat(vl)
 	if box == nil {
@@ -468,6 +468,29 @@ func TestABorderedContainerInABandMovesItsFrameToo(t *testing.T) {
 	}
 	if want := bag.MustSP(floatMeasure) - inset; box.Width != want {
 		t.Errorf("the framed box is %s wide, want %s", box.Width, want)
+	}
+}
+
+// Without flow-root the same container keeps its place and its width: the
+// frame runs on under the float, and only the line inside it clears it.
+func TestABorderedContainerInABandRunsOnUnderTheFloat(t *testing.T) {
+	cb := floatBuilder(t)
+	vl := buildHTML(t, cb, `<div><div style="float:left;width:60pt;height:120pt"></div>`+
+		`<div style="border:1pt solid black"><p>one</p></div></div>`)
+
+	box := boxAfterTheFloat(vl)
+	if box == nil {
+		t.Fatal("no box beside the float")
+	}
+	if box.ShiftX != 0 || box.Width != bag.MustSP(floatMeasure) {
+		t.Errorf("the framed box is at %s, %s wide; want at 0, %s wide", box.ShiftX, box.Width, floatMeasure)
+	}
+	lines := linesAcross(vl)
+	if len(lines) == 0 {
+		t.Fatal("no lines")
+	}
+	if want := bag.MustSP("60pt") + floatGutter; lines[0].x0 != want {
+		t.Errorf("the line in the frame starts at %s, want %s clear of the float", lines[0].x0, want)
 	}
 }
 

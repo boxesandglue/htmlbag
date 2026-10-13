@@ -262,12 +262,13 @@ func (c *CSS) getHTMLItem(thisNode *html.Node, direction Mode, firstItem *HTMLIt
 				tabs = v != "none"
 			}
 			// CSS `display` can override the tag-based block/inline
-			// classification above. Only the two basic keywords are
+			// classification above. Only the basic keywords are
 			// honoured; `display: none` is consumed downstream via
-			// FormattingStyles.Hide, and exotic values (flex, grid,
-			// inline-block, ...) keep the tag default.
+			// FormattingStyles.Hide, flow-root is a block that keeps
+			// clear of floats (settingFlowRoot), and exotic values
+			// (flex, grid, inline-block, ...) keep the tag default.
 			switch itm.Styles.Get("display") {
-			case "block":
+			case "block", "flow-root":
 				newDir = ModeVertical
 				itm.Dir = ModeVertical
 			case "inline":

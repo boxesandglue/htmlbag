@@ -89,11 +89,13 @@ const settingTraceBoxModel frontend.SettingType = -11
 // settingFloat and attrFloat mark the float itself — the first for an element,
 // the second for a replaced one, which never becomes a frontend.Text.
 // settingClear marks a child that ends the band. settingFloatBands carries the
-// bands a child sits in (a bandStamp).
+// bands a child sits in (a bandStamp). settingFlowRoot marks a block with
+// display: flow-root, which keeps clear of a float as a whole.
 const (
 	settingFloat      frontend.SettingType = -5
 	settingClear      frontend.SettingType = -6
 	settingFloatBands frontend.SettingType = -7
+	settingFlowRoot   frontend.SettingType = -8
 )
 
 const attrFloat = "float"
@@ -439,6 +441,7 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			}
 		case "display":
 			ih.Hide = (v == "none")
+			ih.flowRoot = (v == "flow-root")
 		case "background-color":
 			ih.BackgroundColor = df.GetColor(v)
 		case "border-right-width", "border-left-width", "border-top-width", "border-bottom-width":
@@ -1083,6 +1086,9 @@ type FormattingStyles struct {
 	// floatSide and clear are CSS float/clear (see float.go). Neither is
 	// inherited: both are cleared for each element as its own styles resolve.
 	floatSide string
+	// flowRoot is display: flow-root, a block that keeps clear of a float as a
+	// whole. Not inherited, as Clone leaves it out.
+	flowRoot bool
 	// floatGutter is -bag-float-gutter, the space beside a float whose
 	// margin on the side of the text is not positive. Inherited, 9pt at
 	// the root.
@@ -1432,6 +1438,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	if ih.clear != "" {
 		settings[settingClear] = ih.clear
+	}
+	if ih.flowRoot {
+		settings[settingFlowRoot] = true
 	}
 	if ih.Fontweight > 0 {
 		settings[frontend.SettingFontWeight] = ih.Fontweight

@@ -209,19 +209,34 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			childBaseWidth = wd - hv.BorderLeftWidth - hv.BorderRightWidth - hv.PaddingLeft - hv.PaddingRight
 		}
 
+		// The content box the children are laid out in: wd minus the padding
+		// for a bare container, which shifts each child by its padding-left,
+		// and childBaseWidth for a bordered one, whose padding HTMLBorder puts
+		// around the children. Floats are placed in it and their bands are
+		// measured from its edges.
+		contentWd, contentX := childBaseWidth, bag.ScaledPoint(0)
+		// What lies between this container's edges and its content box.
+		ownLeft, ownRight, ownTop := paddingLeft, paddingRight, hv.PaddingTop
+		if hasBorderOrBg {
+			ownLeft = hv.BorderLeftWidth + hv.PaddingLeft
+			ownRight = hv.BorderRightWidth + hv.PaddingRight
+			ownTop = hv.BorderTopWidth + hv.PaddingTop
+		} else {
+			contentWd -= paddingLeft + paddingRight
+			contentX = paddingLeft
+		}
+
 		vls := node.NewVList()
 		vls.Attributes = node.H{"origin": "buildVListInternal"}
 
-		// This container may itself be sitting in a float's band. Where it has a
-		// border or background the whole box is narrowed, as if it established a
-		// block formatting context: the alternative is a border drawn full width
-		// with only the text inside it clearing the float, which looks like a
-		// mistake. A bare container passes the band down instead, so the inset
-		// lands on the paragraph that actually breaks the lines and only the rows
-		// the float covers are shortened.
+		// This container may itself be sitting in a float's band. Its border
+		// and padding are under the float already, so the band moves into the
+		// content box and is passed down from there: the lines of the children
+		// keep clear of the float, and a border or background runs on under it,
+		// as in CSS. A child with display: flow-root is narrowed as a whole
+		// instead, by the container it sits in.
 		defer captureFloatSettings(settings)()
-		inheritedBands := takeBandStamp(settings)
-		var bandShiftX bag.ScaledPoint
+		inheritedBands := takeBandStamp(settings).within(ownLeft, ownRight, ownTop)
 
 		// Track previous element's margin-bottom for margin collapsing
 		var prevMarginBottom bag.ScaledPoint
@@ -232,6 +247,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// floatMarginKern is the margin kern laid out before a float, until
 		// the next in-flow child says which margin-top it ends in.
 		var floatMarginKern *node.Kern
+		// inFlowSeen is set once a child in flow has been laid out.
+		var inFlowSeen bool
 
 		// The bands floats left behind, one per side, if the container is
 		// inside any. See float.go: the float itself is painted and leaves the
@@ -253,22 +270,15 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			if inherited.inset <= 0 {
 				continue
 			}
-			if hasBorderOrBg {
-				childBaseWidth -= inherited.inset
-				if side == "left" {
-					bandShiftX = inherited.inset
-				}
-			} else {
-				// Carried as a live band rather than stamped on every child at
-				// once: the band shortens as the children fill it, so only the
-				// children the float actually covers are narrowed, and a `clear`
-				// among them ends it like any other.
-				*bands.of(side) = &floatBand{
-					side:      side,
-					inset:     inherited.inset,
-					remaining: inherited.height,
-					inherited: true,
-				}
+			// Carried as a live band rather than stamped on every child at
+			// once: the band shortens as the children fill it, so only the
+			// children the float actually covers are narrowed, and a `clear`
+			// among them ends it like any other.
+			*bands.of(side) = &floatBand{
+				side:      side,
+				inset:     inherited.inset,
+				remaining: inherited.height,
+				inherited: true,
 			}
 		}
 
@@ -310,7 +320,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				}
 			}
 			if side, float, isFloat := floatSideOf(itm); isFloat {
-				box, err := cb.buildFloat(float, childBaseWidth)
+				box, err := cb.buildFloat(float, contentWd)
 				if err != nil {
 					return nil, err
 				}
@@ -329,7 +339,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					if narrows {
 						physical := resolveFloatSide(side, cb.pageIsRight())
 						skip(bands.of(physical), "float")
-						if o := bands.opposite(physical); *o != nil && (*o).inset+footprint >= childBaseWidth {
+						if o := bands.opposite(physical); *o != nil && (*o).inset+footprint >= contentWd {
 							skip(o, "float")
 						}
 					} else {
@@ -349,6 +359,17 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					if i > 0 {
 						floatMargin = prevMarginBottom
 					}
+					// Before the first child in flow, at the top of a container
+					// with nothing above its content, that child's top margin
+					// would collapse through the container in a browser and
+					// take the float down with it. Here it stays inside the
+					// container, so the float goes below it, level with the
+					// child, as a float lifted out of a paragraph does.
+					if !inFlowSeen && ownTop == 0 && !hasBorderOrBg {
+						if mt := nextInFlowMarginTop(te.Items[i+1:]); mt > floatMargin {
+							floatMargin = mt
+						}
+					}
 					if p := cb.liftedFloats[itm]; p != nil {
 						if mt, ok := p.Settings[frontend.SettingMarginTop].(bag.ScaledPoint); ok && mt > floatMargin {
 							floatMargin = mt
@@ -367,8 +388,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// The float, not the item it arrived in: a replaced element
 					// comes wrapped in an anonymous inline run whose margins are
 					// its own, which is to say zeros.
-					opened := openBand(vls, box, side, childBaseWidth, cb.marginsOf(float), cb.pageIsRight())
-					if narrows && opened.inset >= childBaseWidth {
+					opened := openBand(vls, box, side, contentX, contentWd, cb.marginsOf(float), cb.pageIsRight())
+					if narrows && opened.inset >= contentWd {
 						// No room beside the float: the content after it goes
 						// below it (CSS 2.1 §9.5), as after a clear, rather
 						// than into a column of no width.
@@ -384,7 +405,6 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				}
 			}
 			clearBandStamp(itm)
-			bands.narrow(itm)
 			// Remembered before the child is built: the band may be spent by
 			// the time it is, and the mark is about how it was built.
 			inBand := bands.live()
@@ -396,6 +416,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				if _, hasTag := t.Settings[frontend.SettingDebug]; !hasTag && isWhitespaceOnly(t) {
 					continue
 				}
+				inFlowSeen = true
 
 				// Get margin-top of current element
 				var curMarginTop bag.ScaledPoint
@@ -428,6 +449,22 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					k.Attributes = node.H{"origin": "margin", attrMarginTop: curMarginTop}
 					vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), k)
 					vls.Height += marginGlue
+				}
+
+				// The bands, moved into the child's box: its side margins and
+				// the margin just laid out above it are under the float
+				// already. A child with display: flow-root establishes its own
+				// formatting context and keeps clear of the float as a whole
+				// (CSS 2.1 §9.5): it is set that much narrower beside it, over
+				// its full height, and passes no band on.
+				ml, _ := t.Settings[frontend.SettingMarginLeft].(bag.ScaledPoint)
+				mr, _ := t.Settings[frontend.SettingMarginRight].(bag.ScaledPoint)
+				stamp := bands.stamp(ml, mr, max(marginGlue, 0))
+				var asideLeft, asideRight bag.ScaledPoint
+				if isFlowRoot(t) {
+					asideLeft, asideRight = stamp.left.inset, stamp.right.inset
+				} else {
+					stamp.put(t)
 				}
 
 				// Capture and strip the -bag-bookmark sentinel before the
@@ -544,11 +581,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// linebreaker builds lines that fit inside the
 					// post-shift content area. HTMLBorder handles the
 					// case with border/background.
-					childWidth := childBaseWidth
-					if !hasBorderOrBg {
-						childWidth = childBaseWidth - paddingLeft - paddingRight
-					}
-					childWidth -= childMarginLeft + childMarginRight
+					childWidth := contentWd - childMarginLeft - childMarginRight - asideLeft - asideRight
 					var err error
 					vl, err = cb.buildVlistInternal(t, childWidth)
 					if err != nil {
@@ -559,10 +592,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					// itself stacks on top of that. A negative margin
 					// moves the child left past the content edge (CSS 2.1
 					// §8.3), as the width it added above assumes.
-					shift := childMarginLeft
-					if !hasBorderOrBg {
-						shift += paddingLeft
-					}
+					shift := contentX + childMarginLeft + asideLeft
 					// Auto side margins share the room a block's width
 					// leaves, a pre-rendered box's its own; without a width
 					// a block fills the line.
@@ -906,13 +936,6 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			}
 		}
 
-		// A bordered container inside a band was built narrow; this is where it
-		// moves clear of the float. After HTMLBorder, so the frame moves with
-		// the content it frames rather than staying under the float.
-		if bandShiftX > 0 {
-			vls.ShiftX += bandShiftX
-		}
-
 		// PDF/UA: pop structure element back to parent
 		if containerSE != nil {
 			cb.structureCurrent = savedStructureCurrent
@@ -1027,8 +1050,21 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// clear of the float, which is the linebreaker's own per-row inset, one
 	// per side. The row count is resolved here rather than in the container,
 	// because it is the band's height divided by the leading these lines will
-	// be set at — which only this point knows.
-	bandIndent := floatIndentFor(te.Settings)
+	// be set at — which only this point knows. The band is measured from the
+	// paragraph's edges. Inside a border or background the lines sit in the
+	// box HTMLBorder pads around them; without one they span contentWidth
+	// from the left edge and the linebreaker indents them by the
+	// padding-left, which a band only replaces where it asks for more.
+	lb := lineBox{top: hv.PaddingTop}
+	if hasBorderOrBg {
+		lb.left = hv.BorderLeftWidth + hv.PaddingLeft
+		lb.right = hv.BorderRightWidth + hv.PaddingRight
+		lb.top += hv.BorderTopWidth
+	} else {
+		lb.right = wd - contentWidth
+		lb.minLeft = hv.PaddingLeft
+	}
+	bandIndent := floatIndentFor(te.Settings, lb)
 	if bandIndent.rows() > 0 {
 		// The indent channel is shared with text-indent and the initial-letter
 		// corner, and the band is derived per pass — so what was there before is
