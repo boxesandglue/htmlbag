@@ -39,10 +39,10 @@ type flowBalance struct {
 	// height.
 	vl     *node.VList
 	height bag.ScaledPoint
-	// fc, sink and page are the cursor, the boxes already in its region and
-	// the page buffer when vl was built.
+	// fc and page are the cursor and the page buffer when vl was built.
+	// What its region holds already is in the page buffer: boxes a table
+	// placed in the region directly sit under a spacer of their height.
 	fc   flowCursor
-	sink []sinkEntry
 	page pageState
 	// handed are the regions Next handed out since vl was built, consumed
 	// the height used in the regions filled since.
@@ -59,7 +59,6 @@ type flowBalance struct {
 func (b *flowBalance) take(cb *CSSBuilder, vl *node.VList, fc *flowCursor) {
 	b.vl, b.height = trialCopy(vl), vl.Height+vl.Depth
 	b.fc = *fc
-	b.sink = slices.Clone(fc.cur.sink.entries)
 	s := cb.pageState()
 	b.page = pageState{buf: slices.Clone(s.buf), bufHeight: s.bufHeight, inserts: map[InsertClass][]*Insert{}, insertsHgt: map[InsertClass]bag.ScaledPoint{}}
 	for k, v := range s.inserts {
@@ -100,16 +99,15 @@ func (b *flowBalance) entered(cb *CSSBuilder, rg Region, cur region, pageStart b
 // and rem the regions Remaining named after it.
 func (b *flowBalance) capAt(line bag.ScaledPoint, rem []Region, cur region) region {
 	b.capped, b.line, b.expect = true, line, rem
-	b.vl, b.handed, b.page, b.sink = nil, nil, pageState{}, nil
+	b.vl, b.handed, b.page = nil, nil, pageState{}
 	cur.height = capHeight(cur, line)
 	return cur
 }
 
 // capHeight is r's height down to line, or to its foot above it.
 func capHeight(r region, line bag.ScaledPoint) bag.ScaledPoint {
-	// A region that starts below the line keeps a sliver, which takes
-	// nothing a trial would have let fit.
-	return max(min(r.height, r.top-line), 1)
+	// A region that starts below the line holds nothing.
+	return max(min(r.height, r.top-line), 0)
 }
 
 // balanceLine returns the highest line at which the rest of the group ends
@@ -200,10 +198,6 @@ func (cb *CSSBuilder) trialUsed(s *regionSink) bag.ScaledPoint {
 	return used
 }
 
-// trialWarned marks every page-level insert as warned about, so that a
-// trial logs nothing and leaves the warnings to the real run.
-var trialWarned = map[InsertClass]bool{InsertFootnote: true, InsertFloatTop: true, InsertFloatBottom: true}
-
 // flowTrial runs a fresh copy of the group b holds from the state of its
 // build, through the regions handed out since when entering, then through
 // page capped at line. It reports whether the group ends there without a
@@ -225,22 +219,24 @@ func (cb *CSSBuilder) flowTrial(b *flowBalance, entering bool, page []region, li
 	for i := range regs {
 		regs[i].sink, regs[i].trial, regs[i].collects = &regionSink{}, true, true
 	}
-	regs[0].sink.entries = slices.Clone(b.sink)
 	t := &flowTrialRegions{cb: cb, regs: regs, capFrom: capFrom}
 	tfc := b.fc
-	tfc.regions, tfc.cur, tfc.warned = t, regs[0], trialWarned
+	tfc.regions, tfc.cur = t, regs[0]
 
 	fits := false
 	cb.onTrialPage(b.page, func() {
 		// As in floatFitWidth, a build inside the trial (a rebuild at
 		// another width, a repeated table header) registers nothing.
-		flow, rebuild, tagging, callback := cb.callerFlow, cb.reflowRebuild, cb.enableTagging, cb.ElementCallback
-		cb.callerFlow, cb.reflowRebuild, cb.enableTagging, cb.ElementCallback = &tfc, true, false, nil
+		flow, rebuild, tagging := cb.callerFlow, cb.reflowRebuild, cb.enableTagging
+		cb.callerFlow, cb.reflowRebuild, cb.enableTagging = &tfc, true, false
 		defer func() {
-			cb.callerFlow, cb.reflowRebuild, cb.enableTagging, cb.ElementCallback = flow, rebuild, tagging, callback
+			cb.callerFlow, cb.reflowRebuild, cb.enableTagging = flow, rebuild, tagging
 		}()
 		restart, _, err := cb.outputGroupNodes(trialCopy(b.vl), &tfc)
-		// A restart is a region of another width: the trial gives up.
+		// A restart is a region of another width: the trial gives up. The
+		// trial places what the real run placed in the regions handed out
+		// since the build, so it does not end before the page; should it
+		// part from the real run there, it tells nothing about the page.
 		if err != nil || restart >= 0 || t.at < capFrom {
 			return
 		}

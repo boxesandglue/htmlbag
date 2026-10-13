@@ -499,3 +499,66 @@ func TestFlowTextBalanceTrialLeavesNoState(t *testing.T) {
 		t.Errorf("after a trial\n%s\nwant as without\n%s", a, b)
 	}
 }
+
+// A block that does not split and is taller than the line is not set across
+// it in a region of its own: the line comes down no lower than its foot.
+// Here the paragraph would spread over two regions under a lower line, with
+// the image alone in the third reaching far below it.
+func TestFlowTextBalanceKeepsATallBlockAboveTheLine(t *testing.T) {
+	body := `<p>` + numbered("L", 0, 6) + `</p><img src="testdata/float.png" width="60pt" height="100pt" style="display: block">`
+	three := columns(3, "100pt", "120pt")
+	on := balanced(t, "", body, true, three)
+	requireCounts(t, on, 6, 0)
+	if a, b := dump(on), dump(balanced(t, "", body, false, three)); a != b {
+		t.Errorf("balanced\n%s\nwant as filled\n%s", a, b)
+	}
+}
+
+// What a trial region holds before a table is set in it counts: a heading
+// set alone in a region, taller than the line, stays above it. Without it,
+// the line would come down to the paragraph's three lines in each of two
+// regions, with the heading reaching below it.
+func TestFlowTextBalanceCountsWhatATableFollows(t *testing.T) {
+	const css = `h1 { line-height: 50pt; font-size: 10pt; margin: 0 }`
+	body := `<p>` + numbered("L", 0, 6) + `</p><h1>Hq</h1><table><tr><td>R00</td></tr><tr><td>R01</td></tr></table>`
+	pr := balanced(t, css, body, true, columns(4, "100pt", "120pt"))
+	if got := fmt.Sprint(regionTexts(pr)); got != "[[L00 L01 L02 L03] [L04 L05] [Hq] [R00 R01]]" {
+		t.Errorf("regions %s, want the heading alone at the line", got)
+	}
+}
+
+// A region that starts below the line holds nothing, and the flow goes on
+// past it to the regions after.
+func TestFlowTextBalancePassesARegionBelowTheLine(t *testing.T) {
+	last := []Region{
+		{Width: sp("100pt"), Height: sp("120pt"), Top: sp("1000pt")},
+		{Width: sp("100pt"), Height: sp("20pt"), Left: sp("110pt"), Top: sp("900pt"), Occupied: true},
+		{Width: sp("100pt"), Height: sp("120pt"), Left: sp("220pt"), Top: sp("1000pt")},
+	}
+	pr := balanced(t, "", `<p>`+numbered("L", 0, 8)+`</p>`, true, last)
+	requireCounts(t, pr, 4, 0, 4)
+}
+
+// misnamedRegions names other regions in Remaining than Next hands out:
+// the second region of the last page is said to start at the top, but it
+// starts 10pt lower.
+type misnamedRegions struct{ *pagedRegions }
+
+func (m misnamedRegions) Next(brk string) (Region, error) {
+	rg, err := m.pagedRegions.Next(brk)
+	if m.page == 2 && m.idx == 1 {
+		rg.Top -= sp("10pt")
+	}
+	return rg, err
+}
+
+// When Next hands out a region Remaining did not name, the cap is dropped
+// and the region is filled. Capped at the line, the lower region would hold
+// two lines and the third would go on to another page.
+func TestFlowTextBalanceDropsTheCapForAnotherRegion(t *testing.T) {
+	pr := &pagedRegions{layouts: [][]Region{columns(2, "160pt", "120pt")}, balance: true}
+	cb, _ := newFlowBuilder(t, "")
+	flowPaged(t, cb, `<p>`+numbered("L", 0, 26)+`</p>`, misnamedRegions{pr})
+	requireCounts(t, pr, 10, 10, 3, 3)
+	requireOrder(t, pr, "L", 26)
+}

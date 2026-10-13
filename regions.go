@@ -1004,6 +1004,10 @@ func (fc *flowCursor) pageLevel(ins []*Insert) []*Insert {
 	if !fc.caller || len(ins) == 0 {
 		return ins
 	}
+	// A trial drops them too and leaves the warning to the real run.
+	if fc.cur.trial {
+		return nil
+	}
 	for _, in := range ins {
 		if fc.warned[in.Class] {
 			continue
