@@ -203,6 +203,52 @@ func TestFlowTextOccupiedRegionKeepsMargin(t *testing.T) {
 	}
 }
 
+// An occupied region that starts a column truncates the margin-top of a
+// block that moves there at an automatic break, as the second column below
+// a spanner does: whether the margin went along or was spent at the foot of
+// the region before (xts#74). A forced break keeps it.
+func TestFlowTextOccupiedColumnStartTruncatesMargin(t *testing.T) {
+	columnStart := func(r Region) Region { r.ColumnStart = true; return r }
+	b := func(margin string) string {
+		return `<p style="margin-top: ` + margin + `">` + charLines("B", 2) + `</p><p>y</p>`
+	}
+	cases := []struct {
+		name  string
+		body  string
+		sizes []Region
+		top   string
+	}{
+		{"margin goes along", `<p>Zq</p>` + b("10pt"),
+			[]Region{wide("20pt"), columnStart(occupied(wide("1000pt")))}, "0pt"},
+		{"margin spent at the foot", `<p>Zq</p>` + b("5pt"),
+			[]Region{wide("20pt"), columnStart(occupied(wide("1000pt")))}, "0pt"},
+		{"forced break", `<p>Zq</p><p style="break-before: column; margin-top: 10pt">` + charLines("B", 2) + `</p>`,
+			[]Region{wide("1000pt"), columnStart(occupied(wide("1000pt")))}, "10pt"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cb, _ := newFlowBuilder(t, "")
+			tr := flowCapped(t, cb, c.body, c.sizes...)
+			region, top := landing(t, tr, "B")
+			if region != 2 || top != sp(c.top) {
+				t.Errorf("B starts in region %d at %s, want region 2 at %s", region, top, c.top)
+			}
+		})
+	}
+}
+
+// A block too tall for an occupied region that starts a column still moves
+// on from it: ColumnStart truncates the margins only.
+func TestFlowTextOccupiedColumnStartMovesBlocksOn(t *testing.T) {
+	cb, _ := newFlowBuilder(t, "")
+	start := occupied(wide("20pt"))
+	start.ColumnStart = true
+	tr := flowCapped(t, cb, `<p style="line-height: 30pt">Aq</p>`, start, wide("1000pt"))
+	if region, _ := landing(t, tr, "Aq"); region != 2 {
+		t.Errorf("Aq is in region %d, want 2", region)
+	}
+}
+
 // The rest of a paragraph or of a table with a header, split in the region
 // before, does not go into an occupied region too small for it: it moves on
 // once, and the occupied region stays empty.

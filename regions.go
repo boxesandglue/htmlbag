@@ -36,8 +36,14 @@ type Region struct {
 	// A block moves on from an occupied region once: in the region after
 	// that move, it is placed as in an empty one, so a flow through regions
 	// that are all occupied ends. Margins at the top of an occupied region
-	// are kept, as in the first region.
+	// are kept, as in the first region, unless it is a ColumnStart.
 	Occupied bool
+	// ColumnStart is set for a region at the top of a column after the
+	// first, such as the second frame of an area below a block that spans
+	// the page. After an automatic break, the margins at its top are
+	// truncated even when it is Occupied, as in the second column of a
+	// multi-column row below a spanner (CSS Fragmentation 3 §5.2).
+	ColumnStart bool
 	// MarginBefore is the margin still open above the region, such as the
 	// MarginAfter of a flow this one continues. It collapses with the first
 	// block's margin-top in the first region and in a region after a forced
@@ -426,6 +432,7 @@ func callerRegion(rg Region) region {
 		pageNum:      rg.PageNum,
 		marginBefore: rg.MarginBefore,
 		occupied:     rg.Occupied,
+		truncates:    rg.Occupied && rg.ColumnStart,
 		sink:         &regionSink{},
 		// FlowText drops the inserts, the area is never used.
 		inserts: insertArea{left: rg.Left, top: rg.Top, bottom: rg.Top - rg.Height, width: rg.Width},
