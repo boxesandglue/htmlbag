@@ -667,7 +667,6 @@ type pageBoxMetrics struct {
 	borderLeft, borderRight, borderTop, borderBottom     bag.ScaledPoint
 	paddingLeft, paddingRight, paddingTop, paddingBottom bag.ScaledPoint
 	// backgroundColor is the resolved @page background-color (nil if unset).
-	// Intentionally painted on page 1 only (InitPage), so NewPage ignores it.
 	backgroundColor *color.Color
 }
 
@@ -796,14 +795,7 @@ func (cb *CSSBuilder) InitPage() error {
 			masterpage:    defaultPage,
 		}
 		cb.frontend.Doc.NewPage()
-		if m.backgroundColor != nil {
-			r := node.NewRule()
-			x := pdfdraw.NewStandalone().ColorNonstroking(*m.backgroundColor).Rect(0, 0, wd, -ht).Fill()
-			r.Pre = x.String()
-			rvl := node.Vpack(r)
-			rvl.Attributes = node.H{"origin": "page background color"}
-			cb.frontend.Doc.CurrentPage.OutputAt(0, ht, rvl)
-		}
+		cb.drawPageBackgroundColor(m.backgroundColor, wd, ht)
 		if err = cb.drawPageBackgroundImage(res, wd, ht); err != nil {
 			return err
 		}
@@ -892,7 +884,7 @@ func (cb *CSSBuilder) shipoutAndStartPage() error {
 		wd := cb.currentPageDimensions.Width
 		ht := cb.currentPageDimensions.Height
 		// Re-resolve this page master's @page attributes so border/padding
-		// (and background-image) apply per page, not only on page 1.
+		// and the background apply per page, not only on page 1.
 		bgRes := resolveDeclarations(pt.Attributes)
 		vl, m, err := cb.renderPageBorderBox(bgRes, wd, ht, ml, mr, mt, mb)
 		if err != nil {
@@ -902,8 +894,10 @@ func (cb *CSSBuilder) shipoutAndStartPage() error {
 		cb.currentPageDimensions.PageAreaTop = mt + m.borderTop + m.paddingTop
 		cb.currentPageDimensions.ContentWidth = wd - ml - mr - m.borderLeft - m.borderRight - m.paddingLeft - m.paddingRight
 		cb.currentPageDimensions.ContentHeight = ht - mt - mb - m.borderTop - m.borderBottom - m.paddingTop - m.paddingBottom
-		// Paint the @page background-image, then the border box, before the
-		// body content lands on this page (both sit underneath the text).
+		// Paint the @page background color and image, then the border box,
+		// before the body content lands on this page (all sit underneath the
+		// text).
+		cb.drawPageBackgroundColor(m.backgroundColor, wd, ht)
 		if err := cb.drawPageBackgroundImage(bgRes, wd, ht); err != nil {
 			return err
 		}
@@ -915,6 +909,21 @@ func (cb *CSSBuilder) shipoutAndStartPage() error {
 	}
 	cb.firePageInit()
 	return nil
+}
+
+// drawPageBackgroundColor fills the whole sheet of the current page with the
+// @page background-color, if there is one. Like the background image it is
+// called for every page, so :first, :left and :right override the generic
+// @page rule per page.
+func (cb *CSSBuilder) drawPageBackgroundColor(col *color.Color, wd, ht bag.ScaledPoint) {
+	if col == nil {
+		return
+	}
+	r := node.NewRule()
+	r.Pre = pdfdraw.NewStandalone().ColorNonstroking(*col).Rect(0, 0, wd, -ht).Fill().String()
+	rvl := node.Vpack(r)
+	rvl.Attributes = node.H{"origin": "page background color"}
+	cb.frontend.Doc.CurrentPage.OutputAt(0, ht, rvl)
 }
 
 // drawPageBackgroundImage paints a CSS `@page { background-image: url(...) }`

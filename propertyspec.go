@@ -166,7 +166,7 @@ var Properties = []PropertySpec{
 	{Name: "margin-top", Aliases: []string{"margin-right", "margin-bottom", "margin-left"}, Values: "Length, one page margin", Example: "margin-left: 3cm;", Group: GroupPage},
 	{Name: "border", Aliases: []string{"border-top", "border-right", "border-bottom", "border-left", "border-width", "border-style", "border-color", "border-radius"}, Values: "As on elements, drawn around the page content area on every page", Example: "border-left: 4pt solid navy;", Group: GroupPage},
 	{Name: "padding", Aliases: []string{"padding-top", "padding-right", "padding-bottom", "padding-left"}, Values: "Length, space between the page border and the content", Example: "padding: 5mm;", Group: GroupPage},
-	{Name: "background-color", Values: "Color value, fills the sheet", Example: "background-color: #fafafa;", Note: "Painted on the first page only", Group: GroupPage},
+	{Name: "background-color", Values: "Color value, fills the sheet", Example: "background-color: #fafafa;", Group: GroupPage},
 	{Name: "background-image", Values: "`url()` of an image or PDF file, scaled to the full sheet on every page that uses this `@page` rule", Example: `background-image: url("letterhead.pdf");`, Group: GroupPage},
 	{Name: "-bag-background-page", Values: "Page number of a multi page PDF used as `background-image`, the default is 1", Example: "-bag-background-page: 2;", Group: GroupPage},
 
