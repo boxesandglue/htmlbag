@@ -882,6 +882,12 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 				}
 			}
 		case "width":
+			// The width stays a string until the table or box that reads it
+			// knows its percentage base. That code has no font size, so an
+			// em or rem length is resolved here, where font-size is final.
+			if strings.HasSuffix(v, "em") {
+				v = fmt.Sprintf("%dsp", ParseRelativeSize(v, ih.Fontsize, ih.DefaultFontSize))
+			}
 			ih.width = v
 		case "height":
 			ih.height = v
