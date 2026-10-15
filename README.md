@@ -1,21 +1,35 @@
 # htmlbag
 
-[![Explore in Constellation](https://img.shields.io/badge/Explore%20in-Constellation-blue)](https://constellation.speedata.de)
+[![Explore in Constellation](https://img.shields.io/badge/Explore%20in-Constellation-blue)](https://constellation.speedata.de/#htmlbag)
 
 htmlbag is the HTML/CSS renderer within the Boxes and Glue stack. It parses CSS
 stylesheets, matches them against an HTML document, and turns the styled DOM
 into internal text and node structures (`frontend.Text`, `node.VList`, etc.)
-that are later shipped to PDF.
+that are later shipped to PDF. [bagme](https://github.com/boxesandglue/bagme)
+and the HTML mode of [glu](https://github.com/boxesandglue/glu) are built on it.
 
-As of v0.0.54 the CSS parser and selector engine live here too; they used to be
-the separate package `github.com/boxesandglue/csshtml`, which is now archived.
-All its identifiers kept their names, so `csshtml.NewCSSParserWithDefaults`
-became `htmlbag.NewCSSParserWithDefaults` and so on.
+<p align="center">
+  <a href="https://github.com/boxesandglue/boxesandglue-examples/tree/main/glu/html/multi-column">
+    <img src="https://raw.githubusercontent.com/boxesandglue/boxesandglue-examples/main/glu/html/multi-column/firstpage.png" width="320" alt="Multi-column page with a spanning title, rendered by htmlbag from HTML and CSS">
+  </a>
+</p>
 
-This project is part of a broader ecosystem of technologies for document
-processing, XML transformation, typesetting and PDF generation.
+The CSS parser and selector engine used to be the separate package
+`github.com/boxesandglue/csshtml`, now archived. Its identifiers kept their
+names, so `csshtml.NewCSSParserWithDefaults` became
+`htmlbag.NewCSSParserWithDefaults`.
 
-→ [Explore its connections in Constellation](https://constellation.speedata.de)
+## Installation
+
+```bash
+go get github.com/boxesandglue/htmlbag
+```
+
+## Documentation
+
+The [htmlbag manual](https://boxesandglue.dev/htmlbag/) describes the
+supported HTML elements and CSS properties, tables, floats, footnotes, cross
+references and the Go API.
 
 ## Core pieces
 - CSS: `css.go` parses stylesheets (including `@import`, `@font-face` and
@@ -47,3 +61,9 @@ doc.Doc.OutputAt(0, 0, vl) // example: output directly
 - Go 1.25+. Import path: `github.com/boxesandglue/htmlbag`.
 - Tests: `go test ./...`.
 - Changes in the CSS/HTML pipeline should be validated against PDF references (downstream projects rely on stable output).
+
+## Ecosystem
+
+htmlbag is part of a broader ecosystem of PDF, typesetting and publishing technologies.
+
+**[Explore the constellation →](https://constellation.speedata.de/#htmlbag)**
