@@ -298,8 +298,8 @@ func (cb *CSSBuilder) buildTable(te *frontend.Text, wd bag.ScaledPoint) (*node.V
 
 	// Attach all inserts collected from this table's cells. The page
 	// builder will reserve space at the bottom of the page where the
-	// table lands. Multi-page tables (outputTableRows path) are a known
-	// limitation: all inserts attach to the first row's VList.
+	// table lands. A table that breaks across pages (outputTableRows
+	// path) commits them to the page that holds its last rows.
 	if len(cb.tableInserts) > 0 {
 		if vl.Attributes == nil {
 			vl.Attributes = node.H{}
