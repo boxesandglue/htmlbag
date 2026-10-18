@@ -401,14 +401,14 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// boxesandglue-specific: Knuth-Plass hyphen penalty (int).
 			// Lower values encourage hyphenation.
 			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-				ih.hyphenPenalty = n
+				ih.hyphenPenalty = &n
 			}
 		case "-bag-linebreak-tolerance":
 			// boxesandglue-specific: the line breaker's tolerance, a limit
 			// on a line's adjustment ratio, not a badness (float). Higher
 			// values allow looser lines.
-			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
-				ih.linebreakTolerance = f
+			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && f >= 0 {
+				ih.linebreakTolerance = &f
 			}
 		case "-bag-line-breaker":
 			// boxesandglue-specific: how a paragraph chooses its breaks.
@@ -1036,14 +1036,14 @@ type FormattingStyles struct {
 	horizontalScale    *float64 // -bag-horizontal-scale; nil writes no setting, so documents without it are unchanged
 	Halign             frontend.HorizontalAlignment
 	hangingPunctuation frontend.HangingPunctuation
-	direction          string  // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
-	unicodeBidi        string  // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
-	hyphens            string  // CSS hyphens: "" (auto), "auto", "manual", "none"
-	hyphenPenalty      int     // -bag-linebreak-hyphen-penalty (0 = inherit/default)
-	linebreakTolerance float64 // -bag-linebreak-tolerance (0 = inherit/default)
-	leadingModel       string  // -bag-leading-model: "half" or "trailing" ("" = inherit/default)
-	lineModel          string  // -bag-leading-model naming a registered line model
-	breaker            string  // -bag-line-breaker naming a registered breaker
+	direction          string   // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
+	unicodeBidi        string   // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
+	hyphens            string   // CSS hyphens: "" (auto), "auto", "manual", "none"
+	hyphenPenalty      *int     // -bag-linebreak-hyphen-penalty (nil = inherit/default)
+	linebreakTolerance *float64 // -bag-linebreak-tolerance (nil = inherit/default)
+	leadingModel       string   // -bag-leading-model: "half" or "trailing" ("" = inherit/default)
+	lineModel          string   // -bag-leading-model naming a registered line model
+	breaker            string   // -bag-line-breaker naming a registered breaker
 	indent             bag.ScaledPoint
 	initialLetterLines int
 	italicCorrection   bool
@@ -1576,14 +1576,14 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 			settings[frontend.SettingDirection] = frontend.DirectionLTR
 		}
 	}
-	if ih.hyphenPenalty != 0 {
-		settings[frontend.SettingHyphenPenalty] = ih.hyphenPenalty
+	if ih.hyphenPenalty != nil {
+		settings[frontend.SettingHyphenPenalty] = *ih.hyphenPenalty
 	}
 	if ih.leadingModel != "" {
 		settings[frontend.SettingHalfLeading] = ih.leadingModel == "half"
 	}
-	if ih.linebreakTolerance != 0 {
-		settings[frontend.SettingLinebreakTolerance] = ih.linebreakTolerance
+	if ih.linebreakTolerance != nil {
+		settings[frontend.SettingLinebreakTolerance] = *ih.linebreakTolerance
 	}
 }
 
