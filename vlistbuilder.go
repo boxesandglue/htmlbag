@@ -886,10 +886,11 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			// is the no-wrapper sentinel for outputBlockSplit. Containers
 			// holding a table keep their dedicated splice paths in
 			// outputGroupNodes (which the _splittable attribute would
-			// disable), and an explicit break-inside: avoid keeps the
-			// container monolithic.
-			pbiRaw, _ := settings[settingPageBreakInside].(string)
-			if pbiRaw != "avoid" && !hasTableChild(vls.List) {
+			// disable). break-inside: avoid does not keep the container
+			// out of this: the paginator moves it on whole when it fits on
+			// an empty page and splits it only when it is taller, as for a
+			// box with border or background (avoidBreakInside, planSplit).
+			if !hasTableChild(vls.List) {
 				var splittableInner []node.Node
 				for n := vls.List; n != nil; n = n.Next() {
 					splittableInner = append(splittableInner, n)

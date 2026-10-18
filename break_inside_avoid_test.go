@@ -13,6 +13,7 @@ func TestBreakInsideAvoidAtTheTopLevel(t *testing.T) {
 	for _, c := range []struct{ name, html string }{
 		{"paragraph", `<p style="break-inside: avoid">` + nestLines("L", 6) + `</p>`},
 		{"bordered container", `<div class="b" style="break-inside: avoid">` + nestParas("L", 6) + `</div>`},
+		{"plain container", `<div style="break-inside: avoid">` + nestParas("L", 6) + `</div>`},
 		{"paragraph in a div", `<div><p style="break-inside: avoid">` + nestLines("L", 6) + `</p></div>`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -31,6 +32,14 @@ func TestBreakInsideAvoidGivesWay(t *testing.T) {
 		pages, on := linePages(t, `<p>Before</p><p style="break-inside: avoid">`+nestLines("L", 20)+`</p>`, "L")
 		if len(on) != 20 || pages != 2 || countOn(on, 1) == 0 {
 			t.Errorf("%d pages, lines on pages %v; want 2 pages with lines on page 1", pages, on)
+		}
+	})
+	// A plain container has no border or background to split with; it
+	// lost every line past the page end and what came after it (#103).
+	t.Run("plain container taller than a page", func(t *testing.T) {
+		pages, on := linePages(t, `<p>Before</p><div style="break-inside: avoid">`+nestParas("L", 20)+`</div><p>L21</p>`, "L")
+		if len(on) != 21 || pages != 2 || countOn(on, 1) == 0 {
+			t.Errorf("%d pages, lines on pages %v; want all 21 lines on 2 pages, some on page 1", pages, on)
 		}
 	})
 	t.Run("forced break inside", func(t *testing.T) {
