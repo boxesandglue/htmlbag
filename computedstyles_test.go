@@ -170,4 +170,8 @@ func TestTextDecorationShorthand(t *testing.T) {
 	if got := resolveCSSText(`text-decoration: underline`).Get("text-decoration-color"); got != "" {
 		t.Errorf("text-decoration-color = %q, want unset", got)
 	}
+	// Several lines in one value all reach the longhand (boxesandglue#96).
+	if got := resolveCSSText(`text-decoration: underline wavy line-through`).Get("text-decoration-line"); got != "underline line-through" {
+		t.Errorf("text-decoration-line = %q, want %q", got, "underline line-through")
+	}
 }

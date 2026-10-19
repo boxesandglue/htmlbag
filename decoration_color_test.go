@@ -27,6 +27,15 @@ func baseStyles() *FormattingStyles {
 	return &FormattingStyles{DefaultFontSize: bag.MustSP("10pt"), Fontsize: bag.MustSP("10pt")}
 }
 
+// lastDecorationColor is the colour of the innermost decoration, the one the
+// element declares itself if it does.
+func lastDecorationColor(ih *FormattingStyles) *color.Color {
+	if len(ih.TextDecorations) == 0 {
+		return nil
+	}
+	return ih.TextDecorations[len(ih.TextDecorations)-1].Color
+}
+
 func rgb(t *testing.T, c *color.Color) string {
 	t.Helper()
 	if c == nil {
@@ -40,9 +49,9 @@ func rgb(t *testing.T, c *color.Color) string {
 // non-stroking colour, and nothing sets the stroking one.
 func TestDecorationTakesTheDeclaringElementsColour(t *testing.T) {
 	ih := resolveOnto(t, baseStyles(), resolveCSSText("color: rgb(0,0,255); text-decoration-line: underline"))
-	if ih.TextDecorationColor == nil || rgb(t, ih.TextDecorationColor) != rgb(t, ih.color) {
+	if lastDecorationColor(ih) == nil || rgb(t, lastDecorationColor(ih)) != rgb(t, ih.color) {
 		t.Errorf("decoration colour = %s, want the element's own colour %s",
-			rgb(t, ih.TextDecorationColor), rgb(t, ih.color))
+			rgb(t, lastDecorationColor(ih)), rgb(t, ih.color))
 	}
 }
 
@@ -53,9 +62,9 @@ func TestDecorationColourIsIndependentOfDeclarationOrder(t *testing.T) {
 	// run, so repeating it exercises both orders.
 	for i := 0; i < 32; i++ {
 		ih := resolveOnto(t, baseStyles(), resolveCSSText("text-decoration-line: underline; color: rgb(0,0,255)"))
-		if rgb(t, ih.TextDecorationColor) != rgb(t, ih.color) {
+		if rgb(t, lastDecorationColor(ih)) != rgb(t, ih.color) {
 			t.Fatalf("run %d: decoration colour = %s, want %s", i,
-				rgb(t, ih.TextDecorationColor), rgb(t, ih.color))
+				rgb(t, lastDecorationColor(ih)), rgb(t, ih.color))
 		}
 	}
 }
@@ -66,13 +75,13 @@ func TestDescendantColourDoesNotRetintInheritedDecoration(t *testing.T) {
 	para := resolveOnto(t, baseStyles(), resolveCSSText("color: rgb(0,0,255); text-decoration-line: underline"))
 	// Without this the test passes vacuously: if nothing ever captures a
 	// decoration colour, parent and child agree at <unset>.
-	if para.TextDecorationColor == nil {
+	if lastDecorationColor(para) == nil {
 		t.Fatal("the paragraph captured no decoration colour, so this proves nothing")
 	}
-	want := rgb(t, para.TextDecorationColor)
+	want := rgb(t, lastDecorationColor(para))
 
 	span := resolveOnto(t, para, resolveCSSText("color: rgb(255,0,0)"))
-	if got := rgb(t, span.TextDecorationColor); got != want {
+	if got := rgb(t, lastDecorationColor(span)); got != want {
 		t.Errorf("a red span inside an underlined paragraph moved the line to %s, want the paragraph's %s", got, want)
 	}
 }
@@ -82,9 +91,9 @@ func TestDescendantColourDoesNotRetintInheritedDecoration(t *testing.T) {
 func TestDescendantDeclaringItsOwnDecorationTakesItsOwnColour(t *testing.T) {
 	para := resolveOnto(t, baseStyles(), resolveCSSText("color: rgb(0,0,255); text-decoration-line: underline"))
 	span := resolveOnto(t, para, resolveCSSText("color: rgb(255,0,0); text-decoration-line: underline"))
-	if rgb(t, span.TextDecorationColor) != rgb(t, span.color) {
+	if rgb(t, lastDecorationColor(span)) != rgb(t, span.color) {
 		t.Errorf("decoration colour = %s, want the span's own colour %s",
-			rgb(t, span.TextDecorationColor), rgb(t, span.color))
+			rgb(t, lastDecorationColor(span)), rgb(t, span.color))
 	}
 }
 
@@ -92,7 +101,7 @@ func TestDescendantDeclaringItsOwnDecorationTakesItsOwnColour(t *testing.T) {
 func TestExplicitDecorationColourWins(t *testing.T) {
 	ih := resolveOnto(t, baseStyles(), resolveCSSText("color: rgb(0,0,255); text-decoration-line: underline; text-decoration-color: rgb(0,255,0)"))
 	green := resolveOnto(t, baseStyles(), resolveCSSText("color: rgb(0,255,0)")).color
-	if got, want := rgb(t, ih.TextDecorationColor), rgb(t, green); got != want {
+	if got, want := rgb(t, lastDecorationColor(ih)), rgb(t, green); got != want {
 		t.Errorf("explicit decoration colour = %s, want %s (the text colour is %s)", got, want, rgb(t, ih.color))
 	}
 }
@@ -106,8 +115,8 @@ func TestDecorationColourThroughTheShorthand(t *testing.T) {
 		t.Fatalf("the shorthand did not expand to text-decoration-line: %v", styles)
 	}
 	ih := resolveOnto(t, baseStyles(), styles)
-	if ih.TextDecorationColor == nil || rgb(t, ih.TextDecorationColor) != rgb(t, ih.color) {
+	if lastDecorationColor(ih) == nil || rgb(t, lastDecorationColor(ih)) != rgb(t, ih.color) {
 		t.Errorf("decoration colour = %s, want the element's own colour %s",
-			rgb(t, ih.TextDecorationColor), rgb(t, ih.color))
+			rgb(t, lastDecorationColor(ih)), rgb(t, ih.color))
 	}
 }

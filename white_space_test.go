@@ -60,22 +60,62 @@ func TestWhiteSpaceSetting(t *testing.T) {
 // TestTextDecorationPropagates covers CSS Text Decoration 3 §2.2: a decoration
 // applies to in-flow descendants. The property was absent from the style
 // inheritance, so it reset to none on every child and <u>, <s> and <del> never
-// decorated their own text despite the UA stylesheet declaring them.
+// decorated their own text despite the UA stylesheet declaring them. A
+// descendant's own decoration is drawn in addition to its ancestors', and
+// one value can hold several lines (boxesandglue#96).
 func TestTextDecorationPropagates(t *testing.T) {
+	const (
+		u  = frontend.TextDecorationUnderline
+		o  = frontend.TextDecorationOverline
+		lt = frontend.TextDecorationLineThrough
+	)
 	for _, tc := range []struct {
 		html string
-		want frontend.TextDecorationLine
+		want map[string]frontend.TextDecorationLine
 	}{
-		{"<u>text</u>", frontend.TextDecorationUnderline},
-		{"<s>text</s>", frontend.TextDecorationLineThrough},
-		{"<del>text</del>", frontend.TextDecorationLineThrough},
-		{`<span style="text-decoration-line: overline">text</span>`, frontend.TextDecorationOverline},
-		{"<u>a <b>b</b></u>", frontend.TextDecorationUnderline},
+		{"<u>text</u>", map[string]frontend.TextDecorationLine{"text": u}},
+		{"<s>text</s>", map[string]frontend.TextDecorationLine{"text": lt}},
+		{"<del>text</del>", map[string]frontend.TextDecorationLine{"text": lt}},
+		{`<span style="text-decoration-line: overline">text</span>`, map[string]frontend.TextDecorationLine{"text": o}},
+		{"<u>a <b>b</b></u>", map[string]frontend.TextDecorationLine{"a": u, "b": u}},
+		{`<span style="text-decoration: underline line-through">text</span>`, map[string]frontend.TextDecorationLine{"text": u | lt}},
+		{`<span style="text-decoration-line: underline overline">text</span>`, map[string]frontend.TextDecorationLine{"text": u | o}},
+		{`<span style="text-decoration: line-through"><u>text</u></span>`, map[string]frontend.TextDecorationLine{"text": u | lt}},
+		{`<u><span style="text-decoration: line-through">text</span></u>`, map[string]frontend.TextDecorationLine{"text": u | lt}},
+		{"<s>a <u>b</u> c</s>", map[string]frontend.TextDecorationLine{"a": lt, "b": u | lt, "c": lt}},
+		// `none` cannot take an ancestor's line away.
+		{`<u>a <span style="text-decoration: none">b</span></u>`, map[string]frontend.TextDecorationLine{"a": u, "b": u}},
 	} {
 		te := renderToText(t, "<!DOCTYPE html><html><body><p>"+tc.html+"</p></body></html>")
-		got, ok := findSetting(te, frontend.SettingTextDecorationLine)
-		if !ok || got != tc.want {
-			t.Errorf("%s set %v (found=%v), want %v", tc.html, got, ok, tc.want)
+		got := map[string]frontend.TextDecorationLine{}
+		decorationsByRun(te, nil, got)
+		for run, want := range tc.want {
+			if got[run] != want {
+				t.Errorf("%s: run %q has lines %b, want %b", tc.html, run, got[run], want)
+			}
+		}
+	}
+}
+
+// decorationsByRun records the lines each text run in te is decorated with.
+// inherited are the decorations of the parent text, which a text without its
+// own SettingTextDecorations takes over.
+func decorationsByRun(te *frontend.Text, inherited []frontend.TextDecoration, got map[string]frontend.TextDecorationLine) {
+	if v, ok := te.Settings[frontend.SettingTextDecorations]; ok {
+		inherited, _ = v.([]frontend.TextDecoration)
+	}
+	for _, itm := range te.Items {
+		switch c := itm.(type) {
+		case string:
+			var lines frontend.TextDecorationLine
+			for _, d := range inherited {
+				lines |= d.Line
+			}
+			if run := strings.TrimSpace(c); run != "" {
+				got[run] |= lines
+			}
+		case *frontend.Text:
+			decorationsByRun(c, inherited, got)
 		}
 	}
 }

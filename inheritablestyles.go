@@ -360,6 +360,11 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 	if v, ok := attributes["font-size"]; ok {
 		ih.Fontsize = ParseRelativeSize(v.String(), curFontSize, ih.DefaultFontSize)
 	}
+	// The text decoration this element declares itself, added to the
+	// propagated ones after the loop.
+	decorationLine := frontend.TextDecorationLineNone
+	decorationStyle := frontend.TextDecorationStyleSolid
+	var decorationColor *color.Color
 	for k, sv := range attributes {
 		// Most properties are a keyword, a length or a color, which the CSS
 		// text carries faithfully. The few that have internal structure
@@ -758,32 +763,29 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 		case "text-decoration-style":
 			switch v {
 			case "solid":
-				ih.TextDecorationStyle = frontend.TextDecorationStyleSolid
+				decorationStyle = frontend.TextDecorationStyleSolid
 			case "double":
-				ih.TextDecorationStyle = frontend.TextDecorationStyleDouble
+				decorationStyle = frontend.TextDecorationStyleDouble
 			case "dotted":
-				ih.TextDecorationStyle = frontend.TextDecorationStyleDotted
+				decorationStyle = frontend.TextDecorationStyleDotted
 			case "dashed":
-				ih.TextDecorationStyle = frontend.TextDecorationStyleDashed
+				decorationStyle = frontend.TextDecorationStyleDashed
 			case "wavy":
-				ih.TextDecorationStyle = frontend.TextDecorationStyleWavy
+				decorationStyle = frontend.TextDecorationStyleWavy
 			}
 		case "text-decoration-color":
-			ih.TextDecorationColor = df.GetColor(v)
+			decorationColor = df.GetColor(v)
 		case "text-decoration-line":
-			// All three lines are drawn the same way, at different offsets, so
-			// there is no reason for overline and line-through to be dropped.
-			// CSS allows several at once ("underline overline"); the parser keeps
-			// only the last one it sees, so this maps one line at a time.
-			switch v {
-			case "underline":
-				ih.TextDecorationLine = frontend.TextDecorationUnderline
-			case "overline":
-				ih.TextDecorationLine = frontend.TextDecorationOverline
-			case "line-through":
-				ih.TextDecorationLine = frontend.TextDecorationLineThrough
-			case "none":
-				ih.TextDecorationLine = frontend.TextDecorationLineNone
+			// CSS allows several lines at once ("underline line-through").
+			for _, kw := range strings.Fields(v) {
+				switch kw {
+				case "underline":
+					decorationLine |= frontend.TextDecorationUnderline
+				case "overline":
+					decorationLine |= frontend.TextDecorationOverline
+				case "line-through":
+					decorationLine |= frontend.TextDecorationLineThrough
+				}
 			}
 		case "text-indent":
 			ih.indent = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
@@ -944,28 +946,31 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 		}
 	}
 
-	// CSS Text Decoration 3 §2.2: text-decoration-color's initial value is
-	// `currentcolor`, resolved with originating-element semantics — the line
-	// takes the colour of the element that DECLARES the decoration and keeps it
-	// across descendants that change `color`. So an underlined paragraph holding
-	// a red span underlines the red word in the paragraph's colour, not in red.
+	// CSS Text Decoration 3 §2.2: a decoration is not inherited but
+	// propagated. A descendant draws the lines of its ancestors, each in the
+	// style and colour of the element that declared it, and its own lines in
+	// addition; `none` cannot take an ancestor's line away. So a struck span
+	// inside <u> keeps the underline (boxesandglue#96).
 	//
-	// Capturing it only where the decoration is declared is what gives that: a
-	// descendant that merely inherits the decoration must not re-capture, and
-	// one that declares its own line starts a new decoration and does.
+	// text-decoration-color's initial value is `currentcolor`, resolved with
+	// originating-element semantics: the line takes the colour of the element
+	// that declares the decoration and keeps it across descendants that change
+	// `color`. So an underlined paragraph holding a red span underlines the red
+	// word in the paragraph's colour, not in red.
 	//
 	// It cannot be done inside the property loop. The declarations arrive as a
 	// map, so whether `color` is seen before or after `text-decoration-line` is
 	// chance — the same reason the border widths below are resolved here.
 	//
-	// Leaving it unset is not equivalent. Glyphs are filled, so a run's colour
-	// is set as the non-stroking colour, but the decoration is stroked, and the
-	// stroking colour is a separate graphics state entry. Nothing sets it, so an
-	// unset decoration colour falls back to black.
-	if _, declaresLine := attributes["text-decoration-line"]; declaresLine {
-		if _, declaresColor := attributes["text-decoration-color"]; !declaresColor {
-			ih.TextDecorationColor = ih.color
+	// Leaving the colour unset is not equivalent. Glyphs are filled, so a run's
+	// colour is set as the non-stroking colour, but the decoration is stroked,
+	// and the stroking colour is a separate graphics state entry. Nothing sets
+	// it, so an unset decoration colour falls back to black.
+	if decorationLine != frontend.TextDecorationLineNone {
+		if decorationColor == nil {
+			decorationColor = ih.color
 		}
+		ih.addTextDecoration(frontend.TextDecoration{Line: decorationLine, Style: decorationStyle, Color: decorationColor})
 	}
 
 	// CSS 2.1 §8.5.3: `border-style: none` (and `hidden`) forces the used
@@ -1078,17 +1083,18 @@ type FormattingStyles struct {
 	// from the top down, so siblings share counters declared on the
 	// nearest common ancestor (e.g. <ol counter-reset: list-item> seen
 	// from each <li counter-increment: list-item>).
-	LocalCounters       map[string]int
-	counterReset        map[string]int // CSS counter-reset on THIS element
-	counterIncrement    map[string]int // CSS counter-increment on THIS element
-	ListPaddingLeft     bag.ScaledPoint
-	PaddingBottom       bag.ScaledPoint
-	PaddingLeft         bag.ScaledPoint
-	PaddingRight        bag.ScaledPoint
-	PaddingTop          bag.ScaledPoint
-	TextDecorationLine  frontend.TextDecorationLine
-	TextDecorationStyle frontend.TextDecorationStyle
-	TextDecorationColor *color.Color
+	LocalCounters    map[string]int
+	counterReset     map[string]int // CSS counter-reset on THIS element
+	counterIncrement map[string]int // CSS counter-increment on THIS element
+	ListPaddingLeft  bag.ScaledPoint
+	PaddingBottom    bag.ScaledPoint
+	PaddingLeft      bag.ScaledPoint
+	PaddingRight     bag.ScaledPoint
+	PaddingTop       bag.ScaledPoint
+	// TextDecorations are the text decorations of this element and its
+	// ancestors, outermost first. An element adds the one it declares to the
+	// ones it inherits; in CSS decorations propagate rather than inherit.
+	TextDecorations []frontend.TextDecoration
 	// floatSide and clear are CSS float/clear (see float.go). Neither is
 	// inherited: both are cleared for each element as its own styles resolve.
 	floatSide string
@@ -1248,6 +1254,28 @@ func parseHorizontalScale(v string) (float64, bool) {
 	return f / div, true
 }
 
+// addTextDecoration appends the decoration an element declares to the ones it
+// propagates. The list is shared with the parent, so it is copied first. A
+// decoration already in the list is not added again: <s><s>x</s></s> would
+// draw the same line twice, and a style applied to the same element twice
+// would double it.
+func (is *FormattingStyles) addTextDecoration(d frontend.TextDecoration) {
+	for _, have := range is.TextDecorations {
+		if have.Line == d.Line && have.Style == d.Style && sameColor(have.Color, d.Color) {
+			return
+		}
+	}
+	is.TextDecorations = append(slices.Clip(is.TextDecorations), d)
+}
+
+// sameColor reports whether a and b are the same colour, or both unset.
+func sameColor(a, b *color.Color) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.PDFStringStroking() == b.PDFStringStroking()
+}
+
 // Clone mimics style inheritance.
 func (is *FormattingStyles) Clone() *FormattingStyles {
 	// inherit
@@ -1303,16 +1331,14 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		// descendants, so <u>a <b>b</b></u> underlines both runs. Without this
 		// the field reset to none on every child and only a leaf element that
 		// declared the property itself was ever decorated.
-		TextDecorationLine:  is.TextDecorationLine,
-		TextDecorationStyle: is.TextDecorationStyle,
-		TextDecorationColor: is.TextDecorationColor,
-		whiteSpace:          is.whiteSpace,
-		tabsize:             is.tabsize,
-		tabsizeSpaces:       is.tabsizeSpaces,
-		floatGutter:         is.floatGutter,
-		tabStops:            is.tabStops,
-		Valign:              is.Valign,
-		Halign:              is.Halign,
+		TextDecorations: is.TextDecorations,
+		whiteSpace:      is.whiteSpace,
+		tabsize:         is.tabsize,
+		tabsizeSpaces:   is.tabsizeSpaces,
+		floatGutter:     is.floatGutter,
+		tabStops:        is.tabStops,
+		Valign:          is.Valign,
+		Halign:          is.Halign,
 		// vertical-align itself does not inherit, but the baseline shift it
 		// produces carries over: descendant inline boxes align to the
 		// parent's (shifted) baseline. Nested sub/super/length values add
@@ -1523,11 +1549,8 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	if len(ih.tabStops) > 0 {
 		settings[frontend.SettingTabStops] = ih.tabStops
 	}
-	settings[frontend.SettingTextDecorationLine] = ih.TextDecorationLine
-	settings[frontend.SettingTextDecorationStyle] = ih.TextDecorationStyle
-	if ih.TextDecorationColor != nil {
-		settings[frontend.SettingTextDecorationColor] = ih.TextDecorationColor
-	}
+	// Set even when empty: the text of an element replaces its parent's list.
+	settings[frontend.SettingTextDecorations] = ih.TextDecorations
 
 	if ih.Valign != frontend.VAlignDefault {
 		settings[frontend.SettingVAlign] = ih.Valign

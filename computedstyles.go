@@ -358,15 +358,21 @@ func resolveDeclarations(decls []declaration) StyleMap {
 			}
 			set("font-synthesis-small-caps", textValue(synth))
 		case "text-decoration":
+			// The line takes several keywords at once ("underline
+			// line-through"), so they are collected into one value.
+			var lines []string
 			for _, part := range componentValues(decl.value) {
 				switch part.String() {
 				case "none", "underline", "overline", "line-through":
-					set("text-decoration-line", part)
+					lines = append(lines, part.String())
 				case "solid", "double", "dotted", "dashed", "wavy":
 					set("text-decoration-style", part)
 				default:
 					set("text-decoration-color", part)
 				}
+			}
+			if len(lines) > 0 {
+				set("text-decoration-line", textValue(strings.Join(lines, " ")))
 			}
 		case "background":
 			// background-clip, background-color, background-image,
