@@ -2,7 +2,7 @@
 
 [![Explore in Constellation](https://img.shields.io/badge/Explore%20in-Constellation-blue)](https://constellation.speedata.de/#htmlbag)
 
-htmlbag is the HTML/CSS renderer within the Boxes and Glue stack. It parses CSS
+htmlbag is the HTML/CSS renderer within the boxes and glue stack. It parses CSS
 stylesheets, matches them against an HTML document, and turns the styled DOM
 into internal text and node structures (`frontend.Text`, `node.VList`, etc.)
 that are later shipped to PDF. [bagme](https://github.com/boxesandglue/bagme)
