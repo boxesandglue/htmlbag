@@ -1186,46 +1186,21 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 			return 0, err
 		}
 
-		items := group
+		g := groupBuild{body: body, items: group, base: groupStart, children: children, caller: fc.caller}
 		rebuild := false
 		fc.rebuiltIn = 0
 		var carry map[int]node.H
 		for {
-			// Create a wrapper Text with the body's settings for this group.
-			wrapper := &frontend.Text{
-				Settings: body.Settings,
-				Items:    items,
-			}
-			if fc.caller {
-				// The build collapses the last child's margin-bottom into
-				// the wrapper's, which is read below: a copy keeps it off
-				// the body and apart from the other groups.
-				wrapper.Settings = maps.Clone(body.Settings)
-			}
-
-			cb.reflowRebuild = rebuild
-			vl, err := cb.CreateVlist(wrapper, fc.cur.width)
-			cb.reflowRebuild = false
+			vl, mb, err := cb.buildGroup(g, rebuild, carry, fc.cur.width)
 			if err != nil {
 				return 0, err
 			}
-			stampGroupItemIndices(wrapper, vl)
-			if children != nil {
-				children.stamp(vl, groupStart+len(group)-len(items))
-			}
-			if rebuild {
-				// The collapsed margin kern preceding the restart item was
-				// already buffered by the previous pass; the rebuilt chain
-				// must not add it a second time.
-				dropLeadingMarginKern(vl)
-				applyReflowCarry(vl, carry)
-			}
-			marginAfter, _ = wrapper.Settings[frontend.SettingMarginBottom].(bag.ScaledPoint)
+			marginAfter = mb
 			if cr != nil && !rebuild && !spans[i] && cr.balances(i, spans) {
 				cb.balanceColumns(vl, fc, cr)
 			}
 			if bal != nil && i == len(groups)-1 {
-				cb.balanceGroup(bal, vl, fc)
+				cb.balanceGroup(bal, g, vl, fc)
 			}
 
 			// Place nodes from this group's vlist onto pages.
@@ -1238,19 +1213,79 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 			if restart < 0 {
 				break
 			}
-			// Rebuild the remaining items at the changed content width. The
-			// carried attributes are keyed by the item index relative to the
-			// slice the next CreateVlist call will see.
-			carry = make(map[int]node.H, len(c))
-			for k, v := range c {
-				carry[k-restart] = v
-			}
-			items = items[restart:]
+			// Rebuild the remaining items at the changed content width.
+			g, carry = g.rest(restart), restartCarry(c, restart)
 			rebuild = true
 			fc.rebuiltIn = fc.serial
 		}
 	}
 	return marginAfter, nil
+}
+
+// groupBuild is a group of a body's items, or the rest of one after a
+// restart, with what building it takes.
+type groupBuild struct {
+	body  *frontend.Text
+	items []any
+	// base is the index of items[0] among the body's items.
+	base     int
+	children *flowChildren
+	caller   bool
+}
+
+// rest is the group from its item restart on.
+func (g groupBuild) rest(restart int) groupBuild {
+	g.items, g.base = g.items[restart:], g.base+restart
+	return g
+}
+
+// restartCarry keys the attributes outputGroupNodes collected at a restart
+// by the item index relative to the rest of the group.
+func restartCarry(c map[int]node.H, restart int) map[int]node.H {
+	carry := make(map[int]node.H, len(c))
+	for k, v := range c {
+		carry[k-restart] = v
+	}
+	return carry
+}
+
+// buildGroup builds g at width and returns it with the margin-bottom that
+// ends it. rebuild is set for the rest of a group after a restart, carry
+// holds the attributes to put on its items (see reflowCarryKeys).
+func (cb *CSSBuilder) buildGroup(g groupBuild, rebuild bool, carry map[int]node.H, width bag.ScaledPoint) (*node.VList, bag.ScaledPoint, error) {
+	// Create a wrapper Text with the body's settings for this group.
+	wrapper := &frontend.Text{
+		Settings: g.body.Settings,
+		Items:    g.items,
+	}
+	if g.caller {
+		// The build collapses the last child's margin-bottom into the
+		// wrapper's, which is read below: a copy keeps it off the body and
+		// apart from the other groups.
+		wrapper.Settings = maps.Clone(g.body.Settings)
+	}
+
+	// A trial builds with reflowRebuild set already.
+	saved := cb.reflowRebuild
+	cb.reflowRebuild = saved || rebuild
+	vl, err := cb.CreateVlist(wrapper, width)
+	cb.reflowRebuild = saved
+	if err != nil {
+		return nil, 0, err
+	}
+	stampGroupItemIndices(wrapper, vl)
+	if g.children != nil {
+		g.children.stamp(vl, g.base)
+	}
+	if rebuild {
+		// The collapsed margin kern preceding the restart item was already
+		// buffered by the previous pass; the rebuilt chain must not add it a
+		// second time.
+		dropLeadingMarginKern(vl)
+		applyReflowCarry(vl, carry)
+	}
+	marginAfter, _ := wrapper.Settings[frontend.SettingMarginBottom].(bag.ScaledPoint)
+	return vl, marginAfter, nil
 }
 
 // findBody descends through the root → <html> → <body> wrapper chain to reach

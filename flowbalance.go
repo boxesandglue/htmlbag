@@ -31,14 +31,16 @@ type RemainingRegions interface {
 // a fresh copy of the group from its start through the regions handed out
 // since, then through the regions Remaining names, capped at a line; a
 // bisection finds the highest line at which the group ends on the page, and
-// the real run goes on with its regions capped there.
+// the real run goes on with its regions capped there. A region of another
+// width rebuilds the rest of the group in the trial as in the real run.
 type flowBalance struct {
 	rr RemainingRegions
 	// vl is a copy of the last group as built, nil before it is built and
 	// once the flow is balanced or the balance given up. height is its
-	// height.
+	// height, group the items it was built from.
 	vl     *node.VList
 	height bag.ScaledPoint
+	group  groupBuild
 	// fc and page are the cursor and the page buffer when vl was built.
 	// What its region holds already is in the page buffer: boxes a table
 	// placed in the region directly sit under a spacer of their height.
@@ -55,9 +57,10 @@ type flowBalance struct {
 	expect []Region
 }
 
-// take keeps the last group vl, just built for fc's region, for the trials.
-func (b *flowBalance) take(cb *CSSBuilder, vl *node.VList, fc *flowCursor) {
-	b.vl, b.height = trialCopy(vl), vl.Height+vl.Depth
+// take keeps the last group vl, just built from g for fc's region, for the
+// trials.
+func (b *flowBalance) take(cb *CSSBuilder, g groupBuild, vl *node.VList, fc *flowCursor) {
+	b.vl, b.height, b.group = trialCopy(vl), vl.Height+vl.Depth, g
 	b.fc = *fc
 	s := cb.pageState()
 	b.page = pageState{buf: slices.Clone(s.buf), bufHeight: s.bufHeight, inserts: map[InsertClass][]*Insert{}, insertsHgt: map[InsertClass]bag.ScaledPoint{}}
@@ -127,13 +130,16 @@ func (cb *CSSBuilder) balanceLine(b *flowBalance, cur region, entering bool) (ba
 	}
 	var room bag.ScaledPoint
 	top, bottom := cur.top, cur.bottom()
+	sameWidth := true
 	for _, r := range page {
 		room += r.height
 		top, bottom = max(top, r.top), min(bottom, r.bottom())
+		sameWidth = sameWidth && r.width == b.fc.cur.width
 	}
 	// The group's height less what the regions since its build hold: more
-	// than the page holds cannot end on it.
-	if b.height-b.consumed > room {
+	// than the page holds cannot end on it. Rebuilt in a wider region, it
+	// may take less.
+	if sameWidth && b.height-b.consumed > room {
 		return 0, nil, false
 	}
 	fits := func(h bag.ScaledPoint) bool { return cb.flowTrial(b, entering, page, top-h) }
@@ -232,12 +238,27 @@ func (cb *CSSBuilder) flowTrial(b *flowBalance, entering bool, page []region, li
 		defer func() {
 			cb.callerFlow, cb.reflowRebuild, cb.enableTagging = flow, rebuild, tagging
 		}()
-		restart, _, err := cb.outputGroupNodes(trialCopy(b.vl), &tfc)
-		// A restart is a region of another width: the trial gives up. The
-		// trial places what the real run placed in the regions handed out
-		// since the build, so it does not end before the page; should it
-		// part from the real run there, it tells nothing about the page.
-		if err != nil || restart >= 0 || t.at < capFrom {
+		vl, g := trialCopy(b.vl), b.group
+		for {
+			restart, c, err := cb.outputGroupNodes(vl, &tfc)
+			if err != nil {
+				return
+			}
+			if restart < 0 {
+				break
+			}
+			// A region of another width: the rest of the group is built
+			// again for it, as in the real run.
+			g = g.rest(restart)
+			if vl, _, err = cb.buildGroup(g, true, restartCarry(c, restart), tfc.cur.width); err != nil {
+				return
+			}
+			tfc.rebuiltIn = tfc.serial
+		}
+		// The trial places what the real run placed in the regions handed
+		// out since the build, so it does not end before the page; should
+		// it part from the real run there, it tells nothing about the page.
+		if t.at < capFrom {
 			return
 		}
 		if err := t.filled(filled{}); err != nil {
@@ -248,14 +269,14 @@ func (cb *CSSBuilder) flowTrial(b *flowBalance, entering bool, page []region, li
 	return fits
 }
 
-// balanceGroup keeps vl, the last group just built or rebuilt for fc's
-// region, for the trials, and balances it from that region on when it ends
-// on its page.
-func (cb *CSSBuilder) balanceGroup(b *flowBalance, vl *node.VList, fc *flowCursor) {
+// balanceGroup keeps vl, the last group just built or rebuilt from g for
+// fc's region, for the trials, and balances it from that region on when it
+// ends on its page.
+func (cb *CSSBuilder) balanceGroup(b *flowBalance, g groupBuild, vl *node.VList, fc *flowCursor) {
 	if b.capped {
 		return
 	}
-	b.take(cb, vl, fc)
+	b.take(cb, g, vl, fc)
 	line, rem, ok := cb.balanceLine(b, fc.cur, false)
 	if !ok {
 		return

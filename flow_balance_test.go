@@ -266,10 +266,11 @@ func TestFlowTextBalancesATableAcrossThePageStart(t *testing.T) {
 }
 
 // A block that moves into a region of another width on the last page
-// restarts the paginator, which gives the balance up: the page fills as
-// without it. A paragraph split there is re-broken in place, in a trial as
-// in the fill, so that page is balanced. So is a last page narrower than the
-// ones before with regions of one width, after the rest is rebuilt at it.
+// restarts the paginator, which builds the rest of the group again for it,
+// in a trial as in the fill, so that page is balanced. So is a page where a
+// paragraph split there is re-broken in place, and a last page narrower
+// than the ones before with regions of one width, after the rest is
+// rebuilt at it.
 func TestFlowTextBalanceAndWidthChanges(t *testing.T) {
 	text := strings.Repeat("alpha beta gamma delta ", 4)
 	var paras []string
@@ -285,10 +286,17 @@ func TestFlowTextBalanceAndWidthChanges(t *testing.T) {
 	t.Run("a block moving into another width", func(t *testing.T) {
 		const css = `p { break-inside: avoid }`
 		on := balanced(t, css, body, true, two, mixed)
-		off := balanced(t, css, body, false, two, mixed)
-		if a, b := dump(on), dump(off); a != b {
-			t.Errorf("balanced\n%s\nwant as filled\n%s", a, b)
+		requireOrder(t, on, "P", 14)
+		// P11 and P12 in the wide region, P13 whole in the narrow one,
+		// rebuilt at its width.
+		requireCounts(t, on, 9, 9, 9, 10, 6, 5)
+		if texts := regionTexts(on)[5]; texts[0] != "P13alphabetagamma" {
+			t.Errorf("the narrow region starts with %q, want P13", texts[0])
 		}
+		if w := boxLines(on.filled[5])[0].width; w != sp("100pt") {
+			t.Errorf("the narrow region's lines are %s wide, want 100pt", w)
+		}
+		requireCounts(t, balanced(t, css, body, false, two, mixed), 9, 9, 9, 10, 9)
 	})
 	t.Run("a paragraph re-broken at another width", func(t *testing.T) {
 		on := balanced(t, "", body, true, two, mixed)
