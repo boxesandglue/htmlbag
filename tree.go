@@ -10,7 +10,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/andybalholm/cascadia"
+	"github.com/boxesandglue/htmlbag/internal/cascadia"
 	scanner "github.com/speedata/css"
 )
 
@@ -93,6 +93,8 @@ func stringValue(toks tokenstream) string {
 			ret = append(ret, "format("+tok.Value+")")
 		case scanner.Tech:
 			ret = append(ret, "tech("+tok.Value+")")
+		case scanner.UnicodeRange:
+			ret = append(ret, tok.Value)
 		default:
 			fmt.Println("tree: unhandled token", tok)
 		}
@@ -205,6 +207,7 @@ func (c *CSS) ApplyCSS(doc *goquery.Document) (*goquery.Document, error) {
 	}
 
 	doc.Each(c.resolveStyleAttribute)
+	c.resolveCustomProperties(root, nil)
 	return doc, nil
 }
 

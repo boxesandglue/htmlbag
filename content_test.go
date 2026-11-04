@@ -398,3 +398,13 @@ func TestParseContentValue_Element(t *testing.T) {
 		})
 	}
 }
+
+// The alternative text after "/" is not rendered.
+func TestParseContentValue_AltText(t *testing.T) {
+	for _, v := range []string{`"\f015" / ""`, `"\f015"/"home"`, `"\f015" / attr(title)`} {
+		got := ParseContentValue(v)
+		if len(got) != 1 || got[0].Type != ContentString || got[0].Value != "" {
+			t.Errorf("%s: got %+v", v, got)
+		}
+	}
+}

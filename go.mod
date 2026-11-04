@@ -4,7 +4,6 @@ go 1.25.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
-	github.com/andybalholm/cascadia v1.3.4
 	github.com/boxesandglue/baseline-pdf v1.1.27
 	github.com/boxesandglue/boxesandglue v0.2.94
 	github.com/boxesandglue/svgreader v0.0.6
@@ -16,6 +15,7 @@ require (
 )
 
 require (
+	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/boxesandglue/gofpdi v1.0.24 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

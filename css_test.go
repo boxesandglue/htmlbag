@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andybalholm/cascadia"
+	"github.com/boxesandglue/htmlbag/internal/cascadia"
 )
 
 func TestNestedAtrule(t *testing.T) {

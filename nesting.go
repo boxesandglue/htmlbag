@@ -112,13 +112,37 @@ func substituteAmpersand(parent, child tokenstream) tokenstream {
 // suitable for passing to cascadia. It produces correct CSS selector syntax:
 // no space before . # : (they attach to the preceding simple selector),
 // but preserves whitespace tokens as descendant combinators.
+//
+// :host, :host() and :host-context() select the host of a shadow tree, which
+// a document does not have; they become a selector that matches nothing, so
+// `:root, :host { ... }` keeps working.
+// neverMatches is a selector that matches no element.
+const neverMatches = ":not(*)"
+
 func selectorString(toks tokenstream) string {
 	var sb strings.Builder
-	for _, tok := range toks {
+	for i := 0; i < len(toks); i++ {
+		tok := toks[i]
 		switch tok.Type {
 		case scanner.S:
 			sb.WriteByte(' ')
+		case scanner.Ident:
+			if strings.EqualFold(tok.Value, ":host") {
+				sb.WriteString(neverMatches)
+				continue
+			}
+			sb.WriteString(tok.Value)
 		case scanner.Function:
+			// fixupComponentValues has already glued the colon to the name.
+			if strings.EqualFold(tok.Value, ":host") || strings.EqualFold(tok.Value, ":host-context") {
+				sb.WriteString(neverMatches)
+				if end := matchingParen(toks, i); end > 0 {
+					i = end
+				} else {
+					i = len(toks)
+				}
+				continue
+			}
 			sb.WriteString(tok.Value)
 			sb.WriteByte('(')
 		case scanner.Hash:

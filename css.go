@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/boxesandglue/boxesandglue/backend/bag"
 	scanner "github.com/speedata/css"
 	"golang.org/x/net/html"
 )
@@ -98,11 +99,16 @@ func ParseContentValue(value string) []ContentToken {
 }
 
 // parseContentTokens converts a CSS tokenstream (the value side of a
-// content property) into structured ContentToken values.
+// content property) into structured ContentToken values. The alternative
+// text after a "/" (CSS Generated Content 3, `content: "★" / "star"`) is not
+// part of the rendered content and is skipped.
 func parseContentTokens(ts tokenstream) []ContentToken {
 	var tokens []ContentToken
 	for i := 0; i < len(ts); i++ {
 		tok := ts[i]
+		if tok.Type == scanner.Delim && tok.Value == "/" {
+			break
+		}
 		switch tok.Type {
 		case scanner.String:
 			tokens = append(tokens, ContentToken{Type: ContentString, Value: tok.Value})
@@ -945,6 +951,13 @@ func (c *CSS) doFontFace(ff []qrule) error {
 			default:
 				f.LineGapOverride = v
 			}
+		case "font-display":
+			// Controls how a browser renders text while the font
+			// loads; a PDF waits for every font.
+		case "unicode-range":
+			// Selecting a face of a family per character is not
+			// implemented; the face is used for all characters.
+			bag.Logger.Debug("@font-face unicode-range is ignored", "family", f.Family)
 		default:
 			fmt.Println("unhandled font setting", key)
 		}
@@ -1038,8 +1051,10 @@ func (c *CSS) processAtRules(stylesheet sBlock) error {
 			if err := c.doColor(atrule); err != nil {
 				return err
 			}
+		case "keyframes", "-webkit-keyframes":
+			// Animations have no meaning on paper.
 		default:
-			fmt.Println("unknown at rule", atrule)
+			bag.Logger.Warn("CSS at-rule not supported, ignored", "rule", "@"+atrule.name)
 		}
 	}
 	return nil
