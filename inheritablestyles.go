@@ -381,6 +381,8 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// the keyword as-is and translate to the no-op language at
 			// ApplySettings when it's "none" or "manual".
 			ih.hyphens = strings.ToLower(strings.TrimSpace(v))
+		case "hyphenate-limit-chars":
+			ih.hyphenLimits = parseHyphenLimits(v)
 		case "direction":
 			// CSS Writing Modes 3 §2.1: explicit base direction for the
 			// paragraph. Overrides the content-based auto-detection in
@@ -1032,14 +1034,15 @@ type FormattingStyles struct {
 	horizontalScale    *float64 // -bag-horizontal-scale; nil writes no setting, so documents without it are unchanged
 	Halign             frontend.HorizontalAlignment
 	hangingPunctuation frontend.HangingPunctuation
-	direction          string   // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
-	unicodeBidi        string   // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
-	hyphens            string   // CSS hyphens: "" (auto), "auto", "manual", "none"
-	hyphenPenalty      *int     // -bag-linebreak-hyphen-penalty (nil = inherit/default)
-	linebreakTolerance *float64 // -bag-linebreak-tolerance (nil = inherit/default)
-	leadingModel       string   // -bag-leading-model: "half" or "trailing" ("" = inherit/default)
-	lineModel          string   // -bag-leading-model naming a registered line model
-	breaker            string   // -bag-line-breaker naming a registered breaker
+	direction          string        // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
+	unicodeBidi        string        // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
+	hyphens            string        // CSS hyphens: "" (auto), "auto", "manual", "none"
+	hyphenLimits       *hyphenLimits // CSS hyphenate-limit-chars, nil for auto
+	hyphenPenalty      *int          // -bag-linebreak-hyphen-penalty (nil = inherit/default)
+	linebreakTolerance *float64      // -bag-linebreak-tolerance (nil = inherit/default)
+	leadingModel       string        // -bag-leading-model: "half" or "trailing" ("" = inherit/default)
+	lineModel          string        // -bag-leading-model naming a registered line model
+	breaker            string        // -bag-line-breaker naming a registered breaker
 	indent             bag.ScaledPoint
 	initialLetterLines int
 	italicCorrection   bool
@@ -1304,6 +1307,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		unicodeBidi:        is.unicodeBidi,
 		hangingPunctuation: is.hangingPunctuation,
 		hyphens:            is.hyphens,
+		hyphenLimits:       is.hyphenLimits,
 		hyphenPenalty:      is.hyphenPenalty,
 		linebreakTolerance: is.linebreakTolerance,
 		leadingModel:       is.leadingModel,
@@ -1415,16 +1419,20 @@ func applyLangAndHyphens(ih *FormattingStyles, attrs map[string]string, df *fron
 		}
 		ih.langPattern = l
 	default:
-		// "auto" or empty — honour the language tag.
-		if ih.language == "" {
+		// "auto" or empty — honour the language tag. Without one, the
+		// document language holds, which limits make a language of its own
+		// and a parent's limits leave for a child without them.
+		l := df.Doc.DefaultLanguage
+		if ih.language != "" {
+			var err error
+			if l, err = df.GetLanguageCached(ih.language); err != nil {
+				bag.Logger.Error("Cannot resolve language", "tag", ih.language, "err", err)
+				return
+			}
+		} else if ih.hyphenLimits == nil && ih.langPattern == nil {
 			return
 		}
-		l, err := df.GetLanguageCached(ih.language)
-		if err != nil {
-			bag.Logger.Error("Cannot resolve language", "tag", ih.language, "err", err)
-			return
-		}
-		ih.langPattern = l
+		ih.langPattern = limitedLanguage(df, l, ih.hyphenLimits)
 	}
 }
 
