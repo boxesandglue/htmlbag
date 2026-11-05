@@ -96,7 +96,6 @@ func TestPropertySpecCoverage(t *testing.T) {
 	if _, err := os.Stat("inheritablestyles.go"); err != nil {
 		t.Skip("package sources not available")
 	}
-	elementGroups := []PropertyGroup{GroupText, GroupBox, GroupBorder, GroupLayout, GroupGenerated, GroupCustom}
 	sources := []struct {
 		file, fn string
 		groups   []PropertyGroup

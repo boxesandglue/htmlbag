@@ -117,22 +117,71 @@ var displayValues = map[string]bool{
 	"inherit": true, "initial": true, "unset": true, "revert": true,
 }
 
+// elementProperties are the properties that have an effect on an element.
+// TestPropertySpecCoverage keeps Properties in step with the code.
+var elementProperties = func() map[string]bool {
+	known := map[string]bool{}
+	for _, group := range elementGroups {
+		for _, spec := range PropertiesInGroup(group) {
+			for _, name := range spec.Names() {
+				known[name] = true
+			}
+		}
+	}
+	return known
+}()
+
 // warnInvalidValues reports what a stylesheet asks for and does not get. It
 // runs once for each stylesheet: ApplyCSS and the style resolution run for
-// every text and element and would repeat a warning thousands of times.
-func warnInvalidValues(block sBlock) {
+// every text and element and would repeat a warning thousands of times. Style
+// attributes come one by one, warnOnce keeps them from doing the same.
+// inAtRule leaves out the check of the property names, an at-rule has
+// descriptors of its own.
+func (c *CSS) warnInvalidValues(block sBlock, inAtRule bool) {
 	for _, r := range block.rules {
-		warnInvalidValue(stringValue(r.key), r.value)
+		property := stringValue(r.key)
+		c.warnInvalidValue(property, r.value)
+		if !inAtRule {
+			c.warnUnknownProperty(property)
+		}
 	}
 	for _, b := range block.blocks {
-		warnInvalidValues(*b)
+		c.warnInvalidValues(*b, inAtRule)
 	}
 	for _, b := range block.childAtRules {
-		warnInvalidValues(*b)
+		c.warnInvalidValues(*b, true)
 	}
 }
 
-func warnInvalidValue(property string, value tokenstream) {
+// warnOnce reports whether key is new to this CSS object.
+func (c *CSS) warnOnce(key string) bool {
+	if c.warned[key] {
+		return false
+	}
+	if c.warned == nil {
+		c.warned = map[string]bool{}
+	}
+	c.warned[key] = true
+	return true
+}
+
+// warnUnknownProperty reports a property without an effect. The vendor
+// prefixes stay quiet, they are meant for browsers only.
+func (c *CSS) warnUnknownProperty(property string) {
+	if elementProperties[property] {
+		return
+	}
+	for _, prefix := range []string{"--", "-webkit-", "-moz-", "-ms-", "-o-"} {
+		if strings.HasPrefix(property, prefix) {
+			return
+		}
+	}
+	if c.warnOnce("property " + property) {
+		bag.Logger.Warn("CSS property is not supported, ignoring it", "property", property)
+	}
+}
+
+func (c *CSS) warnInvalidValue(property string, value tokenstream) {
 	if strings.HasPrefix(property, "--") {
 		// A custom property holds any tokens, they mean something only
 		// where var() puts them.
@@ -140,9 +189,11 @@ func warnInvalidValue(property string, value tokenstream) {
 	}
 	text, dropped := formatValue(value)
 	for _, tok := range dropped {
-		bag.Logger.Warn("CSS value has an unexpected token, dropping it", "property", property, "token", tok.Value, "line", tok.Line)
+		if c.warnOnce(fmt.Sprintf("token %s %s %d", property, tok.Value, tok.Line)) {
+			bag.Logger.Warn("CSS value has an unexpected token, dropping it", "property", property, "token", tok.Value, "line", tok.Line)
+		}
 	}
-	if property == "display" && !displayValues[text] && !strings.Contains(text, "var(") {
+	if property == "display" && !displayValues[text] && !strings.Contains(text, "var(") && c.warnOnce("display "+text) {
 		bag.Logger.Warn("display value is not supported, ignoring it", "value", text)
 	}
 }
@@ -154,7 +205,8 @@ func (c *CSS) resolveStyleAttribute(i int, sel *goquery.Selection) {
 	if a, ok := sel.Attr("style"); ok {
 		decls := declarationsFromText(a)
 		for _, d := range decls {
-			warnInvalidValue(d.property, d.value)
+			c.warnInvalidValue(d.property, d.value)
+			c.warnUnknownProperty(d.property)
 		}
 		for _, node := range sel.Nodes {
 			for _, d := range decls {

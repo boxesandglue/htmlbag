@@ -37,7 +37,7 @@ func (c *CSS) ProcessHTMLFile(filename string) (*goquery.Document, error) {
 			}
 			parsedStyles := consumeBlock(block, false)
 			parsedStyles.blocks = flattenNestedBlocks(parsedStyles.blocks)
-			warnInvalidValues(parsedStyles)
+			c.warnInvalidValues(parsedStyles, false)
 			c.stylesheet = append(c.stylesheet, parsedStyles)
 		}
 	})
@@ -81,7 +81,7 @@ func (c *CSS) ProcessHTMLChunk(htmltext string) (*goquery.Document, error) {
 			if err = c.processAtRules(parsedStyles); err != nil {
 				errcond = err
 			}
-			warnInvalidValues(parsedStyles)
+			c.warnInvalidValues(parsedStyles, false)
 			c.stylesheet = append(c.stylesheet, parsedStyles)
 		}
 	})
@@ -112,7 +112,7 @@ func (c *CSS) AddCSSText(fragment string) error {
 	if err != nil {
 		return err
 	}
-	warnInvalidValues(block)
+	c.warnInvalidValues(block, false)
 	return nil
 }
 

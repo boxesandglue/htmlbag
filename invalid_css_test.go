@@ -130,6 +130,44 @@ func TestInvalidCSSWarnsOnce(t *testing.T) {
 	}
 }
 
+// Style attributes come one by one, a syntax highlighter writes one per line.
+func TestInvalidStyleAttributeWarnsOnce(t *testing.T) {
+	doc := "<html><body>" + strings.Repeat(`<p style="display: flex; color: red | blue">Text</p>`, 50) + "</body></html>"
+	got := warningsOf(t, ".x { display: flex; }", doc)
+	if len(got) != 2 {
+		t.Errorf("want 2 warnings, got %d: %q", len(got), got)
+	}
+}
+
+func TestUnknownPropertyWarnsOnce(t *testing.T) {
+	const css = `.x { grid-template-columns: 1fr 1fr; } .y { grid-template-columns: 1fr; }`
+	doc := `<html><body>` + strings.Repeat(`<p class="x" style="cursor: pointer">Text</p>`, 50) + `</body></html>`
+	got := strings.Join(warningsOf(t, css, doc), "\n")
+	for _, property := range []string{"grid-template-columns", "cursor"} {
+		if n := strings.Count(got, "property="+property); n != 1 {
+			t.Errorf("%s reported %d times: %q", property, n, got)
+		}
+	}
+}
+
+// A misspelled property of our own is a mistake, a vendor prefix is not. The
+// descriptors of the at-rules are checked where they are read, and the content
+// of @keyframes has no meaning on paper.
+func TestUnknownPropertyCheckIsNarrow(t *testing.T) {
+	const doc = `<html><body><p class="x">Text</p></body></html>`
+	if got := strings.Join(warningsOf(t, ".x { -bag-font-expansoin: 0%; }", doc), ""); !strings.Contains(got, "-bag-font-expansoin") {
+		t.Errorf("want a warning for the misspelled property, got %q", got)
+	}
+	const quiet = `.x { -webkit-print-color-adjust: exact; -moz-hyphens: auto; --mine: 1; }
+	@page { size: a5; margin: 1cm; @bottom-center { content: counter(page); font-size: 8pt; } }
+	@font-face { font-family: F; src: local("CrimsonPro Regular"); font-display: swap; }
+	@-bag-color brand { model: cmyk; c: 100; m: 0; y: 0; k: 0; }
+	@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`
+	if got := warningsOf(t, quiet, doc); len(got) != 0 {
+		t.Errorf("want no warnings, got %q", got)
+	}
+}
+
 // The default stylesheet declares table parts and list items, and valid CSS
 // must not cry wolf.
 func TestValidCSSDoesNotWarn(t *testing.T) {

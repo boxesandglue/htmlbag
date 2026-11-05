@@ -446,6 +446,8 @@ type CSS struct {
 	// read by the renderer. The declarations stay in cascade order because
 	// shorthand expansion depends on it.
 	computed map[*html.Node][]declaration
+	// warned holds the stylesheet warnings already given, see warnOnce.
+	warned map[string]bool
 }
 
 // PushDir adds a directory to the dir stack. When a file is opened, all new

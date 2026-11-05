@@ -4,7 +4,7 @@ package htmlbag
 // appear in the order of [PropertyGroups].
 type PropertyGroup string
 
-// The property groups. The first five hold the properties that apply to
+// The property groups. The first six hold the properties that apply to
 // elements, the last three the descriptors of the at-rules.
 const (
 	GroupText      PropertyGroup = "Text"
@@ -23,6 +23,9 @@ var PropertyGroups = []PropertyGroup{
 	GroupText, GroupBox, GroupBorder, GroupLayout, GroupGenerated, GroupCustom,
 	GroupPage, GroupFontFace, GroupColor,
 }
+
+// elementGroups are the groups of the properties that apply to elements.
+var elementGroups = []PropertyGroup{GroupText, GroupBox, GroupBorder, GroupLayout, GroupGenerated, GroupCustom}
 
 // PropertySpec documents one CSS property (or at-rule descriptor) the package
 // understands. Values and Note are Markdown, backticks mark literal keywords.
