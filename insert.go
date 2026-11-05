@@ -484,6 +484,7 @@ func (cb *CSSBuilder) recordHeading(idx, pageNum int, y bag.ScaledPoint, seen ma
 func (cb *CSSBuilder) recordAnchor(idx, pageNum int) {
 	if idx >= 0 && idx < len(cb.Anchors) {
 		cb.Anchors[idx].Page = pageNum
+		cb.recordStrings(idx, pageNum)
 	}
 }
 
@@ -491,13 +492,14 @@ func (cb *CSSBuilder) recordAnchor(idx, pageNum int) {
 // line inside it the page, and a heading the top edge of its carrier, box
 // being placed with its top edge at top. A block below the top level of the
 // body is placed inside its container's box, so its marks are not on the
-// page buffer's entry.
-func (cb *CSSBuilder) recordMarks(box *node.VList, pageNum int, top bag.ScaledPoint) {
+// page buffer's entry. first is set for the first box on the page.
+func (cb *CSSBuilder) recordMarks(box *node.VList, pageNum int, top bag.ScaledPoint, first bool) {
 	seen := map[int]bool{}
 	mark := func(attrs node.H, y bag.ScaledPoint) {
 		if attrs == nil {
 			return
 		}
+		cb.markAtPageTop = first && y == top
 		if idx, ok := attrs["_heading_idx"].(int); ok {
 			cb.recordHeading(idx, pageNum, y, seen)
 		}
@@ -838,13 +840,13 @@ func (cb *CSSBuilder) flushInsertsIn(reg region) error {
 	// area (PageAreaLeft / PageAreaTop = margin + @page border + @page
 	// padding), so @page padding acts as a content indent.
 	yCursor := reg.top - topFloatHeight
-	for _, entry := range cb.pageBuf {
+	for i, entry := range cb.pageBuf {
 		// The parity is known for certain only now: a float declared
 		// inside or outside that was built for the other one moves to
 		// its side of this page.
 		fixLogicalFloats(entry.box, reg.isRight())
 		reg.output(yCursor, entry.box, entry.height)
-		cb.recordMarks(entry.box, reg.pageNum, yCursor)
+		cb.recordMarks(entry.box, reg.pageNum, yCursor, i == 0)
 		yCursor -= entry.height
 	}
 	cb.pageBuf = nil

@@ -105,6 +105,9 @@ type AnchorEntry struct {
 	// "page" counter is not part of this map; it lives in Page because
 	// its value is only known at shipout.
 	Counters map[string][]int
+	// assigned holds the string-set assignments of an element, whose entry
+	// has no ID. They leave when they are filed under their page.
+	assigned []pageString
 }
 
 // anchorTextCap is the character budget for AnchorEntry.Text. Block
@@ -355,6 +358,15 @@ type CSSBuilder struct {
 	// same footer can repeat on every page. When the same name is
 	// captured more than once, the first occurrence wins (GCPM `first`).
 	runningElements map[string]*frontend.Text
+	// pageStrings holds the string-set assignments by page number, in the
+	// order of the document.
+	pageStrings map[int][]pageString
+	// markAtPageTop tells recordStrings that the mark being recorded sits at
+	// the very top of its page.
+	markAtPageTop bool
+	// blankPage is set while the page left empty by a forced break to a page
+	// side is set up, so that it gets the @page :blank rule.
+	blankPage bool
 	// textRunning holds the running-element names the last HTMLNodeToText met,
 	// true for those it added to runningElements, for FlowText to drop.
 	textRunning map[string]bool
@@ -575,6 +587,20 @@ func (cb *CSSBuilder) pageIsRight() bool {
 }
 
 func (cb *CSSBuilder) getPageType() *Page {
+	pt := cb.sidePageType()
+	blank, ok := cb.css.Pages[":blank"]
+	if !cb.blankPage || !ok {
+		return pt
+	}
+	if pt == nil {
+		return &blank
+	}
+	merged := mergePageWithBase(blank, *pt)
+	return &merged
+}
+
+// sidePageType is the @page rule of the current page by its position and side.
+func (cb *CSSBuilder) sidePageType() *Page {
 	base, hasBase := cb.css.Pages[""]
 	pick := func(pseudo Page) *Page {
 		if !hasBase {
@@ -3377,9 +3403,7 @@ func (cb *CSSBuilder) outputTableRows(tableVL *node.VList, buildHeadersFn any, y
 		propagateFlowChild(tableVL, box)
 		fc.cur.output(*y, shifted(box), h)
 		for _, idx := range anchorIndicesOn(row) {
-			if idx >= 0 && idx < len(cb.Anchors) {
-				cb.Anchors[idx].Page = fc.cur.pageNum
-			}
+			cb.recordAnchor(idx, fc.cur.pageNum)
 		}
 		*y -= h
 		*pageHasContent = true

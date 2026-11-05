@@ -72,6 +72,13 @@ const (
 	// The optional keyword argument (first | start | last | first-except)
 	// is not modelled; the first occurrence in the document is used.
 	ContentElement
+	// ContentNamedString is a string(name [, first|start|last|first-except])
+	// function call (CSS GCPM named strings), for page margin boxes. Value
+	// holds the name, Position the keyword.
+	ContentNamedString
+	// ContentContent is a content([text|before|after|first-letter]) function
+	// call, for string-set. Value holds the keyword.
+	ContentContent
 )
 
 // ContentToken represents a single parsed piece of a CSS content property value.
@@ -79,6 +86,8 @@ type ContentToken struct {
 	Type      ContentTokenType
 	Value     string // string literal, counter name, or target-text content-type
 	Separator string // counters() / target-counters() separator
+	// Position is the keyword of a ContentNamedString.
+	Position string
 	// Style is the counter style of counter(), counters() and the target-*
 	// counters: "lower-roman", "upper-alpha", ... Empty means decimal.
 	Style string
@@ -274,6 +283,30 @@ func parseContentTokens(ts tokenstream) []ContentToken {
 				for i < len(ts) && !(ts[i].Type == scanner.Delim && ts[i].Value == ")") {
 					i++
 				}
+			} else if tok.Value == "string" {
+				// string(name [, first|start|last|first-except]): CSS GCPM
+				// named strings.
+				nt := ContentToken{Type: ContentNamedString, Position: "first"}
+				for i++; i < len(ts) && !(ts[i].Type == scanner.Delim && ts[i].Value == ")"); i++ {
+					if ts[i].Type != scanner.Ident {
+						continue
+					}
+					if nt.Value == "" {
+						nt.Value = ts[i].Value
+					} else {
+						nt.Position = ts[i].Value
+					}
+				}
+				tokens = append(tokens, nt)
+			} else if tok.Value == "content" {
+				// content([text|before|after|first-letter]) in string-set.
+				ct := ContentToken{Type: ContentContent, Value: "text"}
+				for i++; i < len(ts) && !(ts[i].Type == scanner.Delim && ts[i].Value == ")"); i++ {
+					if ts[i].Type == scanner.Ident {
+						ct.Value = ts[i].Value
+					}
+				}
+				tokens = append(tokens, ct)
 			} else if tok.Value == "attr" {
 				// attr(name) — top-level CSS Values 4 attribute reference.
 				// The fallback / type forms (`attr(href url)`, `attr(x px,

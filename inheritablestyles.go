@@ -2020,6 +2020,9 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			cb.recordAnchorSnapshot(id, ss)
 		}
 	}
+	// A named string reads the counters here as well, its marker goes into
+	// the element's first paragraph once that exists.
+	stringsMarker, hasStrings := cb.setStrings(item, ss, anchorPages)
 	// A placeholder for a pre-rendered VList among a cell's contents or
 	// among blocks; the td case below handles one on the cell itself.
 	if vlid, ok := item.Attributes["data-vlist-id"]; ok && item.Data != "td" && item.Data != "th" {
@@ -2625,6 +2628,9 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 			return nil, err
 		}
 	}
+	if hasStrings {
+		plantMarker(newte, stringsMarker)
+	}
 	ss.PopStyles()
 	return newte, nil
 }
@@ -2804,6 +2810,9 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			})
 			te.Items = append(te.Items, anchorMarker{Idx: cb.anchorCount})
 			cb.anchorCount++
+		}
+		if m, ok := cb.setStrings(item, ss, anchorPages); ok {
+			te.Items = append(te.Items, m)
 		}
 
 		// An inline element has no Text of its own: each child below gets

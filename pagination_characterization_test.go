@@ -335,20 +335,19 @@ func TestCharacterizeHeadingPagesAndPositions(t *testing.T) {
 	}
 }
 
-// Every forced break keyword is a plain page break: the paginator inserts no
-// blank page to reach a left or a right one.
+// A forced break to a page side leaves a page empty if it has to.
 func TestCharacterizeForcedBreakKeywords(t *testing.T) {
 	html := `<html><body><p>A</p><p style="break-before: left">B</p><p style="break-before: right">C</p>` +
 		`<p style="break-before: right">D</p><p style="break-after: left">E</p><p>F</p></body></html>`
 	pages, _ := renderHTMLPagesCB(t, charCSS, html)
 	lines := placedLines(pages)
-	for mark, want := range map[string]int{"A": 1, "B": 2, "C": 3, "D": 4, "E": 4, "F": 5} {
+	for mark, want := range map[string]int{"A": 1, "B": 2, "C": 3, "D": 5, "E": 5, "F": 6} {
 		if l := firstLine(t, lines, mark); l.page != want {
 			t.Errorf("%s is on page %d, want %d", mark, l.page, want)
 		}
 	}
-	if len(pages) != 5 {
-		t.Errorf("got %d pages, want 5", len(pages))
+	if len(pages) != 6 {
+		t.Errorf("got %d pages, want 6", len(pages))
 	}
 }
 

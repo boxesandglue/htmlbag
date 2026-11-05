@@ -57,12 +57,16 @@ var pageMarginBoxFallbackFontSize = bag.MustSP("12pt")
 // counters maps counter names (e.g. "page", "pages") to their current values
 // — used for page-margin-box content and similar flat-scope lookups.
 // target-* tokens are not resolved on this flat path; they collapse to "?".
-func evaluateContent(tokens []ContentToken, counters map[string]int) string {
+func evaluateContent(tokens []ContentToken, counters map[string]int, namedString func(name, position string) string) string {
 	var sb strings.Builder
 	for _, tok := range tokens {
 		switch tok.Type {
 		case ContentString:
 			sb.WriteString(tok.Value)
+		case ContentNamedString:
+			if namedString != nil {
+				sb.WriteString(namedString(tok.Value, tok.Position))
+			}
 		case ContentCounter:
 			if v, ok := counters[tok.Value]; ok {
 				sb.WriteString(formatCounterStyle(v, tok.Style))
@@ -408,7 +412,9 @@ func (cb *CSSBuilder) outputMarginBoxes(dimensions PageDimensions) error {
 						cb.previousPassReads.Pages = true
 					}
 				}
-				c := evaluateContent(contentTokens, cb.Counters)
+				c := evaluateContent(contentTokens, cb.Counters, func(name, position string) string {
+					return cb.namedString(name, position, len(cb.frontend.Doc.Pages))
+				})
 				if vl.List != nil {
 					// Image or running-element content: skip text rendering.
 				} else if c != "" {

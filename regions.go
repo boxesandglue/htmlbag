@@ -339,6 +339,14 @@ type pageRegions struct {
 func (pr *pageRegions) next(brk string) (region, error) {
 	cb := pr.cb
 	if pr.started {
+		if pagesSkipped(brk, len(cb.frontend.Doc.Pages)+1) {
+			cb.blankPage = true
+			err := cb.shipoutAndStartPage()
+			cb.blankPage = false
+			if err != nil {
+				return region{}, err
+			}
+		}
 		if err := cb.shipoutAndStartPage(); err != nil {
 			return region{}, err
 		}
@@ -353,6 +361,18 @@ func (pr *pageRegions) next(brk string) (region, error) {
 	}
 	pr.started, pr.cur = true, reg
 	return reg, nil
+}
+
+// pagesSkipped reports whether a forced break to a page side has to leave page
+// next empty, which is the wrong side: a right page has an odd number.
+func pagesSkipped(brk string, next int) bool {
+	switch brk {
+	case "right", "recto":
+		return next%2 == 0
+	case "left", "verso":
+		return next%2 == 1
+	}
+	return false
 }
 
 func (pr *pageRegions) filled(filled) error {
