@@ -2,6 +2,7 @@ package htmlbag
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -118,5 +119,43 @@ func TestBagColorErrors(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want %q", tc.css, err, tc.want)
 		}
+	}
+}
+
+// A spot color reaches the PDF as a Separation color space: its name may hold
+// spaces, and the page resources refer to the object. Both were broken, so a
+// spot color was not painted at all.
+func TestSpotColorInPDF(t *testing.T) {
+	var buf bytes.Buffer
+	fe, err := frontend.NewForWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatal(err)
+	}
+	cb, err := New(fe, NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.AddCSS(`@-bag-color ink { model: spotcolor; colorname: "PANTONE 300 C"; c: 100; m: 44; y: 0; k: 0; }
+p { color: ink }`); err != nil {
+		t.Fatal(err)
+	}
+	te, err := cb.HTMLToText(`<p>Text</p>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.OutputPagesFromText(te); err != nil {
+		t.Fatal(err)
+	}
+	if err := fe.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("/Separation /PANTONE#20300#20C ")) {
+		t.Error("the Separation array does not name the ink")
+	}
+	if !regexp.MustCompile(`/CS1 \d+ 0 R`).Match(buf.Bytes()) {
+		t.Error("the page resources do not refer to the color space")
 	}
 }
