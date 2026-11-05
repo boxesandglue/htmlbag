@@ -10,6 +10,7 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/document"
+	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
 const twoPages = `<p>One.</p><p style="page-break-before: always">Two.</p>`
@@ -172,5 +173,70 @@ func TestCropMarksOnEveryPlate(t *testing.T) {
 	}
 	if plain := renderPDF(t, `@page { size: a6 }`, `<p>Text</p>`); bytes.Contains(plain, []byte(all)) {
 		t.Error("a document without marks has the color space")
+	}
+}
+
+// OutputPageBox is what a caller with its own pages gets of the @page rule. A
+// rule that draws nothing must not touch the page, the QA references of xts
+// have such rules.
+func TestOutputPageBox(t *testing.T) {
+	for _, tc := range []struct {
+		name, css string
+		want      int
+	}{
+		{"nothing", `@page { size: a6; margin: 1cm }`, 0},
+		{"color", `@page { size: a6; background-color: #ffe0e0 }`, 1},
+		{"border", `@page { size: a6; border: 1pt solid red }`, 1},
+		{"both", `@page { size: a6; background-color: #ffe0e0; border: 1pt solid red }`, 2},
+	} {
+		cb := renderForOutline(t, tc.css, `<p>Text</p>`, nil)
+		pg := cb.frontend.Doc.NewPage()
+		wd, ht := bag.MustSP("105mm"), bag.MustSP("148mm")
+		page, ok := cb.css.NamedPage("")
+		if !ok {
+			t.Fatalf("%s: no @page rule", tc.name)
+		}
+		pd := PageDimensions{Width: wd, Height: ht, MarginTop: onecm, MarginBottom: onecm, MarginLeft: onecm, MarginRight: onecm}
+		if err := cb.OutputPageBox(pd, page); err != nil {
+			t.Fatal(err)
+		}
+		if got := len(pg.Objects); got != tc.want {
+			t.Errorf("%s: %d objects, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestPDFAColorAndLinks(t *testing.T) {
+	var buf bytes.Buffer
+	fe, err := frontend.NewForWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fe.Doc.Format = document.FormatPDFA3b
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatal(err)
+	}
+	cb, err := New(fe, NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.AddCSS(`p { color: #336699 }`); err != nil {
+		t.Fatal(err)
+	}
+	te, err := cb.HTMLToText(`<p><a href="https://example.com">Link</a></p>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.OutputPagesFromText(te); err != nil {
+		t.Fatal(err)
+	}
+	if err := fe.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`/DefaultRGB \d+ 0 R`).Match(buf.Bytes()) {
+		t.Error("the page resources have no DefaultRGB")
+	}
+	if !regexp.MustCompile(`(?s)/Annot.*/F 4\b|/F 4\b.*/Annot`).Match(buf.Bytes()) {
+		t.Error("the link has no print flag")
 	}
 }

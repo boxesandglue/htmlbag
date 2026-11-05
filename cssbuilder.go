@@ -915,6 +915,27 @@ func (cb *CSSBuilder) shipoutAndStartPage() error {
 	return nil
 }
 
+// OutputPageBox paints the background and the border of the @page rule pg onto
+// the current page, for callers that set up their pages themselves, such as
+// xts. Call it before anything else lands on the page, the box sits underneath
+// the content. A rule without either adds nothing.
+func (cb *CSSBuilder) OutputPageBox(pd PageDimensions, pg *Page) error {
+	res := resolveDeclarations(pg.Attributes)
+	ml, mr, mt, mb := pd.MarginLeft, pd.MarginRight, pd.MarginTop, pd.MarginBottom
+	vl, m, err := cb.renderPageBorderBox(res, pd.Width, pd.Height, ml, mr, mt, mb)
+	if err != nil {
+		return err
+	}
+	cb.drawPageBackgroundColor(m.backgroundColor, pd.Width, pd.Height)
+	if err := cb.drawPageBackgroundImage(res, pd.Width, pd.Height); err != nil {
+		return err
+	}
+	if m.borderLeft+m.borderRight+m.borderTop+m.borderBottom > 0 {
+		cb.frontend.Doc.CurrentPage.OutputAt(ml, pd.Height-mt, vl)
+	}
+	return nil
+}
+
 // drawPageBackgroundColor fills the whole sheet of the current page and its
 // bleed with the @page background-color, if there is one. Like the background
 // image it is called for every page, so :first, :left and :right override the
@@ -3000,7 +3021,7 @@ func colorResetNode() node.Node {
 	s := node.NewStartStop()
 	s.Position = node.PDFOutputPage
 	s.ShipoutCallback = func(n node.Node) string {
-		return "0 0 0 RG 0 0 0 rg "
+		return document.ColorReset
 	}
 	return s
 }

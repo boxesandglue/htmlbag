@@ -22,7 +22,7 @@ func pageEmitsColor(objects []node.Node) bool {
 				}
 				out := v.ShipoutCallback(v)
 				// Ignore the reset instruction, which is black by design.
-				if strings.Contains(out, "rg") && !strings.HasPrefix(strings.TrimSpace(out), "0 0 0 RG") {
+				if strings.Contains(out, "rg") {
 					return true
 				}
 			case *node.HList:
