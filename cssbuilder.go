@@ -772,6 +772,10 @@ func (cb *CSSBuilder) InitPage() error {
 			}
 		}
 		res := resolveDeclarations(defaultPage.Attributes)
+		if marks := defaultPage.Marks(); marks != (PageMarks{}) {
+			cb.frontend.Doc.Bleed = marks.Bleed
+			cb.frontend.Doc.ShowCutmarks = marks.Crop
+		}
 
 		vl, m, err := cb.renderPageBorderBox(res, wd, ht, ml, mr, mt, mb)
 		if err != nil {
@@ -911,24 +915,25 @@ func (cb *CSSBuilder) shipoutAndStartPage() error {
 	return nil
 }
 
-// drawPageBackgroundColor fills the whole sheet of the current page with the
-// @page background-color, if there is one. Like the background image it is
-// called for every page, so :first, :left and :right override the generic
-// @page rule per page.
+// drawPageBackgroundColor fills the whole sheet of the current page and its
+// bleed with the @page background-color, if there is one. Like the background
+// image it is called for every page, so :first, :left and :right override the
+// generic @page rule per page.
 func (cb *CSSBuilder) drawPageBackgroundColor(col *color.Color, wd, ht bag.ScaledPoint) {
 	if col == nil {
 		return
 	}
+	bleed := cb.frontend.Doc.Bleed
 	r := node.NewRule()
-	r.Pre = pdfdraw.NewStandalone().ColorNonstroking(*col).Rect(0, 0, wd, -ht).Fill().String()
+	r.Pre = pdfdraw.NewStandalone().ColorNonstroking(*col).Rect(0, 0, wd+2*bleed, -ht-2*bleed).Fill().String()
 	rvl := node.Vpack(r)
 	rvl.Attributes = node.H{"origin": "page background color"}
-	cb.frontend.Doc.CurrentPage.OutputAt(0, ht, rvl)
+	cb.frontend.Doc.CurrentPage.OutputAt(-bleed, ht+bleed, rvl)
 }
 
 // drawPageBackgroundImage paints a CSS `@page { background-image: url(...) }`
-// onto the current page, scaled to fill the whole sheet. The optional custom
-// property `-bag-background-page: N` selects the source page of a multi-page
+// onto the current page, scaled to fill the whole sheet and its bleed. The
+// optional custom property `-bag-background-page: N` selects the source page of a multi-page
 // PDF (default 1), so a two-page letterhead can drive page 1 vs. page 2+ via
 // `@page :first` / `@page`. It is called for every page, so per-page @page
 // selectors (:first/:left/:right) yield per-page backgrounds without the
@@ -954,11 +959,12 @@ func (cb *CSSBuilder) drawPageBackgroundImage(res StyleMap, wd, ht bag.ScaledPoi
 		return nil
 	}
 	imgNode := cb.frontend.Doc.CreateImageNodeFromImagefile(imgf, pageno, "/MediaBox")
-	imgNode.Width = wd
-	imgNode.Height = ht
+	bleed := cb.frontend.Doc.Bleed
+	imgNode.Width = wd + 2*bleed
+	imgNode.Height = ht + 2*bleed
 	rvl := node.Vpack(imgNode)
 	rvl.Attributes = node.H{"origin": "page background image"}
-	cb.frontend.Doc.CurrentPage.OutputAt(0, ht, rvl)
+	cb.frontend.Doc.CurrentPage.OutputAt(-bleed, ht+bleed, rvl)
 	return nil
 }
 
@@ -1058,8 +1064,9 @@ func (cb *CSSBuilder) appendOutline() {
 		} else {
 			// /XYZ jumps to the heading's exact vertical position (its top
 			// edge), keeping the current horizontal scroll and zoom (null).
+			// Y counts from the trimmed sheet, /XYZ from the media box.
 			pg := fe.Doc.Pages[h.Page-1]
-			dest = fmt.Sprintf("[%s /XYZ null %0.5g null]", pg.Objectnumber.Ref(), h.Y.ToPT())
+			dest = fmt.Sprintf("[%s /XYZ null %0.5g null]", pg.Objectnumber.Ref(), (h.Y + pg.ExtraOffset).ToPT())
 		}
 		o := &pdf.Outline{Title: h.Text, Dest: dest, Open: h.bmOpen}
 		for len(stack) > 0 && stack[len(stack)-1].level >= h.bmLevel {

@@ -169,8 +169,10 @@ var Properties = []PropertySpec{
 	{Name: "margin-top", Aliases: []string{"margin-right", "margin-bottom", "margin-left"}, Values: "Length, one page margin", Example: "margin-left: 3cm;", Group: GroupPage},
 	{Name: "border", Aliases: []string{"border-top", "border-right", "border-bottom", "border-left", "border-width", "border-style", "border-color", "border-radius"}, Values: "As on elements, drawn around the page content area on every page", Example: "border-left: 4pt solid navy;", Group: GroupPage},
 	{Name: "padding", Aliases: []string{"padding-top", "padding-right", "padding-bottom", "padding-left"}, Values: "Length, space between the page border and the content", Example: "padding: 5mm;", Group: GroupPage},
-	{Name: "background-color", Values: "Color value, fills the sheet", Example: "background-color: #fafafa;", Group: GroupPage},
-	{Name: "background-image", Values: "`url()` of an image or PDF file, scaled to the full sheet on every page that uses this `@page` rule", Example: `background-image: url("letterhead.pdf");`, Group: GroupPage},
+	{Name: "bleed", Values: "`auto` (the default) or a length of zero or more", Example: "bleed: 3mm;", Note: "How far the content may run past the trimmed sheet. The page grows by it on all sides and gets a BleedBox, the page background fills it. `auto` is 6pt with crop marks and 0 otherwise. Holds for the whole document, the rule of the first page decides", Group: GroupPage},
+	{Name: "marks", Values: "`none` (the default) or `crop`", Example: "marks: crop;", Note: "Crop marks outside the bleed, on every plate including spot colors. `cross` warns and is ignored. Holds for the whole document, the rule of the first page decides", Group: GroupPage},
+	{Name: "background-color", Values: "Color value, fills the sheet and its bleed", Example: "background-color: #fafafa;", Group: GroupPage},
+	{Name: "background-image", Values: "`url()` of an image or PDF file, scaled to the full sheet and its bleed on every page that uses this `@page` rule", Example: `background-image: url("letterhead.pdf");`, Group: GroupPage},
 	{Name: "-bag-background-page", Values: "Page number of a multi page PDF used as `background-image`, the default is 1", Example: "-bag-background-page: 2;", Group: GroupPage},
 
 	// @font-face descriptors
