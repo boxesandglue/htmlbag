@@ -1093,8 +1093,14 @@ func parseVariationSettings(value string, settings map[string]float64) {
 	}
 }
 
-func (c *CSS) doPage(block *sBlock) {
-	selector := strings.Trim(block.componentValues.String(), " ")
+// doPageRule applies an @page rule to each page selector in its list.
+func (c *CSS) doPageRule(block *sBlock) {
+	for selector := range strings.SplitSeq(block.componentValues.String(), ",") {
+		c.doPage(strings.TrimSpace(selector), block)
+	}
+}
+
+func (c *CSS) doPage(selector string, block *sBlock) {
 	pg := c.Pages[selector]
 	if pg.pageareaRules == nil {
 		pg.pageareaRules = make(map[string][]qrule)
@@ -1173,7 +1179,7 @@ func (c *CSS) processAtRules(stylesheet sBlock) error {
 				return err
 			}
 		case "page":
-			c.doPage(atrule)
+			c.doPageRule(atrule)
 		case "-bag-color":
 			if err := c.doColor(atrule); err != nil {
 				return err

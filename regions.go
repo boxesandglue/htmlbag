@@ -148,6 +148,10 @@ func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 		cb.restorePageState(saved)
 	}()
 	cb.dropPageLevelContent()
+	if len(cb.pageNames) > 0 {
+		bag.Logger.Warn("FlowText does not support the page property, ignoring it")
+		cb.pageNames = nil
+	}
 	if len(cb.multicols) > 0 {
 		bag.Logger.Warn("FlowText does not lay out column-count, the content is set in one column")
 	}
@@ -354,10 +358,6 @@ func (pr *pageRegions) next(brk string) (region, error) {
 	reg, err := cb.pageRegion()
 	if err != nil {
 		return region{}, err
-	}
-	if !pr.started {
-		// NewPage stores them on every later page.
-		storePageDimensions(cb, cb.currentPageDimensions)
 	}
 	pr.started, pr.cur = true, reg
 	return reg, nil

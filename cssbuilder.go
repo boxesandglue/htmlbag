@@ -367,6 +367,18 @@ type CSSBuilder struct {
 	// blankPage is set while the page left empty by a forced break to a page
 	// side is set up, so that it gets the @page :blank rule.
 	blankPage bool
+	// pageName is the value of the page property for the page in progress,
+	// the name of its @page rule.
+	pageName string
+	// pageNames holds the page property of the elements that set one. It
+	// lasts until the flow starts, which replaces it with pageChanges.
+	pageNames map[*frontend.Text]string
+	// pageChanges holds the blocks that start a page of another name than
+	// the block before them, with that name.
+	pageChanges map[*frontend.Text]string
+	// pageStartObjects is the number of objects on the current page when it
+	// started, to tell a page that nothing has landed on yet.
+	pageStartObjects int
 	// textRunning holds the running-element names the last HTMLNodeToText met,
 	// true for those it added to runningElements, for FlowText to drop.
 	textRunning map[string]bool
@@ -586,43 +598,44 @@ func (cb *CSSBuilder) pageIsRight() bool {
 	return n%2 == 1
 }
 
+// getPageType is the @page rule of the page about to start or in progress: the
+// rules that match it, folded together in the order of their specificity (CSS
+// Paged Media 3 §4.3), where a page name outweighs the pseudo-classes, and
+// :first and :blank outweigh :left and :right.
 func (cb *CSSBuilder) getPageType() *Page {
-	pt := cb.sidePageType()
-	blank, ok := cb.css.Pages[":blank"]
-	if !cb.blankPage || !ok {
-		return pt
+	side := ":left"
+	if cb.pageIsRight() {
+		side = ":right"
 	}
-	if pt == nil {
-		return &blank
+	selectors := []string{side}
+	if len(cb.frontend.Doc.Pages) == 0 {
+		selectors = append(selectors, ":first")
 	}
-	merged := mergePageWithBase(blank, *pt)
-	return &merged
-}
-
-// sidePageType is the @page rule of the current page by its position and side.
-func (cb *CSSBuilder) sidePageType() *Page {
-	base, hasBase := cb.css.Pages[""]
-	pick := func(pseudo Page) *Page {
-		if !hasBase {
-			return &pseudo
+	if cb.blankPage {
+		selectors = append(selectors, ":blank")
+	}
+	var pt *Page
+	add := func(selector string) {
+		rule, ok := cb.css.Pages[selector]
+		if !ok {
+			return
 		}
-		merged := mergePageWithBase(pseudo, base)
-		return &merged
+		if pt != nil {
+			rule = mergePageWithBase(rule, *pt)
+		}
+		pt = &rule
 	}
-	if first, ok := cb.css.Pages[":first"]; ok && len(cb.frontend.Doc.Pages) == 0 {
-		return pick(first)
+	add("")
+	for _, selector := range selectors {
+		add(selector)
 	}
-	isRight := cb.pageIsRight()
-	if right, ok := cb.css.Pages[":right"]; ok && isRight {
-		return pick(right)
+	if cb.pageName != "" {
+		add(cb.pageName)
+		for _, selector := range selectors {
+			add(cb.pageName + selector)
+		}
 	}
-	if left, ok := cb.css.Pages[":left"]; ok && !isRight {
-		return pick(left)
-	}
-	if hasBase {
-		return &base
-	}
-	return nil
+	return pt
 }
 
 // mergePageWithBase folds the generic @page rule into a pseudo-page
@@ -759,6 +772,12 @@ func (cb *CSSBuilder) InitPage() error {
 	if err := AddColorsFromCSS(cb.css, cb.frontend); err != nil {
 		return err
 	}
+	return cb.startPage()
+}
+
+// startPage starts a page by the @page rule that applies to it. The page size
+// comes from that rule too, so a document can change it from page to page.
+func (cb *CSSBuilder) startPage() error {
 	var err error
 	if defaultPage := cb.getPageType(); defaultPage != nil {
 		wdStr, htStr := PapersizeWidthHeight(defaultPage.Papersize)
@@ -798,7 +817,7 @@ func (cb *CSSBuilder) InitPage() error {
 			}
 		}
 		res := resolveDeclarations(defaultPage.Attributes)
-		if marks := defaultPage.Marks(); marks != (PageMarks{}) {
+		if marks := defaultPage.Marks(); marks != (PageMarks{}) && len(cb.frontend.Doc.Pages) == 0 {
 			cb.frontend.Doc.Bleed = marks.Bleed
 			cb.frontend.Doc.ShowCutmarks = marks.Crop
 		}
@@ -830,7 +849,7 @@ func (cb *CSSBuilder) InitPage() error {
 			return err
 		}
 		cb.frontend.Doc.CurrentPage.OutputAt(ml, ht-mt, vl)
-		cb.firePageInit()
+		cb.pageStarted()
 		return nil
 	}
 	// no page master found
@@ -850,8 +869,16 @@ func (cb *CSSBuilder) InitPage() error {
 		MarginRight:   onecm,
 	}
 	cb.frontend.Doc.NewPage()
-	cb.firePageInit()
+	cb.pageStarted()
 	return nil
+}
+
+// pageStarted finishes a new page once its background is painted: the callback
+// finds the dimensions stored on the page.
+func (cb *CSSBuilder) pageStarted() {
+	storePageDimensions(cb, cb.currentPageDimensions)
+	cb.firePageInit()
+	cb.pageStartObjects = len(cb.frontend.Doc.CurrentPage.Objects)
 }
 
 // PageSize returns a struct with the dimensions of the current page.
@@ -882,63 +909,8 @@ func (cb *CSSBuilder) shipoutAndStartPage() error {
 		return err
 	}
 	cb.frontend.Doc.CurrentPage.Shipout()
-	cb.frontend.Doc.NewPage()
-	// Update page dimensions for the new page (different @page selector may apply).
-	if pt := cb.getPageType(); pt != nil {
-		cb.currentPageDimensions.masterpage = pt
-		// Recalculate margins from the new page type.
-		if str := pt.MarginTop; str != "" {
-			if v, err := bag.SP(str); err == nil {
-				cb.currentPageDimensions.MarginTop = v
-			}
-		}
-		if str := pt.MarginBottom; str != "" {
-			if v, err := bag.SP(str); err == nil {
-				cb.currentPageDimensions.MarginBottom = v
-			}
-		}
-		if str := pt.MarginLeft; str != "" {
-			if v, err := bag.SP(str); err == nil {
-				cb.currentPageDimensions.MarginLeft = v
-			}
-		}
-		if str := pt.MarginRight; str != "" {
-			if v, err := bag.SP(str); err == nil {
-				cb.currentPageDimensions.MarginRight = v
-			}
-		}
-		mt := cb.currentPageDimensions.MarginTop
-		mb := cb.currentPageDimensions.MarginBottom
-		ml := cb.currentPageDimensions.MarginLeft
-		mr := cb.currentPageDimensions.MarginRight
-		wd := cb.currentPageDimensions.Width
-		ht := cb.currentPageDimensions.Height
-		// Re-resolve this page master's @page attributes so border/padding
-		// and the background apply per page, not only on page 1.
-		bgRes := resolveDeclarations(pt.Attributes)
-		vl, m, err := cb.renderPageBorderBox(bgRes, wd, ht, ml, mr, mt, mb)
-		if err != nil {
-			return err
-		}
-		cb.currentPageDimensions.PageAreaLeft = ml + m.borderLeft + m.paddingLeft
-		cb.currentPageDimensions.PageAreaTop = mt + m.borderTop + m.paddingTop
-		cb.currentPageDimensions.ContentWidth = wd - ml - mr - m.borderLeft - m.borderRight - m.paddingLeft - m.paddingRight
-		cb.currentPageDimensions.ContentHeight = ht - mt - mb - m.borderTop - m.borderBottom - m.paddingTop - m.paddingBottom
-		// Paint the @page background color and image, then the border box,
-		// before the body content lands on this page (all sit underneath the
-		// text).
-		cb.drawPageBackgroundColor(m.backgroundColor, wd, ht)
-		if err := cb.drawPageBackgroundImage(bgRes, wd, ht); err != nil {
-			return err
-		}
-		cb.frontend.Doc.CurrentPage.OutputAt(ml, ht-mt, vl)
-	}
-	// Store page dimensions on the new page for callback access.
-	if pd, err := cb.PageSize(); err == nil {
-		storePageDimensions(cb, pd)
-	}
-	cb.firePageInit()
-	return nil
+	cb.frontend.Doc.CurrentPage = nil
+	return cb.startPage()
 }
 
 // OutputPageBox paints the background and the border of the @page rule pg onto
@@ -1156,6 +1128,10 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	// the last group is placed and no longer.
 	defer func() { cb.fragLines = nil }()
 
+	defer cb.clearPageNames()
+	if err := cb.resolvePageNames(te); err != nil {
+		return err
+	}
 	fc := &flowCursor{regions: &pageRegions{cb: cb}}
 	if flow, m := cb.multicolBody(findBody(te)); flow != nil {
 		fc.regions = &columnRegions{cb: cb, count: m.count, gap: m.gap, fillAuto: m.fillAuto, body: flow, rule: m}
@@ -1236,8 +1212,13 @@ func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoi
 			if err := fc.start(brk); err != nil {
 				return 0, err
 			}
-		} else if err := fc.breakTo(brk, nil); err != nil {
-			return 0, err
+		} else {
+			if t, ok := group[0].(*frontend.Text); ok {
+				cb.followPageChange(t)
+			}
+			if err := fc.breakTo(brk, nil); err != nil {
+				return 0, err
+			}
 		}
 
 		g := groupBuild{body: body, items: group, base: groupStart, children: children, caller: fc.caller}

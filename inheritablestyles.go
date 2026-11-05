@@ -1867,6 +1867,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	// item is guaranteed to be in vertical direction
 	newte := frontend.NewText()
 	cb.noteSource(newte, item.Node)
+	cb.notePageName(newte, item)
 	styles := ss.PushStyles()
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err

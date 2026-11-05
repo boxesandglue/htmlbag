@@ -180,8 +180,6 @@ func (cr *columnRegions) next(brk string) (region, error) {
 		if err != nil {
 			return region{}, err
 		}
-		// NewPage stores them on every later page.
-		storePageDimensions(cr.cb, cr.cb.currentPageDimensions)
 		cr.page = pg
 		cr.startRow(pg.top)
 		cr.span, cr.spanTop = cr.wantSpan, pg.top
