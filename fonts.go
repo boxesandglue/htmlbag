@@ -3,6 +3,9 @@
 package htmlbag
 
 import (
+	"os"
+	"strings"
+
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/htmlbag/fonts/camingocodebold"
@@ -72,32 +75,34 @@ func LoadIncludedFonts(fe *frontend.Document) error {
 }
 
 // AddFontFamiliesFromCSS adds entries to the font families of the frontend
-// document.
+// document. Called again for the same document, it adds only the @font-face
+// rules parsed since: rules of one family with the same weight and style
+// combine into a composite face (unicode-range), so a rule added twice would
+// count twice.
 func AddFontFamiliesFromCSS(cs *CSS, fe *frontend.Document) error {
-	for _, v := range cs.FontFaces {
+	done := cs.fontFacesAdded[fe]
+	if done > len(cs.FontFaces) {
+		done = 0
+	}
+	if cs.fontFacesAdded == nil {
+		cs.fontFacesAdded = make(map[*frontend.Document]int)
+	}
+	cs.fontFacesAdded[fe] = len(cs.FontFaces)
+	for _, v := range cs.FontFaces[done:] {
 		var fontfamily *frontend.FontFamily
 		if ff := fe.FindFontFamily(v.Family); ff == nil {
 			fontfamily = fe.NewFontFamily(v.Family)
 		} else {
 			fontfamily = ff
 		}
-		fs := &frontend.FontSource{}
-
-		for _, src := range v.Source {
-			if l := src.URI; l != "" {
-				fs.Location = l
-				fs.Name = l
-
-			} else if l := src.Local; l != "" {
-				fs.Name = l
-				switch l {
-				case "CamingoCode Regular":
-					fs.Data = camingocoderegular.TTF
-				}
-			}
-			fs.FontFeatures = v.Features
-			fs.VariationSettings = v.VariationSettings
+		fs, ok := fontSourceFromCSS(v.Source, fe)
+		if !ok {
+			bag.Logger.Warn("@font-face: no usable source in src, face ignored", "family", v.Family)
+			continue
 		}
+		fs.FontFeatures = v.Features
+		fs.VariationSettings = v.VariationSettings
+		fs.UnicodeRange = v.UnicodeRange
 		// CSS size-adjust (the parser stores 1 - percentage/100, the same
 		// encoding FontSource expects); applied at shape time via
 		// frontend.shapeFontFor.
@@ -126,4 +131,77 @@ func AddFontFamiliesFromCSS(cs *CSS, fe *frontend.Document) error {
 		}
 	}
 	return nil
+}
+
+// fontSourceFromCSS returns the font source for the first entry of an
+// @font-face src list that can be used, as a browser takes the first it can
+// load: an entry whose format() and tech() are supported, and whose file
+// exists or whose local() name is a font the document knows. When no entry
+// is available, the first supported one is returned so loading it reports
+// the error. ok is false when no entry is supported at all.
+func fontSourceFromCSS(srcs []FontSource, fe *frontend.Document) (*frontend.FontSource, bool) {
+	var first *frontend.FontSource
+	for _, src := range srcs {
+		if !supportedFontFormat(src.Format) || !supportedFontTech(src.Tech) {
+			continue
+		}
+		fs := &frontend.FontSource{}
+		available := false
+		switch {
+		case src.URI != "":
+			fs.Location = src.URI
+			fs.Name = src.URI
+			if strings.Contains(src.URI, "://") {
+				available = true
+			} else if _, err := os.Stat(src.URI); err == nil {
+				available = true
+			}
+		case src.Local != "":
+			fs.Name = src.Local
+			if src.Local == "CamingoCode Regular" {
+				fs.Data = camingocoderegular.TTF
+			} else if err := fe.AddDataToFontsource(fs, src.Local); err != nil {
+				fs.Data = nil
+			}
+			available = fs.Data != nil
+		default:
+			continue
+		}
+		if available {
+			return fs, true
+		}
+		if first == nil {
+			first = fs
+		}
+	}
+	return first, first != nil
+}
+
+// supportedFontFormat reports whether format, the argument of an @font-face
+// src format(), names a font file format the font loader reads. An entry
+// without format() is tried.
+func supportedFontFormat(format string) bool {
+	format = strings.ToLower(strings.Trim(format, `"' `))
+	// CSS Fonts 4 dropped the "-variations" forms, but stylesheets still
+	// carry them.
+	format = strings.TrimSuffix(format, "-variations")
+	switch format {
+	case "", "woff", "woff2", "truetype", "opentype", "collection":
+		return true
+	}
+	return false
+}
+
+// supportedFontTech reports whether every technology in tech, the argument
+// of an @font-face src tech(), is one the typesetter handles. An entry
+// without tech() is tried.
+func supportedFontTech(tech string) bool {
+	for t := range strings.SplitSeq(tech, ",") {
+		switch strings.ToLower(strings.Trim(t, `"' `)) {
+		case "", "features-opentype", "features-graphite", "variations", "color-colrv0":
+		default:
+			return false
+		}
+	}
+	return true
 }

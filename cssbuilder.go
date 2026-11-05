@@ -3707,9 +3707,9 @@ func (cb *CSSBuilder) HTMLToText(html string) (*frontend.Text, error) {
 	// Register @font-face declarations now — ProcessHTMLChunk has just parsed
 	// any embedded <style> blocks into cb.css.FontFaces, and the upcoming
 	// HTMLNodeToText pass needs the font families resolved to honour
-	// font-family lookups against in-document fonts. AddMember is idempotent
-	// for repeat (weight, style) keys, so the InitPage call later in the
-	// pipeline re-registering the same set is harmless.
+	// font-family lookups against in-document fonts. AddFontFamiliesFromCSS
+	// remembers which rules it has added to the document, so the InitPage
+	// call later in the pipeline adds only rules parsed since.
 	if err := AddFontFamiliesFromCSS(cb.css, cb.frontend); err != nil {
 		return nil, err
 	}

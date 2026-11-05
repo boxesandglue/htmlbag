@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/frontend"
 	scanner "github.com/speedata/css"
 	"golang.org/x/net/html"
 )
@@ -434,6 +435,9 @@ type CSS struct {
 	Pages      map[string]Page
 	FileFinder func(string) (string, error)
 	FontFaces  []FontFace
+	// fontFacesAdded counts the FontFaces AddFontFamiliesFromCSS has added
+	// to each document, which it can be called for several times.
+	fontFacesAdded map[*frontend.Document]int
 	// Colors holds the named colors from @-bag-color rules, in source order.
 	Colors     []ColorDefinition
 	dirstack   []string
@@ -794,6 +798,71 @@ type FontFace struct {
 	// AscentOverride, DescentOverride and LineGapOverride are the CSS
 	// descriptors as fractions of the em, negative for normal (the face's own).
 	AscentOverride, DescentOverride, LineGapOverride float64
+	// UnicodeRange is the unicode-range descriptor, nil for all of Unicode.
+	UnicodeRange []frontend.CodepointRange
+}
+
+// parseUnicodeRange parses the value of the unicode-range descriptor: a comma
+// separated list of single code points (U+20AC), intervals (U+0025-00FF) and
+// wildcard ranges (U+4??). The hex digits are case-insensitive. A range with
+// an end before its start is dropped and code points past U+10FFFF are
+// clipped; any other malformed range makes the whole descriptor invalid,
+// reported as false, as a browser drops the declaration.
+//
+// The scanner recognizes a range only in upper case, so u+f003 arrives as
+// the tokens u, + and f003; the value is therefore parsed from the text of
+// all its tokens.
+func parseUnicodeRange(toks tokenstream) ([]frontend.CodepointRange, bool) {
+	var sb strings.Builder
+	for _, tok := range toks {
+		if tok.Type == scanner.S || tok.Type == scanner.Comment {
+			continue
+		}
+		sb.WriteString(tok.Value)
+	}
+	var ranges []frontend.CodepointRange
+	for item := range strings.SplitSeq(sb.String(), ",") {
+		item = strings.TrimSpace(item)
+		if len(item) < 3 || (item[0] != 'u' && item[0] != 'U') || item[1] != '+' {
+			return nil, false
+		}
+		item = item[2:]
+		var lo, hi string
+		if q := strings.IndexByte(item, '?'); q >= 0 {
+			if strings.Trim(item[q:], "?") != "" {
+				return nil, false
+			}
+			lo = item[:q] + strings.Repeat("0", len(item)-q)
+			hi = item[:q] + strings.Repeat("F", len(item)-q)
+		} else if a, b, ok := strings.Cut(item, "-"); ok {
+			lo, hi = a, b
+		} else {
+			lo, hi = item, item
+		}
+		low, ok1 := parseCodepointHex(lo)
+		high, ok2 := parseCodepointHex(hi)
+		if !ok1 || !ok2 {
+			return nil, false
+		}
+		high = min(high, 0x10FFFF)
+		if low > high {
+			continue
+		}
+		ranges = append(ranges, frontend.CodepointRange{Low: low, High: high})
+	}
+	return ranges, true
+}
+
+// parseCodepointHex parses one to six hex digits.
+func parseCodepointHex(s string) (rune, bool) {
+	if len(s) == 0 || len(s) > 6 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	return rune(v), true
 }
 
 // parseFontWeightValue parses one font-weight value: a number or one of
@@ -879,6 +948,7 @@ func (c *CSS) doFontFace(ff []qrule) error {
 				case scanner.Delim:
 					if v.Value == "," {
 						f.Source = append(f.Source, src)
+						src = FontSource{}
 					}
 				case scanner.S:
 					// ignore
@@ -955,9 +1025,11 @@ func (c *CSS) doFontFace(ff []qrule) error {
 			// Controls how a browser renders text while the font
 			// loads; a PDF waits for every font.
 		case "unicode-range":
-			// Selecting a face of a family per character is not
-			// implemented; the face is used for all characters.
-			bag.Logger.Debug("@font-face unicode-range is ignored", "family", f.Family)
+			if ur, ok := parseUnicodeRange(rule.value); ok {
+				f.UnicodeRange = ur
+			} else {
+				bag.Logger.Warn("@font-face: invalid unicode-range, the face covers all characters", "family", f.Family, "value", value)
+			}
 		default:
 			fmt.Println("unhandled font setting", key)
 		}
