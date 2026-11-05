@@ -10,6 +10,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/htmlbag/internal/cascadia"
 	scanner "github.com/speedata/css"
 )
@@ -49,7 +50,14 @@ func cssQuoteString(s string) string {
 }
 
 func stringValue(toks tokenstream) string {
+	s, _ := formatValue(toks)
+	return s
+}
+
+// formatValue is stringValue that also returns the tokens it had to leave out.
+func formatValue(toks tokenstream) (string, tokenstream) {
 	ret := []string{}
+	var dropped tokenstream
 	negative := false
 	prevNegative := false
 	for _, tok := range toks {
@@ -83,7 +91,7 @@ func stringValue(toks tokenstream) string {
 			case "-":
 				negative = true
 			default:
-				fmt.Println("unhandled delimiter", tok)
+				dropped = append(dropped, tok)
 			}
 		case scanner.URI:
 			ret = append(ret, "url("+tok.Value+")")
@@ -96,10 +104,47 @@ func stringValue(toks tokenstream) string {
 		case scanner.UnicodeRange:
 			ret = append(ret, tok.Value)
 		default:
-			fmt.Println("tree: unhandled token", tok)
+			dropped = append(dropped, tok)
 		}
 	}
-	return strings.Join(ret, " ")
+	return strings.Join(ret, " "), dropped
+}
+
+// displayValues are the values of display the layout acts on. The table parts
+// and list items of the default stylesheet follow from the HTML tags instead.
+var displayValues = map[string]bool{
+	"block": true, "inline": true, "flow-root": true, "none": true,
+	"inherit": true, "initial": true, "unset": true, "revert": true,
+}
+
+// warnInvalidValues reports what a stylesheet asks for and does not get. It
+// runs once for each stylesheet: ApplyCSS and the style resolution run for
+// every text and element and would repeat a warning thousands of times.
+func warnInvalidValues(block sBlock) {
+	for _, r := range block.rules {
+		warnInvalidValue(stringValue(r.key), r.value)
+	}
+	for _, b := range block.blocks {
+		warnInvalidValues(*b)
+	}
+	for _, b := range block.childAtRules {
+		warnInvalidValues(*b)
+	}
+}
+
+func warnInvalidValue(property string, value tokenstream) {
+	if strings.HasPrefix(property, "--") {
+		// A custom property holds any tokens, they mean something only
+		// where var() puts them.
+		return
+	}
+	text, dropped := formatValue(value)
+	for _, tok := range dropped {
+		bag.Logger.Warn("CSS value has an unexpected token, dropping it", "property", property, "token", tok.Value, "line", tok.Line)
+	}
+	if property == "display" && !displayValues[text] && !strings.Contains(text, "var(") {
+		bag.Logger.Warn("display value is not supported, ignoring it", "value", text)
+	}
 }
 
 // resolveStyleAttribute recurses through the HTML tree and folds every inline
@@ -108,6 +153,9 @@ func stringValue(toks tokenstream) string {
 func (c *CSS) resolveStyleAttribute(i int, sel *goquery.Selection) {
 	if a, ok := sel.Attr("style"); ok {
 		decls := declarationsFromText(a)
+		for _, d := range decls {
+			warnInvalidValue(d.property, d.value)
+		}
 		for _, node := range sel.Nodes {
 			for _, d := range decls {
 				c.setDeclaration(node, d.property, d.value)
@@ -239,7 +287,8 @@ func (c *CSS) ComputedStyles(n *html.Node) StyleMap {
 // jis-b4 and 'in' if the parameter spec is one of letter, legal or ledger.
 func PapersizeWidthHeight(spec string) (string, string) {
 	spec = strings.ToLower(spec)
-	var width, height string
+	// A4 unless the spec names a size: it may be empty, or only an orientation.
+	width, height := "210mm", "297mm"
 	portrait := true
 	for i, e := range strings.Fields(spec) {
 		switch e {

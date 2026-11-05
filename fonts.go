@@ -3,6 +3,7 @@
 package htmlbag
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -119,7 +120,7 @@ func AddFontFamiliesFromCSS(cs *CSS, fe *frontend.Document) error {
 		case "italic":
 			fontstyle = frontend.FontStyleItalic
 		default:
-			panic("nyi" + v.Style)
+			return fmt.Errorf("@font-face %q: unknown font-style %q", v.Family, v.Style)
 		}
 		if v.WeightMax > v.Weight {
 			// CSS Fonts 4 weight range (`font-weight: 200 900`), typically

@@ -912,7 +912,16 @@ func (c *CSS) doFontFace(ff []qrule) error {
 		case "font-family":
 			f.Family = strings.Trim(value, `"`)
 		case "font-style":
-			f.Style = value
+			switch style, _, _ := strings.Cut(value, " "); style {
+			case "normal", "italic":
+				f.Style = style
+			case "oblique":
+				// As italic, the face an italic element finds. Read as
+				// normal it would replace the upright face of its family.
+				f.Style = "italic"
+			default:
+				bag.Logger.Warn("@font-face: unknown font-style, ignoring it", "family", f.Family, "value", value)
+			}
 		case "font-weight":
 			// A single value ("500", "bold", also two-word keywords like
 			// "extra light") or a CSS Fonts 4 range for variable fonts
@@ -988,22 +997,13 @@ func (c *CSS) doFontFace(ff []qrule) error {
 			if f.VariationSettings == nil {
 				f.VariationSettings = make(map[string]float64)
 			}
-			for _, pair := range strings.Split(value, ",") {
-				pair = strings.TrimSpace(pair)
-				parts := strings.Fields(pair)
-				if len(parts) >= 2 {
-					// Remove quotes from axis tag
-					tag := strings.Trim(parts[0], `"'`)
-					if val, err := strconv.ParseFloat(parts[1], 64); err == nil {
-						f.VariationSettings[tag] = val
-					}
-				}
-			}
+			parseVariationSettings(value, f.VariationSettings)
 		case "size-adjust":
 			v := strings.TrimSuffix(value, "%")
 			flt, err := strconv.ParseFloat(v, 64)
 			if err != nil {
-				panic(err)
+				bag.Logger.Warn("@font-face: size-adjust needs a percentage, ignoring it", "family", f.Family, "value", value)
+				continue
 			}
 			f.SizeAdjust = 1 - (flt / 100)
 		case "ascent-override", "descent-override", "line-gap-override":
@@ -1031,11 +1031,31 @@ func (c *CSS) doFontFace(ff []qrule) error {
 				bag.Logger.Warn("@font-face: invalid unicode-range, the face covers all characters", "family", f.Family, "value", value)
 			}
 		default:
-			fmt.Println("unhandled font setting", key)
+			bag.Logger.Warn("@font-face: unknown descriptor, ignoring it", "family", f.Family, "descriptor", key)
 		}
 	}
 	c.FontFaces = append(c.FontFaces, f)
 	return nil
+}
+
+// parseVariationSettings adds the pairs of a font-variation-settings value,
+// such as `"wght" 700, "wdth" 100`, to settings. An axis tag has four bytes, the
+// shaper reads them without a check.
+func parseVariationSettings(value string, settings map[string]float64) {
+	for _, pair := range strings.Split(value, ",") {
+		parts := strings.Fields(pair)
+		if len(parts) < 2 {
+			continue
+		}
+		tag := strings.Trim(parts[0], `"'`)
+		if len(tag) != 4 {
+			bag.Logger.Warn("font-variation-settings: an axis tag has four characters, ignoring it", "tag", tag)
+			continue
+		}
+		if val, err := strconv.ParseFloat(parts[1], 64); err == nil {
+			settings[tag] = val
+		}
+	}
 }
 
 func (c *CSS) doPage(block *sBlock) {
@@ -1142,6 +1162,6 @@ func NewCSSParser() *CSS {
 // returned CSS struct.
 func NewCSSParserWithDefaults() *CSS {
 	c := &CSS{}
-	c.AddCSSText(CSSdefaults)
+	c.addCSSText(CSSdefaults)
 	return c
 }

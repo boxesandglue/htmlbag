@@ -37,6 +37,7 @@ func (c *CSS) ProcessHTMLFile(filename string) (*goquery.Document, error) {
 			}
 			parsedStyles := consumeBlock(block, false)
 			parsedStyles.blocks = flattenNestedBlocks(parsedStyles.blocks)
+			warnInvalidValues(parsedStyles)
 			c.stylesheet = append(c.stylesheet, parsedStyles)
 		}
 	})
@@ -80,6 +81,7 @@ func (c *CSS) ProcessHTMLChunk(htmltext string) (*goquery.Document, error) {
 			if err = c.processAtRules(parsedStyles); err != nil {
 				errcond = err
 			}
+			warnInvalidValues(parsedStyles)
 			c.stylesheet = append(c.stylesheet, parsedStyles)
 		}
 	})
@@ -106,21 +108,33 @@ func (c *CSS) ProcessHTMLChunk(htmltext string) (*goquery.Document, error) {
 // rules. If the fragment contains relative links to other files (fonts or other
 // stylesheets for example), the dir stack must be set in advance.
 func (c *CSS) AddCSSText(fragment string) error {
-	toks, err := c.tokenizeAndApplyImport(fragment)
+	block, err := c.addCSSText(fragment)
 	if err != nil {
 		return err
+	}
+	warnInvalidValues(block)
+	return nil
+}
+
+// addCSSText is AddCSSText without the warnings, for the default stylesheet:
+// it declares the display of table parts, which an author's stylesheet cannot
+// change.
+func (c *CSS) addCSSText(fragment string) (sBlock, error) {
+	toks, err := c.tokenizeAndApplyImport(fragment)
+	if err != nil {
+		return sBlock{}, err
 	}
 	block := consumeBlock(toks, false)
 	// Flatten CSS nesting (e.g. .card { & > h2 { ... } } → .card > h2 { ... })
 	block.blocks = flattenNestedBlocks(block.blocks)
 	if err = c.processAtRules(block); err != nil {
-		return err
+		return sBlock{}, err
 	}
 	// Reject broken selectors here, so the error points at the stylesheet
 	// and not at the first content that ApplyCSS runs on.
 	if err = validateSelectors(block); err != nil {
-		return err
+		return sBlock{}, err
 	}
 	c.stylesheet = append(c.stylesheet, block)
-	return nil
+	return block, nil
 }

@@ -176,7 +176,8 @@ func ParseRelativeSize(fs string, cur bag.ScaledPoint, root bag.ScaledPoint) bag
 	if p, ok := strings.CutSuffix(fs, "%"); ok {
 		f, err := strconv.ParseFloat(p, 64)
 		if err != nil {
-			panic(err)
+			bag.Logger.Warn("cannot read a percentage, keeping the size", "value", fs)
+			return cur
 		}
 		ret := bag.MultiplyFloat(cur, f/100)
 		return ret
@@ -541,17 +542,7 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			if ih.variationSettings == nil {
 				ih.variationSettings = make(map[string]float64)
 			}
-			for _, pair := range strings.Split(v, ",") {
-				pair = strings.TrimSpace(pair)
-				parts := strings.Fields(pair)
-				if len(parts) >= 2 {
-					// Remove quotes from axis tag
-					tag := strings.Trim(parts[0], `"'`)
-					if val, err := strconv.ParseFloat(parts[1], 64); err == nil {
-						ih.variationSettings[tag] = val
-					}
-				}
-			}
+			parseVariationSettings(v, ih.variationSettings)
 		case "list-style-type":
 			ih.ListStyleType = v
 		case "font-family":

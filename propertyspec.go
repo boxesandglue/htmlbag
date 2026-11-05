@@ -101,7 +101,7 @@ var Properties = []PropertySpec{
 	{Name: "object-view-box", Values: "`none`, or `inset()` with one to four lengths or percentages, on images (`<img>`, also with an SVG or PDF source)", Example: "object-view-box: inset(10% 20%);", Note: "Not inherited. The region becomes the image's natural size and aspect ratio, and `width`, `height` and `max-width` size it as they size a whole image. `xywh()` and `rect()` are not supported and warn, as do the `round` corners of `inset()`, which are ignored. A bitmap's natural size is one point per pixel, as for its sizing, so `inset(10pt)` takes 10 pixels off each edge. Not read on an inline `<svg>`", Group: GroupBox},
 	{Name: "background-color", Values: "Color value, painted on block elements, inline elements and table cells", Example: "background-color: #ffffcc;", Group: GroupBox},
 	{Name: "background", Values: "Shorthand, only the color is read", Example: "background: #ffffcc;", Group: GroupBox},
-	{Name: "display", Values: "`block`, `inline`, `flow-root`, `none`", Example: "display: none;", Note: "`flow-root` is a block that keeps clear of a float as a whole, where a block runs on under it. Other values are ignored, the table parts follow from the HTML tags", Group: GroupBox},
+	{Name: "display", Values: "`block`, `inline`, `flow-root`, `none`", Example: "display: none;", Note: "`flow-root` is a block that keeps clear of a float as a whole, where a block runs on under it. Other values are ignored with a warning, the table parts follow from the HTML tags", Group: GroupBox},
 
 	// Borders
 	{Name: "border", Values: "Width, style and color in any order, all four sides", Example: "border: 1pt solid black;", Group: GroupBorder},
@@ -161,7 +161,7 @@ var Properties = []PropertySpec{
 	{Name: "-bag-bookmark", Values: "`none`, or a level number optionally followed by `open` or `closed`", Example: "-bag-bookmark: 2 closed;", Note: "Adds the element to the PDF outline", Group: GroupCustom},
 
 	// @page descriptors
-	{Name: "size", Values: "A paper name (`a0` to `a8`, `b0` to `b8`, `jis-b4`, `jis-b5`, `letter`, `legal`, `ledger`) with optional `portrait` or `landscape`, or width and height as two lengths", Example: "size: a4 landscape;", Group: GroupPage},
+	{Name: "size", Values: "A paper name (`a0` to `a8`, `b0` to `b8`, `jis-b4`, `jis-b5`, `letter`, `legal`, `ledger`) with optional `portrait` or `landscape`, or width and height as two lengths", Example: "size: a4 landscape;", Note: "Without a paper name or lengths the page is A4", Group: GroupPage},
 	{Name: "margin", Values: "One to four lengths, the page margins", Example: "margin: 2cm 1.5cm;", Group: GroupPage},
 	{Name: "margin-top", Aliases: []string{"margin-right", "margin-bottom", "margin-left"}, Values: "Length, one page margin", Example: "margin-left: 3cm;", Group: GroupPage},
 	{Name: "border", Aliases: []string{"border-top", "border-right", "border-bottom", "border-left", "border-width", "border-style", "border-color", "border-radius"}, Values: "As on elements, drawn around the page content area on every page", Example: "border-left: 4pt solid navy;", Group: GroupPage},
@@ -172,7 +172,7 @@ var Properties = []PropertySpec{
 
 	// @font-face descriptors
 	{Name: "font-family", Values: "The name the font is used by", Example: `font-family: "Minion Pro";`, Group: GroupFontFace},
-	{Name: "font-style", Values: "`normal`, `italic`", Example: "font-style: italic;", Group: GroupFontFace},
+	{Name: "font-style", Values: "`normal`, `italic`, `oblique`", Example: "font-style: italic;", Note: "`oblique` counts as `italic`, an angle is ignored", Group: GroupFontFace},
 	{Name: "font-weight", Values: "A weight name or number, or two of them for the range a variable font covers", Example: "font-weight: 300 700;", Group: GroupFontFace},
 	{Name: "src", Values: "Comma separated list of `url()` or `local()` sources, each optionally followed by `format()` and `tech()`. A file can be TrueType, OpenType (also collections), WOFF or WOFF2", Example: `src: url("minion.otf");`, Note: "The first source that can be used wins: one with an unsupported `format()` or `tech()`, a missing file, or a `local()` name of a font the document does not know is skipped", Group: GroupFontFace},
 	{Name: "font-feature-settings", Values: "OpenType features switched on for this face, as on elements", Example: `font-feature-settings: "onum";`, Group: GroupFontFace},
