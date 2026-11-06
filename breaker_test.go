@@ -63,7 +63,7 @@ func TestLineBreakerProperty(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got = nil
-			if n := len(lineModelLines(t, c.css, `<p lang="de">one two three four</p>`, register)); n != c.lines {
+			if n := len(lineModelLines(t, c.css, `<p lang="de">one two six ten</p>`, register)); n != c.lines {
 				t.Errorf("%d lines, want %d", n, c.lines)
 			}
 			if c.name != "on the paragraph" {

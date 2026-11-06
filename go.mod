@@ -4,8 +4,8 @@ go 1.25.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
-	github.com/boxesandglue/baseline-pdf v1.1.31
-	github.com/boxesandglue/boxesandglue v0.2.97
+	github.com/boxesandglue/baseline-pdf v1.1.32
+	github.com/boxesandglue/boxesandglue v0.2.98
 	github.com/boxesandglue/svgreader v0.0.6
 	github.com/boxesandglue/textshape v0.0.19
 	github.com/speedata/barcode v1.1.1

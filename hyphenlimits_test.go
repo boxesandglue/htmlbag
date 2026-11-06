@@ -97,7 +97,7 @@ func TestHyphenateLimitChars(t *testing.T) {
 	if got := points(languageOf(t, te, "long"), "hyphenation"); len(got) != 0 {
 		t.Errorf("a word below the minimum has points: %v", got)
 	}
-	if got, want := points(plain, "hyphenation"), []int{6, 7}; !slices.Equal(got, want) {
+	if got, want := points(plain, "hyphenation"), []int{2, 6, 7}; !slices.Equal(got, want) {
 		t.Errorf("limits reached the plain language: %v, want %v", got, want)
 	}
 	if languageOf(t, te, "same") != inherited {
