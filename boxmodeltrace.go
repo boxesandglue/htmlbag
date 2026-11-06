@@ -144,9 +144,10 @@ func (cb *CSSBuilder) traceBoxModel(vl *node.VList, hv HTMLValues, paddingInside
 	vl.List = node.InsertBefore(vl.List, vl.List, tr)
 }
 
-// captureTraceSettings removes the -bag-trace mark (settingTraceBoxModel) from
-// te and every Text inline in it, and returns the restore. The mark is read
-// where the box is built and must not reach FormatParagraph, whose settings
+// captureTraceSettings removes the -bag-trace marks (settingTraceBoxModel,
+// settingTraceLineGrid) from te and every Text inline in it, and returns the
+// restore. The marks are read before the box is built and must not reach
+// FormatParagraph, whose settings
 // switch rejects an unknown setting; ApplySettings stamps it wherever it is
 // declared, a <span> included. Restored because the same Text is formatted
 // again by a table cell's measuring passes and a page-width reflow.
@@ -154,8 +155,9 @@ func captureTraceSettings(te *frontend.Text) func() {
 	var restores []func()
 	var walk func(t *frontend.Text)
 	walk = func(t *frontend.Text) {
-		restores = append(restores, restoreSettings(t.Settings, []frontend.SettingType{settingTraceBoxModel}))
+		restores = append(restores, restoreSettings(t.Settings, []frontend.SettingType{settingTraceBoxModel, settingTraceLineGrid}))
 		delete(t.Settings, settingTraceBoxModel)
+		delete(t.Settings, settingTraceLineGrid)
 		for _, itm := range t.Items {
 			if inner, ok := itm.(*frontend.Text); ok {
 				walk(inner)

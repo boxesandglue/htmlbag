@@ -229,6 +229,10 @@ type CSSBuilder struct {
 	// transparency (PDF/A-1, PDF/X-3) the overlay falls back to thin
 	// colored outlines.
 	TraceBoxModel bool
+	// TraceLineGrid draws the line grid of a flow into every region, as
+	// numbered lines on the baselines. The line-height that carries the most
+	// text defines the grid, or the element with -bag-trace: linegrid.
+	TraceLineGrid bool
 	// Anchors collects every block-level element with an id attribute
 	// encountered during VList construction. Page numbers are assigned
 	// during shipout, just like Headings. Read by the multi-pass aux
@@ -1147,7 +1151,7 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	if _, err := cb.flowText(te, fc); err != nil {
 		return err
 	}
-	if err := fc.regions.filled(filled{}); err != nil {
+	if err := fc.handBack(filled{}); err != nil {
 		return err
 	}
 	if cr, ok := fc.regions.(*columnRegions); ok {
@@ -1167,6 +1171,7 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 // last region back. For a caller's regions it returns the margin-bottom that
 // ends the flow.
 func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoint, error) {
+	fc.lineGrid = cb.lineGridFor(te)
 	// Find the body-level Text element (unwrap html > body wrappers).
 	body := findBody(te)
 	cr, _ := fc.regions.(*columnRegions)

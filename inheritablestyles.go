@@ -81,6 +81,11 @@ const settingFixedHeight frontend.SettingType = -10
 // its inline children before FormatParagraph (captureTraceSettings).
 const settingTraceBoxModel frontend.SettingType = -11
 
+// settingTraceLineGrid marks an element whose -bag-trace has linegrid, so that
+// its font and line-height define the grid of the flow it is in. Read from
+// the Text before the flow starts and captured like settingTraceBoxModel.
+const settingTraceLineGrid frontend.SettingType = -12
+
 // Sentinels for CSS floats that text flows beside (see float.go). They carry
 // state from style resolution and from the block container down to the
 // paragraph, and are consumed before FormatParagraph, whose settings switch
@@ -644,8 +649,11 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// `none | [<integer>] [open|closed]`. Read in vlistbuilder.
 			ih.bookmark = strings.ToLower(strings.TrimSpace(v))
 		case "-bag-trace":
-			// boxmodel or none; anything else traces nothing.
-			ih.traceBoxModel = strings.ToLower(strings.TrimSpace(v)) == "boxmodel"
+			// boxmodel, linegrid, both or none; anything else traces
+			// nothing.
+			traces := strings.Fields(strings.ToLower(v))
+			ih.traceBoxModel = slices.Contains(traces, "boxmodel")
+			ih.traceLineGrid = slices.Contains(traces, "linegrid")
 		case "position":
 			// CSS 2.1 §9.3.1: position keyword. Unknown values
 			// fall through to static via the lowercase-trim. We
@@ -1150,6 +1158,7 @@ type FormattingStyles struct {
 	orphans         int    // 0 = initial (2)
 	bookmark        string // -bag-bookmark raw value (non-inherited; "" = unset)
 	traceBoxModel   bool   // -bag-trace: boxmodel (non-inherited)
+	traceLineGrid   bool   // -bag-trace: linegrid (non-inherited)
 	yoffset         bag.ScaledPoint
 	// relativeYOffset is the sum of the top/bottom offsets of the
 	// position: relative inline elements around the text. It moves the
@@ -1609,6 +1618,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	if ih.traceBoxModel {
 		settings[settingTraceBoxModel] = true
+	}
+	if ih.traceLineGrid {
+		settings[settingTraceLineGrid] = true
 	}
 	if ih.width != "" {
 		settings[frontend.SettingWidth] = ih.width

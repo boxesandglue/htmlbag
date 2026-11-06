@@ -166,7 +166,7 @@ func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 	if err != nil {
 		return err
 	}
-	return fc.regions.filled(filled{marginAfter: marginAfter})
+	return fc.handBack(filled{marginAfter: marginAfter})
 }
 
 // startFlow marks the builder as flowing until done is called, or fails
@@ -480,6 +480,8 @@ func (cr *callerRegions) filled(f filled) error {
 // from the region's top edge.
 type regionSink struct {
 	entries []sinkEntry
+	// lineGrid is the line grid trace to paint in the region's box.
+	lineGrid *lineGrid
 }
 
 type sinkEntry struct {
@@ -584,6 +586,10 @@ func (s *regionSink) filled(width bag.ScaledPoint, f filled, seen map[*flowChild
 		cursor = floats
 	}
 	box.Height = cursor
+	if s.lineGrid != nil && box.List != nil {
+		box.List = node.InsertBefore(box.List, box.List, s.lineGrid.rule(width, cursor))
+	}
+	s.lineGrid = nil
 	for _, e := range entries {
 		if e.child != nil {
 			seen[e.child] = true
@@ -871,6 +877,8 @@ type flowCursor struct {
 	// region that held nothing else: the current region is then empty to
 	// it, whether occupied or not.
 	movedOn bool
+	// lineGrid is what the line grid trace draws, nil without one.
+	lineGrid *lineGrid
 }
 
 // start takes the first region, brk being the first block's forced
@@ -884,10 +892,16 @@ func (fc *flowCursor) start(brk string) error {
 	return nil
 }
 
+// handBack gives the current region back to the regions, with its trace.
+func (fc *flowCursor) handBack(f filled) error {
+	fc.traceLineGrid()
+	return fc.regions.filled(f)
+}
+
 // breakTo hands back the current region and moves on to the next one. n is
 // the node the next region starts with, or a block it goes on with.
 func (fc *flowCursor) breakTo(brk string, n node.Node) error {
-	if err := fc.regions.filled(filled{next: flowChildOf(n)}); err != nil {
+	if err := fc.handBack(filled{next: flowChildOf(n)}); err != nil {
 		return err
 	}
 	reg, err := fc.regions.next(brk)
