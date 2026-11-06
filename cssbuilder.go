@@ -3934,6 +3934,23 @@ func (cb *CSSBuilder) ReadCSSFile(filename string) error {
 	return cb.css.AddCSSText(string(data))
 }
 
+// ReadCSSFileAfterDocument reads a stylesheet that comes after the stylesheets
+// of the HTML passed to HTMLToText, so it overrides them. An error from reading
+// the file comes back here, one from parsing it from HTMLToText.
+func (cb *CSSBuilder) ReadCSSFileAfterDocument(filename string) error {
+	bag.Logger.Debug("Read file", "filename", filename)
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	abs, err := filepath.Abs(filepath.Dir(filename))
+	if err != nil {
+		return err
+	}
+	cb.css.AddCSSAfterDocument(string(data), abs)
+	return nil
+}
+
 // shiftChildren moves the shift (margin-left) of a box that is being
 // unwrapped onto its children, as it is dropped with the box; each placed
 // node is wrapped in a fresh box, where a child's ShiftX takes effect.

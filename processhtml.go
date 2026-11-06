@@ -52,6 +52,9 @@ func (c *CSS) ProcessHTMLFile(filename string) (*goquery.Document, error) {
 	if errcond != nil {
 		return nil, errcond
 	}
+	if err = c.addPendingCSS(); err != nil {
+		return nil, err
+	}
 	_, err = c.ApplyCSS(doc)
 	if err != nil {
 		return nil, err
@@ -95,6 +98,9 @@ func (c *CSS) ProcessHTMLChunk(htmltext string) (*goquery.Document, error) {
 	})
 	if errcond != nil {
 		return nil, errcond
+	}
+	if err = c.addPendingCSS(); err != nil {
+		return nil, err
 	}
 	_, err = c.ApplyCSS(doc)
 	if err != nil {

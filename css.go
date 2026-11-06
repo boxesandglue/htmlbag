@@ -475,12 +475,47 @@ type CSS struct {
 	Colors     []ColorDefinition
 	dirstack   []string
 	stylesheet []sBlock
+	// afterDocument holds the stylesheets that wait for those of the
+	// document, see AddCSSAfterDocument.
+	afterDocument []pendingCSS
 	// computed holds the cascade result per element, filled by ApplyCSS and
 	// read by the renderer. The declarations stay in cascade order because
 	// shorthand expansion depends on it.
 	computed map[*html.Node][]declaration
 	// warned holds the stylesheet warnings already given, see warnOnce.
 	warned map[string]bool
+}
+
+// pendingCSS is a stylesheet that is parsed later, with the directory that its
+// relative links resolve against.
+type pendingCSS struct {
+	text string
+	dir  string
+}
+
+// AddCSSAfterDocument adds a stylesheet that comes after the stylesheets of the
+// document that is processed next, so it overrides them at the same
+// specificity. It stays unparsed until then, because at-rules take effect when
+// they are parsed: an @page rule read earlier would lose to the document even
+// if its place in the cascade were last. Relative links in the fragment resolve
+// against dir.
+func (c *CSS) AddCSSAfterDocument(fragment, dir string) {
+	c.afterDocument = append(c.afterDocument, pendingCSS{text: fragment, dir: dir})
+}
+
+// addPendingCSS parses the stylesheets from AddCSSAfterDocument.
+func (c *CSS) addPendingCSS() error {
+	pending := c.afterDocument
+	c.afterDocument = nil
+	for _, p := range pending {
+		c.PushDir(p.dir)
+		err := c.AddCSSText(p.text)
+		c.PopDir()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PushDir adds a directory to the dir stack. When a file is opened, all new
