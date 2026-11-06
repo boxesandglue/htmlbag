@@ -229,10 +229,16 @@ type CSSBuilder struct {
 	// transparency (PDF/A-1, PDF/X-3) the overlay falls back to thin
 	// colored outlines.
 	TraceBoxModel bool
-	// TraceLineGrid draws the line grid of a flow into every region, as
-	// numbered lines on the baselines. The line-height that carries the most
-	// text defines the grid, or the element with -bag-trace: linegrid.
+	// TraceLineGrid draws the line grid onto every page, as numbered lines on
+	// the baselines, or into the regions of FlowText. The line-height that
+	// carries the most text defines the grid, or the element with
+	// -bag-trace: linegrid.
 	TraceLineGrid bool
+	// pageLineGrid is the grid drawn onto the pages of OutputPagesFromText,
+	// pageLineStep its distance on the current page when the @page rule
+	// sets one.
+	pageLineGrid *lineGrid
+	pageLineStep bag.ScaledPoint
 	// Anchors collects every block-level element with an id attribute
 	// encountered during VList construction. Page numbers are assigned
 	// during shipout, just like Headings. Read by the multi-pass aux
@@ -783,7 +789,9 @@ func (cb *CSSBuilder) InitPage() error {
 // comes from that rule too, so a document can change it from page to page.
 func (cb *CSSBuilder) startPage() error {
 	var err error
+	cb.pageLineStep = 0
 	if defaultPage := cb.getPageType(); defaultPage != nil {
+		cb.pageLineStep = cb.lineStep(defaultPage)
 		wdStr, htStr := PapersizeWidthHeight(defaultPage.Papersize)
 		var wd, ht, mt, mb, ml, mr bag.ScaledPoint
 		if wd, err = bag.SP(wdStr); err != nil {
@@ -909,6 +917,9 @@ func (cb *CSSBuilder) NewPage() error {
 // shipoutAndStartPage is NewPage after the flush: it ships the current page
 // out and starts the next one.
 func (cb *CSSBuilder) shipoutAndStartPage() error {
+	if err := cb.traceLineGridOnPage(); err != nil {
+		return err
+	}
 	if err := cb.BeforeShipout(); err != nil {
 		return err
 	}
@@ -1136,6 +1147,8 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	if err := cb.resolvePageNames(te); err != nil {
 		return err
 	}
+	cb.pageLineGrid = cb.lineGridFor(te)
+	defer func() { cb.pageLineGrid = nil }()
 	fc := &flowCursor{regions: &pageRegions{cb: cb}}
 	if flow, m := cb.multicolBody(findBody(te)); flow != nil {
 		fc.regions = &columnRegions{cb: cb, count: m.count, gap: m.gap, fillAuto: m.fillAuto, body: flow, rule: m}
@@ -1151,11 +1164,14 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 	if _, err := cb.flowText(te, fc); err != nil {
 		return err
 	}
-	if err := fc.handBack(filled{}); err != nil {
+	if err := fc.regions.filled(filled{}); err != nil {
 		return err
 	}
 	if cr, ok := fc.regions.(*columnRegions); ok {
 		cr.finish()
+	}
+	if err := cb.traceLineGridOnPage(); err != nil {
+		return err
 	}
 	if err := cb.BeforeShipout(); err != nil {
 		return err
@@ -1171,7 +1187,6 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 // last region back. For a caller's regions it returns the margin-bottom that
 // ends the flow.
 func (cb *CSSBuilder) flowText(te *frontend.Text, fc *flowCursor) (bag.ScaledPoint, error) {
-	fc.lineGrid = cb.lineGridFor(te)
 	// Find the body-level Text element (unwrap html > body wrappers).
 	body := findBody(te)
 	cr, _ := fc.regions.(*columnRegions)

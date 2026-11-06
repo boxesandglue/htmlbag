@@ -205,19 +205,57 @@ func TestLineGridOnEveryPage(t *testing.T) {
 	if len(rules) != 3 {
 		t.Fatalf("%d grids on 3 pages", len(rules))
 	}
-	if len(rules[0]) != 13 {
-		t.Errorf("%d lines in 160pt at 12pt, want 13", len(rules[0]))
+	for i, lines := range rules {
+		if len(lines) != 13 {
+			t.Errorf("page %d: %d lines in 160pt at 12pt, want 13", i+1, len(lines))
+		}
+		if !slices.Equal(lines, rules[0]) {
+			t.Errorf("page %d has another grid than page 1", i+1)
+		}
 	}
 }
 
-// Balancing tries column heights: its trial runs must leave no grid behind.
-func TestLineGridOncePerColumn(t *testing.T) {
-	rules := pagedLineGrids(t, `@page{size:300pt 300pt;margin:20pt}body{column-count:2}p{line-height:12pt}`, `<p>`+charLines("A", 12)+`</p>`)
-	if len(rules) != 2 {
-		t.Fatalf("%d grids in 2 columns", len(rules))
+// The grid belongs to the page: columns, a spanner and balancing must leave
+// one grid of the whole page area, as a region of theirs reaches down over
+// what comes below it.
+func TestLineGridOnePerPageWithColumns(t *testing.T) {
+	const page = `@page{size:400pt 400pt;margin:20pt}body{column-count:2}p,h1{line-height:12pt}h1{column-span:all}`
+	for _, tc := range []struct{ name, css string }{
+		{"balanced", ``},
+		{"column-fill auto", `body{column-fill:auto}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rules := pagedLineGrids(t, page+tc.css, `<p>`+charLines("A", 6)+`</p><h1>A heading</h1><p>`+charLines("B", 6)+`</p>`)
+			if len(rules) != 1 {
+				t.Fatalf("%d grids on one page", len(rules))
+			}
+			if len(rules[0]) != 30 {
+				t.Errorf("%d lines in 360pt at 12pt, want 30", len(rules[0]))
+			}
+			for i := 1; i < len(rules[0]); i++ {
+				if d := rules[0][i] - rules[0][i-1]; d < 11.99 || d > 12.01 {
+					t.Errorf("lines %d and %d are %gpt apart", i, i+1, d)
+				}
+			}
+		})
 	}
-	if !slices.Equal(rules[0], rules[1]) {
-		t.Errorf("the columns have different grids: %v and %v", rules[0], rules[1])
+}
+
+func TestLineGridOnABlankPage(t *testing.T) {
+	cb, fe := newFlowBuilder(t, `p{line-height:12pt}.r{break-before:right}`)
+	cb.TraceLineGrid = true
+	if err := cb.InitPage(); err != nil {
+		t.Fatal(err)
+	}
+	te, err := cb.HTMLToText(`<html><body><p>a</p><p>b</p><p class="r">c</p></body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.OutputPagesFromText(te); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(pageLineGrids(fe.Doc.Pages)), len(fe.Doc.Pages); got != want {
+		t.Errorf("%d grids on %d pages", got, want)
 	}
 }
 
@@ -262,9 +300,101 @@ func TestLineGridMarkStaysOutOfTheParagraph(t *testing.T) {
 	}
 }
 
-func TestLineGridNumbersAreNotText(t *testing.T) {
-	r := lineGrid{step: bag.MustSP("12pt"), first: bag.MustSP("9pt")}.rule(bag.MustSP("100pt"), bag.MustSP("150pt"))
-	if strings.Contains(r.Pre, "BT") || strings.Contains(r.Pre, "Tj") {
-		t.Errorf("the rule writes text: %s", r.Pre)
+func TestLineGridOverlay(t *testing.T) {
+	cb, _ := newFlowBuilder(t, ``)
+	g := lineGrid{cb: cb, step: bag.MustSP("12pt"), first: bag.MustSP("9pt")}
+	vl := g.overlay(bag.MustSP("100pt"), bag.MustSP("150pt"))
+	if vl.Height != 0 || vl.Depth != 0 {
+		t.Errorf("the overlay takes up room: %s, %s", vl.Height, vl.Depth)
+	}
+	if _, ok := vl.Attributes["artifact"].(document.ArtifactType); !ok {
+		t.Error("the overlay is not an artifact")
+	}
+	var numbers []string
+	var cursor bag.ScaledPoint
+	for n := node.Node(vl.List); n != nil; n = n.Next() {
+		switch v := n.(type) {
+		case *node.Kern:
+			cursor += v.Kern
+		case *node.HList:
+			cursor += v.Height
+			if cursor != g.first+bag.ScaledPoint(len(numbers))*g.step {
+				t.Errorf("number %d stands on %s", len(numbers)+1, cursor)
+			}
+			cursor += v.Depth
+			numbers = append(numbers, glyphText(v.List))
+		}
+	}
+	if want := "1 2 3 4 5 6 7 8 9 10 11 12"; strings.Join(numbers, " ") != want {
+		t.Errorf("numbers %q, want %q", strings.Join(numbers, " "), want)
+	}
+}
+
+// glyphText returns the characters below n.
+func glyphText(n node.Node) string {
+	var b strings.Builder
+	for e := n; e != nil; e = e.Next() {
+		switch v := e.(type) {
+		case *node.Glyph:
+			b.WriteString(v.Components)
+		case *node.HList:
+			b.WriteString(glyphText(v.List))
+		case *node.VList:
+			b.WriteString(glyphText(v.List))
+		}
+	}
+	return b.String()
+}
+
+func TestLineGridStepOfThePage(t *testing.T) {
+	const page = `@page{size:200pt 200pt;margin:20pt}p{line-height:12pt}`
+	pages := `<p>a</p><p class="n">b</p>`
+	for _, tc := range []struct {
+		name, css string
+		want      []int
+	}{
+		{"none", ``, []int{13, 13}},
+		{"a length", `@page{-bag-line-grid:20pt}`, []int{8, 8}},
+		{"the first page", `@page :first{-bag-line-grid:20pt}`, []int{8, 13}},
+		{"a side", `@page :left{-bag-line-grid:40pt}`, []int{13, 4}},
+		{"not a length", `@page{-bag-line-grid:auto}`, []int{13, 13}},
+		{"zero", `@page{-bag-line-grid:0pt}`, []int{13, 13}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rules := pagedLineGrids(t, page+tc.css+`.n{break-before:page}`, pages)
+			if len(rules) != len(tc.want) {
+				t.Fatalf("%d grids, want %d", len(rules), len(tc.want))
+			}
+			for i, want := range tc.want {
+				if len(rules[i]) != want {
+					t.Errorf("page %d has %d lines, want %d", i+1, len(rules[i]), want)
+				}
+			}
+		})
+	}
+}
+
+// With a distance of its own, the first line is where a line of the running
+// text would stand at that leading.
+func TestLineGridStepMovesTheFirstBaseline(t *testing.T) {
+	first := func(css string) float64 {
+		rules := pagedLineGrids(t, `@page{size:200pt 200pt;margin:20pt}p{line-height:12pt}`+css, `<p>a</p>`)
+		if len(rules) != 1 || len(rules[0]) == 0 {
+			t.Fatalf("grids %v", rules)
+		}
+		return rules[0][0]
+	}
+	got := first(`@page{-bag-line-grid:20pt}`)
+	if want := first(`p{line-height:20pt}`); got != want {
+		t.Errorf("first baseline %g, a line at that leading has %g", got, want)
+	}
+}
+
+func TestLineGridInvalidStepWarnsOnce(t *testing.T) {
+	logs, restore := captureLog()
+	defer restore()
+	pagedLineGrids(t, `@page{size:200pt 200pt;margin:20pt;-bag-line-grid:auto}p{line-height:12pt}`, `<p>`+charLines("A", 39)+`</p>`)
+	if n := strings.Count(logs.String(), "-bag-line-grid"); n != 1 {
+		t.Errorf("%d warnings:\n%s", n, logs)
 	}
 }

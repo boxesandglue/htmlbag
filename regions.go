@@ -160,7 +160,7 @@ func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 	if rr, ok := r.(RemainingRegions); ok && rr.BalanceEnd() {
 		cr.bal = &flowBalance{rr: rr}
 	}
-	fc := &flowCursor{regions: cr, caller: true}
+	fc := &flowCursor{regions: cr, caller: true, lineGrid: cb.lineGridFor(te)}
 	cb.callerFlow = fc
 	marginAfter, err := cb.flowText(te, fc)
 	if err != nil {
@@ -587,7 +587,7 @@ func (s *regionSink) filled(width bag.ScaledPoint, f filled, seen map[*flowChild
 	}
 	box.Height = cursor
 	if s.lineGrid != nil && box.List != nil {
-		box.List = node.InsertBefore(box.List, box.List, s.lineGrid.rule(width, cursor))
+		box.List = node.InsertBefore(box.List, box.List, s.lineGrid.overlay(width, cursor))
 	}
 	s.lineGrid = nil
 	for _, e := range entries {
@@ -877,7 +877,8 @@ type flowCursor struct {
 	// region that held nothing else: the current region is then empty to
 	// it, whether occupied or not.
 	movedOn bool
-	// lineGrid is what the line grid trace draws, nil without one.
+	// lineGrid is what the line grid trace draws in a caller's regions, nil
+	// without one.
 	lineGrid *lineGrid
 }
 

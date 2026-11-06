@@ -1,47 +1,52 @@
 package htmlbag
 
 import (
+	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/boxesandglue/frontend/pdfdraw"
 )
 
 // Line grid trace (CSSBuilder.TraceLineGrid, -bag-trace: linegrid): red lines
-// on the baselines a region would have if all its lines were set at one
-// leading, numbered from the top of the region. The same number means the
-// same height across the columns of a row, and text off its line shows where
-// a flow has left the grid.
+// on the baselines a page would have if all its lines were set at one
+// leading, numbered from 1 at the top of the page area. The grid belongs to
+// the page and not to the regions that fill it, so a number means the same
+// height in every column and on every page, and text off its line shows
+// where a flow has left the grid.
+//
+// A caller's regions have no page: FlowText puts the grid in the box of each
+// region, as far as the box goes.
 //
 // The grid is measured on a paragraph set like the element that defines it,
-// so every leading model gives the baseline it really has. The numbers are strokes and not text:
-// they need no font and stay out of the text of the document.
+// so every leading model gives the baseline it really has. An @page rule may
+// set the distance with -bag-line-grid.
 
 // lineGrid is the distance of the lines and the first baseline's distance
-// from the top of a region.
+// from the top of the area they are drawn in. src is the Text that gives the
+// font of the first baseline.
 type lineGrid struct {
+	cb          *CSSBuilder
+	src         *frontend.Text
 	step, first bag.ScaledPoint
 }
 
 const (
-	// lineGridOverhang is how far a line reaches past a region on both
-	// sides, so that it shows next to justified text.
-	lineGridOverhang = 3 * bag.Factor
-	// lineGridDigitWidth and lineGridDigitHeight are the size of a digit,
-	// lineGridDigitGap the distance of two.
-	lineGridDigitWidth  = 18 * bag.Factor / 10
-	lineGridDigitHeight = 36 * bag.Factor / 10
-	lineGridDigitGap    = 9 * bag.Factor / 10
+	// lineGridOverhang is how far a line reaches past an area on both sides,
+	// so that it shows next to justified text. The numbers stand behind it
+	// at a distance of lineGridNumberGap.
+	lineGridOverhang  = 3 * bag.Factor
+	lineGridNumberGap = 2 * bag.Factor
+	// lineGridNumberSize is the font size of the numbers.
+	lineGridNumberSize = 5 * bag.Factor
 )
 
 var traceLineGridColor = color.Color{Space: color.ColorRGB, R: 0.85, G: 0.2, B: 0.2}
-
-// lineGridDigits holds the segments of each digit: a top, b top right,
-// c bottom right, d bottom, e bottom left, f top left, g middle.
-var lineGridDigits = [10]string{"abcdef", "bc", "abged", "abgcd", "fgbc", "afgcd", "afgedc", "abc", "abcdefg", "abcdfg"}
 
 // lineGridFor returns the grid of the flow of te, nil when there is none to
 // draw. The element with -bag-trace: linegrid defines it. The global switch
@@ -60,16 +65,21 @@ func (cb *CSSBuilder) lineGridFor(te *frontend.Text) *lineGrid {
 			return nil
 		}
 	}
-	step := paragraphLeading(src.Settings)
+	return cb.lineGridAt(src, paragraphLeading(src.Settings))
+}
+
+// lineGridAt returns the grid of step, with the first baseline a line of src
+// has at that leading.
+func (cb *CSSBuilder) lineGridAt(src *frontend.Text, step bag.ScaledPoint) *lineGrid {
 	if step <= 0 {
 		return nil
 	}
-	first, err := cb.firstBaseline(src)
+	first, err := cb.firstBaseline(src, step)
 	if err != nil {
 		bag.Logger.Warn("The line grid trace cannot measure the first baseline, leaving it out", "error", err)
 		return nil
 	}
-	return &lineGrid{step: step, first: first}
+	return &lineGrid{cb: cb, src: src, step: step, first: first}
 }
 
 // runningText returns the first Text set at the leading that carries the
@@ -119,19 +129,20 @@ func findText(te *frontend.Text, match func(*frontend.Text) bool) *frontend.Text
 	return nil
 }
 
-// firstBaseline sets one line with the font and leading of src and returns
-// the height above its baseline.
-func (cb *CSSBuilder) firstBaseline(src *frontend.Text) (bag.ScaledPoint, error) {
+// firstBaseline sets one line with the font of src at the given leading and
+// returns the height above its baseline.
+func (cb *CSSBuilder) firstBaseline(src *frontend.Text, leading bag.ScaledPoint) (bag.ScaledPoint, error) {
 	probe := frontend.NewText()
 	for _, key := range []frontend.SettingType{
 		frontend.SettingFontFamily, frontend.SettingFontFamilyStack, frontend.SettingFontWeight,
-		frontend.SettingStyle, frontend.SettingSize, frontend.SettingLeading,
-		frontend.SettingHalfLeading, frontend.SettingLineModel,
+		frontend.SettingStyle, frontend.SettingSize, frontend.SettingHalfLeading,
+		frontend.SettingLineModel,
 	} {
 		if v, ok := src.Settings[key]; ok {
 			probe.Settings[key] = v
 		}
 	}
+	probe.Settings[frontend.SettingLeading] = leading
 	probe.Items = append(probe.Items, "x")
 	vl, _, err := cb.frontend.FormatParagraph(probe, bag.MustSP("100pt"))
 	if err != nil {
@@ -145,8 +156,8 @@ func (cb *CSSBuilder) firstBaseline(src *frontend.Text) (bag.ScaledPoint, error)
 	return 0, nil
 }
 
-// baselines returns the baselines of a region of the given height, each as
-// its distance from the top.
+// baselines returns the baselines of an area of the given height, each as its
+// distance from the top.
 func (g lineGrid) baselines(height bag.ScaledPoint) []bag.ScaledPoint {
 	var lines []bag.ScaledPoint
 	for y := g.first; y <= height; y += g.step {
@@ -155,13 +166,36 @@ func (g lineGrid) baselines(height bag.ScaledPoint) []bag.ScaledPoint {
 	return lines
 }
 
-// rule returns the hidden rule that paints the grid of a region, to be
-// placed at the region's top left corner.
-func (g lineGrid) rule(width, height bag.ScaledPoint) *node.Rule {
+// overlay returns the box that paints the grid of an area, to be placed at
+// the area's top left corner. It takes up no room, wherever it stands.
+func (g lineGrid) overlay(width, height bag.ScaledPoint) *node.VList {
+	lines := g.baselines(height)
+	vl := node.NewVList()
+	vl.Attributes = node.H{"origin": "linegrid trace", "artifact": document.ArtifactLayout}
+	tail := node.Node(g.rule(width, lines))
+	vl.List = tail
+	var cursor bag.ScaledPoint
+	for i, y := range lines {
+		number, err := g.number(i+1, width+lineGridOverhang+lineGridNumberGap)
+		if err != nil {
+			bag.Logger.Warn("The line grid trace cannot set its numbers, leaving them out", "error", err)
+			break
+		}
+		k := node.NewKern()
+		k.Kern = y - number.Height - cursor
+		vl.List = node.InsertAfter(vl.List, tail, k)
+		vl.List = node.InsertAfter(vl.List, k, number)
+		tail = number
+		cursor = y + number.Depth
+	}
+	return vl
+}
+
+// rule returns the hidden rule that paints the lines.
+func (g lineGrid) rule(width bag.ScaledPoint, lines []bag.ScaledPoint) *node.Rule {
 	draw := pdfdraw.NewStandalone().LineWidth(bag.ScaledPointFromFloat(0.25)).ColorStroking(traceLineGridColor)
-	for i, y := range g.baselines(height) {
+	for _, y := range lines {
 		draw.Moveto(-lineGridOverhang, -y).Lineto(width+lineGridOverhang, -y).Stroke()
-		lineGridNumber(draw, width+lineGridOverhang+lineGridDigitGap, -y, i+1)
 	}
 	r := node.NewRule()
 	r.Hide = true
@@ -170,57 +204,71 @@ func (g lineGrid) rule(width, height bag.ScaledPoint) *node.Rule {
 	return r
 }
 
-// lineGridNumber draws n with its first digit at x, standing on y.
-func lineGridNumber(draw *pdfdraw.Object, x, y bag.ScaledPoint, n int) {
-	digits := []int{n % 10}
-	for n /= 10; n > 0; n /= 10 {
-		digits = append([]int{n % 10}, digits...)
+// number sets n at x, in the monospace font every builder has.
+func (g lineGrid) number(n int, x bag.ScaledPoint) (*node.HList, error) {
+	fe := g.cb.frontend
+	te := frontend.NewText()
+	te.Settings[frontend.SettingFontFamily] = fe.FindFontFamily("monospace")
+	te.Settings[frontend.SettingSize] = lineGridNumberSize
+	te.Settings[frontend.SettingLeading] = lineGridNumberSize
+	te.Settings[frontend.SettingColor] = &traceLineGridColor
+	te.Items = append(te.Items, strconv.Itoa(n))
+	vl, _, err := fe.FormatParagraph(te, 10*lineGridNumberSize)
+	if err != nil {
+		return nil, err
 	}
-	for _, d := range digits {
-		lineGridDigit(draw, x, y, d)
-		x += lineGridDigitWidth + lineGridDigitGap
-	}
+	k := node.NewKern()
+	k.Kern = x
+	k.SetNext(vl.List)
+	return node.Hpack(k), nil
 }
 
-func lineGridDigit(draw *pdfdraw.Object, x, y bag.ScaledPoint, digit int) {
-	right, mid, top := x+lineGridDigitWidth, y+lineGridDigitHeight/2, y+lineGridDigitHeight
-	for _, segment := range lineGridDigits[digit] {
-		switch segment {
-		case 'a':
-			draw.Moveto(x, top).Lineto(right, top)
-		case 'b':
-			draw.Moveto(right, top).Lineto(right, mid)
-		case 'c':
-			draw.Moveto(right, mid).Lineto(right, y)
-		case 'd':
-			draw.Moveto(x, y).Lineto(right, y)
-		case 'e':
-			draw.Moveto(x, mid).Lineto(x, y)
-		case 'f':
-			draw.Moveto(x, top).Lineto(x, mid)
-		case 'g':
-			draw.Moveto(x, mid).Lineto(right, mid)
+// traceLineGridOnPage paints the grid of the current page, whatever regions
+// it was filled through.
+func (cb *CSSBuilder) traceLineGridOnPage() error {
+	g := cb.pageLineGrid
+	if g == nil {
+		return nil
+	}
+	if cb.pageLineStep > 0 && cb.pageLineStep != g.step {
+		if g = cb.lineGridAt(g.src, cb.pageLineStep); g == nil {
+			return nil
 		}
-		draw.Stroke()
 	}
+	reg, err := cb.pageRegion()
+	if err != nil {
+		return err
+	}
+	reg.page.OutputAt(reg.left, reg.top, g.overlay(reg.width, reg.height))
+	return nil
 }
 
-// traceLineGrid paints the grid of the region being handed back, whose
-// height is final by now. A caller's region gets it with its box and only as
-// far as the box goes: what the flow leaves of a region may go to another.
+// lineStep reads -bag-line-grid of the @page rule p, 0 without a valid one.
+func (cb *CSSBuilder) lineStep(p *Page) bag.ScaledPoint {
+	v, ok := resolveDeclarations(p.Attributes)["-bag-line-grid"]
+	if !ok {
+		return 0
+	}
+	value := strings.TrimSpace(v.String())
+	step, err := bag.SP(value)
+	if err != nil || step <= 0 {
+		if cb.css.warnOnce("@page -bag-line-grid " + value) {
+			bag.Logger.Warn("@page -bag-line-grid: not a length above zero, ignoring it", "value", value)
+		}
+		return 0
+	}
+	return step
+}
+
+// traceLineGrid hands the grid to the caller's region being handed back,
+// which paints it in its box as far as the box goes: what the flow leaves of
+// a region may go to another.
 func (fc *flowCursor) traceLineGrid() {
-	if fc.lineGrid == nil || fc.cur.trial {
+	if fc.lineGrid == nil || fc.cur.trial || fc.cur.sink == nil {
 		return
 	}
 	// The flow starts below the margin still open above the region.
 	g := *fc.lineGrid
 	g.first += max(fc.cur.marginBefore, 0)
-	switch {
-	case fc.cur.sink != nil:
-		fc.cur.sink.lineGrid = &g
-	case fc.cur.page != nil:
-		vl := node.NewVList()
-		vl.List = g.rule(fc.cur.width, fc.cur.height)
-		fc.cur.page.OutputAt(fc.cur.left, fc.cur.top, vl)
-	}
+	fc.cur.sink.lineGrid = &g
 }
