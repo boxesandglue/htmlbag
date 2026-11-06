@@ -1,10 +1,13 @@
 package htmlbag
 
 import (
+	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/htmlbag/internal/cascadia"
 )
 
@@ -448,5 +451,66 @@ func TestNamedPage(t *testing.T) {
 	empty := NewCSSParser()
 	if _, ok := empty.NamedPage("chapter"); ok {
 		t.Errorf("NamedPage on a stylesheet without @page must report false")
+	}
+}
+
+// A selector does not need whitespace before its block, and a hash can follow
+// a class: the last token and the token after a merged one used to lose the
+// hash, so #x{} was the type selector x.
+func TestSelectorHashAnywhere(t *testing.T) {
+	for _, tc := range []struct {
+		name, css string
+		want      bool
+	}{
+		{"before the brace", `#x{font-size:33pt}`, true},
+		{"before whitespace", `#x {font-size:33pt}`, true},
+		{"with a type", `p#x{font-size:33pt}`, true},
+		{"after a class", `.c#x{font-size:33pt}`, true},
+		{"after two classes", `.c.d#x{font-size:33pt}`, true},
+		{"after a pseudo-class", `p:first-child#x{font-size:33pt}`, true},
+		{"before a class", `#x.c{font-size:33pt}`, true},
+		{"descendant", `div #x{font-size:33pt}`, true},
+		{"child", `div>#x{font-size:33pt}`, true},
+		{"in a list", `#y,#x{font-size:33pt}`, true},
+		{"two classes", `.c.d{font-size:33pt}`, true},
+		{"another id", `#y{font-size:33pt}`, false},
+		{"another class", `.c.e{font-size:33pt}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fe, err := frontend.NewForWriter(&bytes.Buffer{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = LoadIncludedFonts(fe); err != nil {
+				t.Fatal(err)
+			}
+			cb, err := New(fe, NewCSSParserWithDefaults())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = cb.AddCSS(tc.css); err != nil {
+				t.Fatal(err)
+			}
+			te, err := cb.HTMLToText(`<!DOCTYPE html><html><body><div><p id="x" class="c d">text</p></div></body></html>`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var size bag.ScaledPoint
+			var walk func(te *frontend.Text)
+			walk = func(te *frontend.Text) {
+				if te.Settings[frontend.SettingElementID] == "x" {
+					size, _ = te.Settings[frontend.SettingSize].(bag.ScaledPoint)
+				}
+				for _, itm := range te.Items {
+					if sub, ok := itm.(*frontend.Text); ok {
+						walk(sub)
+					}
+				}
+			}
+			walk(te)
+			if got := size == bag.MustSP("33pt"); got != tc.want {
+				t.Errorf("rule applied: %t, want %t", got, tc.want)
+			}
+		})
 	}
 }

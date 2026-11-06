@@ -631,28 +631,24 @@ func findClosingBrace(toks tokenstream) int {
 	return len(toks)
 }
 
-// fixupComponentValues changes DELIM[.] + IDENT[foo] to IDENT[.foo]
+// fixupComponentValues changes DELIM[.] + IDENT[foo] to IDENT[.foo], the same
+// for a colon before an identifier or a function, and puts the hash back on a
+// HASH token, which the scanner strips.
 func fixupComponentValues(toks tokenstream) tokenstream {
 	toks = trimSpace(toks)
-	var combineNext bool
-	for i := 0; i < len(toks)-1; i++ {
-		combineNext = false
-		if toks[i].Type == scanner.Delim && toks[i].Value == "." && toks[i+1].Type == scanner.Ident {
-			toks[i+1].Value = "." + toks[i+1].Value
-			combineNext = true
-		} else if toks[i].Type == scanner.Delim && toks[i].Value == ":" && toks[i+1].Type == scanner.Ident {
-			toks[i+1].Value = ":" + toks[i+1].Value
-			combineNext = true
-		} else if toks[i].Type == scanner.Delim && toks[i].Value == ":" && toks[i+1].Type == scanner.Function {
-			toks[i+1].Value = ":" + toks[i+1].Value
-			combineNext = true
-		} else if toks[i].Type == scanner.Hash {
+	for i := 0; i < len(toks); i++ {
+		if toks[i].Type == scanner.Hash {
 			toks[i].Value = "#" + toks[i].Value
+			continue
 		}
-
-		if combineNext {
+		if i+1 == len(toks) || toks[i].Type != scanner.Delim {
+			continue
+		}
+		next := toks[i+1].Type
+		if toks[i].Value == "." && next == scanner.Ident ||
+			toks[i].Value == ":" && (next == scanner.Ident || next == scanner.Function) {
+			toks[i+1].Value = toks[i].Value + toks[i+1].Value
 			toks = append(toks[:i], toks[i+1:]...)
-			i++
 		}
 	}
 	return toks
