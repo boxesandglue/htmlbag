@@ -193,8 +193,18 @@ func (c *CSS) warnInvalidValue(property string, value tokenstream) {
 			bag.Logger.Warn("CSS value has an unexpected token, dropping it", "property", property, "token", tok.Value, "line", tok.Line)
 		}
 	}
-	if property == "display" && !displayValues[text] && !strings.Contains(text, "var(") && c.warnOnce("display "+text) {
-		bag.Logger.Warn("display value is not supported, ignoring it", "value", text)
+	if containsVar(value) || cssWideKeyword(trimSpace(value)) != "" {
+		return
+	}
+	valid := true
+	switch property {
+	case "display":
+		valid = displayValues[text]
+	case "hyphenate-limit-chars":
+		_, valid = parseHyphenLimits(text)
+	}
+	if !valid && c.warnOnce(property+" "+text) {
+		bag.Logger.Warn(property+" value is not supported, ignoring it", "value", text)
 	}
 }
 

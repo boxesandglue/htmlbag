@@ -382,7 +382,9 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// ApplySettings when it's "none" or "manual".
 			ih.hyphens = strings.ToLower(strings.TrimSpace(v))
 		case "hyphenate-limit-chars":
-			ih.hyphenLimits = parseHyphenLimits(v)
+			if limits, ok := parseHyphenLimits(v); ok {
+				ih.hyphenLimits = limits
+			}
 		case "direction":
 			// CSS Writing Modes 3 §2.1: explicit base direction for the
 			// paragraph. Overrides the content-based auto-detection in

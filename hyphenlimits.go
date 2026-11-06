@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/lang"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
@@ -17,13 +16,16 @@ type hyphenLimits struct {
 	word, before, after int
 }
 
-// parseHyphenLimits reads a value of hyphenate-limit-chars and returns nil for
-// auto or an invalid value.
-func parseHyphenLimits(v string) *hyphenLimits {
+// parseHyphenLimits reads a value of hyphenate-limit-chars and reports whether
+// it is valid. The limits are nil for auto. An invalid value leaves the
+// inherited one in place, which covers inherit, unset and revert.
+func parseHyphenLimits(v string) (*hyphenLimits, bool) {
 	fields := strings.Fields(strings.ToLower(v))
 	if len(fields) == 0 || len(fields) > 3 {
-		bag.Logger.Warn("hyphenate-limit-chars takes one to three values, ignoring it", "value", v)
-		return nil
+		return nil, false
+	}
+	if len(fields) == 1 && fields[0] == "initial" {
+		return nil, true
 	}
 	values := [3]int{-1, -1, -1}
 	for i, f := range fields {
@@ -32,8 +34,7 @@ func parseHyphenLimits(v string) *hyphenLimits {
 		}
 		n, err := strconv.Atoi(f)
 		if err != nil || n < 0 {
-			bag.Logger.Warn("hyphenate-limit-chars: not auto or an integer of zero or more, ignoring it", "value", v)
-			return nil
+			return nil, false
 		}
 		values[i] = n
 	}
@@ -41,9 +42,9 @@ func parseHyphenLimits(v string) *hyphenLimits {
 		values[2] = values[1]
 	}
 	if values == [3]int{-1, -1, -1} {
-		return nil
+		return nil, true
 	}
-	return &hyphenLimits{values[0], values[1], values[2]}
+	return &hyphenLimits{values[0], values[1], values[2]}, true
 }
 
 // limitedLanguage returns l with the limits applied. The document holds one

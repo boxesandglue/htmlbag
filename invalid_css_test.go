@@ -111,6 +111,7 @@ func TestInvalidCSSWarns(t *testing.T) {
 		{"percentage", ".x { font-size: 10pt 50%; }", doc, "cannot read a percentage"},
 		{"style attribute", "", `<html><body><p style="display: grid">Text</p></body></html>`, "display value is not supported"},
 		{"page margin box", `@page { @top-center { content: "a" | "b"; } }`, doc, "unexpected token"},
+		{"hyphenate-limit-chars", ".x { hyphenate-limit-chars: six; }", doc, "hyphenate-limit-chars value is not supported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := strings.Join(warningsOf(t, tc.css, tc.html), "\n")
@@ -124,9 +125,21 @@ func TestInvalidCSSWarns(t *testing.T) {
 // One bad rule on many elements is one mistake.
 func TestInvalidCSSWarnsOnce(t *testing.T) {
 	doc := "<html><body>" + strings.Repeat(`<p class="x">Text</p>`, 50) + "</body></html>"
-	got := warningsOf(t, ".x { display: flex; color: red | blue; }", doc)
-	if len(got) != 2 {
-		t.Errorf("want 2 warnings, got %d: %q", len(got), got)
+	got := warningsOf(t, ".x { display: flex; color: red | blue; hyphenate-limit-chars: six; }", doc)
+	if len(got) != 3 {
+		t.Errorf("want 3 warnings, got %d: %q", len(got), got)
+	}
+}
+
+// CSS-wide keywords and var() are valid whatever the property takes.
+func TestCSSWideKeywordsDoNotWarn(t *testing.T) {
+	const doc = `<html><body><p class="x">Text</p></body></html>`
+	for _, value := range []string{"inherit", "initial", "unset", "revert", "revert-layer", "var(--v, 3)"} {
+		for _, property := range []string{"hyphenate-limit-chars"} {
+			if got := warningsOf(t, ".x { "+property+": "+value+"; }", doc); len(got) != 0 {
+				t.Errorf("%s: %s warns: %q", property, value, got)
+			}
+		}
 	}
 }
 

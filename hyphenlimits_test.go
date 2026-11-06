@@ -27,7 +27,7 @@ func TestParseHyphenLimits(t *testing.T) {
 		{"-1", nil},
 		{"", nil},
 	} {
-		got := parseHyphenLimits(tc.value)
+		got, _ := parseHyphenLimits(tc.value)
 		if (got == nil) != (tc.want == nil) || got != nil && *got != *tc.want {
 			t.Errorf("parseHyphenLimits(%q) = %v, want %v", tc.value, got, tc.want)
 		}
@@ -116,5 +116,26 @@ func TestHyphenateLimitCharsWithoutLang(t *testing.T) {
 	}
 	if languageOf(t, te, "reset") != fe.Doc.DefaultLanguage {
 		t.Errorf("auto keeps the limits of the parent")
+	}
+}
+
+// An invalid value leaves the inherited limits, as inherit and unset do, and
+// initial goes back to auto.
+func TestHyphenateLimitCharsKeepsInherited(t *testing.T) {
+	fe, te := runStylePass(t, `<!DOCTYPE html><html><body><div style="hyphenate-limit-chars: 6 2 4">
+<p id="limited">x</p>
+<p id="invalid" style="hyphenate-limit-chars: six">x</p>
+<p id="inherit" style="hyphenate-limit-chars: inherit">x</p>
+<p id="unset" style="hyphenate-limit-chars: unset">x</p>
+<p id="initial" style="hyphenate-limit-chars: initial">x</p>
+</div></body></html>`)
+	limited := languageOf(t, te, "limited")
+	for _, id := range []string{"invalid", "inherit", "unset"} {
+		if languageOf(t, te, id) != limited {
+			t.Errorf("%s did not keep the inherited limits", id)
+		}
+	}
+	if languageOf(t, te, "initial") != fe.Doc.DefaultLanguage {
+		t.Errorf("initial keeps the limits of the parent")
 	}
 }
