@@ -144,6 +144,19 @@ func ParseVerticalAlign(align string, styles *FormattingStyles) frontend.Vertica
 	}
 }
 
+// lastAlignments are the values of text-align-last. auto, the initial value,
+// leaves the last line to text-align.
+var lastAlignments = map[string]frontend.HorizontalAlignment{
+	"auto":    frontend.HAlignDefault,
+	"initial": frontend.HAlignDefault,
+	"start":   frontend.HAlignStart,
+	"end":     frontend.HAlignEnd,
+	"left":    frontend.HAlignLeft,
+	"right":   frontend.HAlignRight,
+	"center":  frontend.HAlignCenter,
+	"justify": frontend.HAlignJustified,
+}
+
 // ParseHorizontalAlign parses the input ("left","center") and returns the
 // HorizontalAlignment value. CSS Text 3 §7 logical keywords "start" and "end"
 // stay logical here; FormatParagraph resolves them to physical Left/Right
@@ -682,6 +695,12 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			}
 		case "text-align":
 			ih.Halign = ParseHorizontalAlign(v, ih)
+		case "text-align-last":
+			// Any other value leaves the inherited one in place, which
+			// covers inherit, unset and revert.
+			if align, ok := lastAlignments[strings.ToLower(strings.TrimSpace(v))]; ok {
+				ih.halignLast = align
+			}
 		case "text-box-trim":
 			ih.textBoxTrim = parseTextBoxTrim(v, ih.textBoxTrim)
 		case "text-box-edge":
@@ -1040,6 +1059,7 @@ type FormattingStyles struct {
 	fontexpansion      *float64
 	horizontalScale    *float64 // -bag-horizontal-scale; nil writes no setting, so documents without it are unchanged
 	Halign             frontend.HorizontalAlignment
+	halignLast         frontend.HorizontalAlignment // text-align-last
 	hangingPunctuation frontend.HangingPunctuation
 	direction          string        // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
 	unicodeBidi        string        // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
@@ -1342,6 +1362,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		tabStops:        is.tabStops,
 		Valign:          is.Valign,
 		Halign:          is.Halign,
+		halignLast:      is.halignLast,
 		// vertical-align itself does not inherit, but the baseline shift it
 		// produces carries over: descendant inline boxes align to the
 		// parent's (shifted) baseline. Nested sub/super/length values add
@@ -1522,6 +1543,7 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		settings[frontend.SettingFontFamilyStack] = ih.fontfamilyStack
 	}
 	settings[frontend.SettingHAlign] = ih.Halign
+	settings[frontend.SettingHAlignLast] = ih.halignLast
 	settings[frontend.SettingHangingPunctuation] = ih.hangingPunctuation
 	settings[frontend.SettingItalicCorrection] = ih.italicCorrection
 	// text-indent is logical: it indents the line-start edge, which the

@@ -362,6 +362,15 @@ func resolveDeclarations(decls []declaration) StyleMap {
 				numeric = []string{"normal"}
 			}
 			set("font-variant-numeric", textValue(strings.Join(numeric, " ")))
+		case "text-align":
+			// CSS Text 3 makes this a shorthand that resets text-align-last.
+			// Browsers keep the two apart, and stylesheets are written against
+			// them, so only justify-all sets both.
+			if hasKeyword(decl.value, "justify-all") {
+				value = textValue("justify")
+				set("text-align-last", value)
+			}
+			set(key, value)
 		case "font-synthesis":
 			set(key, value)
 			synth := "none"

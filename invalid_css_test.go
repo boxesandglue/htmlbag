@@ -113,6 +113,7 @@ func TestInvalidCSSWarns(t *testing.T) {
 		{"page margin box", `@page { @top-center { content: "a" | "b"; } }`, doc, "unexpected token"},
 		{"hyphenate-limit-chars", ".x { hyphenate-limit-chars: six; }", doc, "hyphenate-limit-chars value is not supported"},
 		{"font-variant-numeric", ".x { font-variant-numeric: lining-nums oldstyle-nums; }", doc, "font-variant-numeric value is not supported"},
+		{"text-align-last", ".x { text-align-last: middle; }", doc, "text-align-last value is not supported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := strings.Join(warningsOf(t, tc.css, tc.html), "\n")
@@ -126,9 +127,9 @@ func TestInvalidCSSWarns(t *testing.T) {
 // One bad rule on many elements is one mistake.
 func TestInvalidCSSWarnsOnce(t *testing.T) {
 	doc := "<html><body>" + strings.Repeat(`<p class="x">Text</p>`, 50) + "</body></html>"
-	got := warningsOf(t, ".x { display: flex; color: red | blue; hyphenate-limit-chars: six; font-variant-numeric: bold; }", doc)
-	if len(got) != 4 {
-		t.Errorf("want 4 warnings, got %d: %q", len(got), got)
+	got := warningsOf(t, ".x { display: flex; color: red | blue; hyphenate-limit-chars: six; font-variant-numeric: bold; text-align-last: middle; }", doc)
+	if len(got) != 5 {
+		t.Errorf("want 5 warnings, got %d: %q", len(got), got)
 	}
 }
 
@@ -136,7 +137,7 @@ func TestInvalidCSSWarnsOnce(t *testing.T) {
 func TestCSSWideKeywordsDoNotWarn(t *testing.T) {
 	const doc = `<html><body><p class="x">Text</p></body></html>`
 	for _, value := range []string{"inherit", "initial", "unset", "revert", "revert-layer", "var(--v, 3)"} {
-		for _, property := range []string{"hyphenate-limit-chars", "font-variant-numeric"} {
+		for _, property := range []string{"hyphenate-limit-chars", "font-variant-numeric", "text-align-last"} {
 			if got := warningsOf(t, ".x { "+property+": "+value+"; }", doc); len(got) != 0 {
 				t.Errorf("%s: %s warns: %q", property, value, got)
 			}
