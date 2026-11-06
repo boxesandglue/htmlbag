@@ -1038,7 +1038,10 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 
 // FormattingStyles are HTML formatting styles.
 type FormattingStyles struct {
-	BackgroundColor   *color.Color
+	BackgroundColor *color.Color
+	// rowBackground is the background of the enclosing row or row group, see
+	// resolveRowBackground. Unlike BackgroundColor it is inherited.
+	rowBackground     *color.Color
 	BorderLeftWidth   bag.ScaledPoint
 	BorderRightWidth  bag.ScaledPoint
 	BorderBottomWidth bag.ScaledPoint
@@ -1323,6 +1326,25 @@ func sameColor(a, b *color.Color) bool {
 	return a.PDFStringStroking() == b.PDFStringStroking()
 }
 
+// resolveRowBackground hands the background of a row or a row group to its
+// cells. background-color is not inherited, but rows paint nothing themselves,
+// so the cells paint for them. The table is left out: it paints its own
+// background.
+func (is *FormattingStyles) resolveRowBackground(element string) {
+	switch element {
+	case "thead", "tbody", "tfoot", "tr":
+		if is.BackgroundColor != nil {
+			is.rowBackground = is.BackgroundColor
+		}
+	case "td", "th":
+		if is.BackgroundColor == nil {
+			is.BackgroundColor = is.rowBackground
+		}
+		// The content of the cell, a nested table for example, is on its own.
+		is.rowBackground = nil
+	}
+}
+
 // Clone mimics style inheritance.
 func (is *FormattingStyles) Clone() *FormattingStyles {
 	// inherit
@@ -1336,7 +1358,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		}
 	}
 	newis := &FormattingStyles{
-		BackgroundColor:    is.BackgroundColor,
+		rowBackground:      is.rowBackground,
 		borderModel:        is.borderModel,
 		borderSpacingH:     is.borderSpacingH,
 		borderSpacingV:     is.borderSpacingV,
@@ -1945,6 +1967,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 	if err := StylesToStyles(styles, item.Styles, df, ss.CurrentStyle().Fontsize); err != nil {
 		return nil, err
 	}
+	styles.resolveRowBackground(item.Data)
 	if m := styles.multicol; m.count > 1 {
 		if !m.gapSet {
 			m.gap = styles.Fontsize

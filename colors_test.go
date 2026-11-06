@@ -2,12 +2,15 @@ package htmlbag
 
 import (
 	"bytes"
+	"io"
 	"regexp"
 	"strings"
 	"testing"
 
 	pdf "github.com/boxesandglue/baseline-pdf"
+	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
+	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
@@ -219,5 +222,118 @@ func TestColorTransparentKeyword(t *testing.T) {
 	}
 	if ih.BackgroundColor.Space != color.ColorNone {
 		t.Errorf("background-color has space %v, want none", ih.BackgroundColor.Space)
+	}
+}
+
+// countInPDF renders html and counts s in the uncompressed PDF.
+func countInPDF(t *testing.T, html, s string) int {
+	t.Helper()
+	var buf bytes.Buffer
+	fe, err := frontend.NewForWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fe.Doc.CompressLevel = 0
+	if err := LoadIncludedFonts(fe); err != nil {
+		t.Fatal(err)
+	}
+	cb, err := New(fe, NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	te, err := cb.HTMLToText(html)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.OutputPagesFromText(te); err != nil {
+		t.Fatal(err)
+	}
+	if err := fe.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	return bytes.Count(buf.Bytes(), []byte(s))
+}
+
+// background-color is not inherited. A child painting the background of its
+// parent again cannot be seen with an opaque color, but a transparent one
+// comes out darker. Rows and row groups paint nothing themselves, so their
+// cells paint for them.
+func TestBackgroundIsPaintedOnce(t *testing.T) {
+	const bg = `style="background-color:rgba(255,0,0,.5)"`
+	testdata := []struct {
+		name, html string
+		want       int
+	}{
+		{"block with a paragraph", `<div ` + bg + `><p>a</p><p>b</p></div>`, 1},
+		{"nested blocks", `<div ` + bg + `><div><div><p>a</p></div></div></div>`, 1},
+		{"list", `<ul ` + bg + `><li>a</li><li>b</li></ul>`, 1},
+		// One box per run, each from the font of the run. They abut.
+		{"inline with a child", `<p><span ` + bg + `>a <b>b</b> c</span></p>`, 3},
+		{"table", `<table ` + bg + `><tr><td>a</td><td>b</td></tr></table>`, 1},
+		{"row", `<table><tr ` + bg + `><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>`, 2},
+		{"row group", `<table><tbody ` + bg + `><tr><td>a</td></tr><tr><td>b</td></tr></tbody></table>`, 2},
+		{"head", `<table><thead ` + bg + `><tr><th>a</th></tr></thead><tbody><tr><td>b</td></tr></tbody></table>`, 1},
+		{"table in a cell of a row", `<table><tr ` + bg + `><td><table><tr><td>a</td></tr></table></td></tr></table>`, 1},
+	}
+	for _, tc := range testdata {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := countInPDF(t, tc.html, "/GSca0_5 gs"); got != tc.want {
+				t.Errorf("background painted %d times, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// A cell keeps its own background over the one of its row.
+func TestCellBackgroundWinsOverRow(t *testing.T) {
+	html := `<table><tr style="background-color:rgba(255,0,0,.5)">
+<td style="background-color:rgba(0,255,0,.25)">a</td><td>b</td></tr></table>`
+	if got := countInPDF(t, html, "/GSca0_25 gs"); got != 1 {
+		t.Errorf("own background painted %d times, want 1", got)
+	}
+	if got := countInPDF(t, html, "/GSca0_5 gs"); got != 1 {
+		t.Errorf("background of the row painted %d times, want 1", got)
+	}
+}
+
+// backgroundRule finds the rule that paints the background below n.
+func backgroundRule(n node.Node) string {
+	for ; n != nil; n = n.Next() {
+		switch v := n.(type) {
+		case *node.Rule:
+			if strings.Contains(v.Pre, " re f") {
+				return v.Pre
+			}
+		case *node.VList:
+			if pre := backgroundRule(v.List); pre != "" {
+				return pre
+			}
+		case *node.HList:
+			if pre := backgroundRule(v.List); pre != "" {
+				return pre
+			}
+		}
+	}
+	return ""
+}
+
+// The background reaches the bottom edge of the box, which lies the depth of
+// the content below its baseline (htmlbag#106).
+func TestBackgroundCoversDepth(t *testing.T) {
+	fe, err := frontend.NewForWriter(io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb, err := New(fe, NewCSSParserWithDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	vl := node.NewVList()
+	vl.Width = bag.MustSP("100pt")
+	vl.Height = bag.MustSP("20pt")
+	vl.Depth = bag.MustSP("5pt")
+	got := backgroundRule(cb.HTMLBorder(vl, HTMLValues{BackgroundColor: fe.GetColor("red")}))
+	if want := "0 -25 100 25 re f"; !strings.Contains(got, want) {
+		t.Errorf("background rule %q, want the rectangle %q", got, want)
 	}
 }

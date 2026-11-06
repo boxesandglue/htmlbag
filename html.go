@@ -352,7 +352,7 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 
 	ybg0 := bag.ScaledPoint(0) + hv.PaddingTop + hv.BorderTopWidth
 	ybg1 := ybg0 - hv.BorderTopWidth
-	ybg3 := ybg0 - height - hv.PaddingTop - hv.BorderTopWidth - hv.PaddingBottom - hv.BorderBottomWidth
+	ybg3 := ybg0 - height - vl.Depth - hv.PaddingTop - hv.BorderTopWidth - hv.PaddingBottom - hv.BorderBottomWidth
 	ybg2 := ybg3 + hv.BorderBottomWidth
 
 	if hv.BackgroundColor != nil && hv.BackgroundColor.Space != color.ColorNone {
