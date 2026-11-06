@@ -394,6 +394,10 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// the keyword as-is and translate to the no-op language at
 			// ApplySettings when it's "none" or "manual".
 			ih.hyphens = strings.ToLower(strings.TrimSpace(v))
+		case "hyphenate-character":
+			if character, ok := parseHyphenCharacter(v); ok {
+				ih.hyphenCharacter = character
+			}
 		case "hyphenate-limit-chars":
 			if limits, ok := parseHyphenLimits(v); ok {
 				ih.hyphenLimits = limits
@@ -1064,6 +1068,7 @@ type FormattingStyles struct {
 	direction          string        // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
 	unicodeBidi        string        // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
 	hyphens            string        // CSS hyphens: "" (auto), "auto", "manual", "none"
+	hyphenCharacter    *string       // hyphenate-character, nil for auto
 	hyphenLimits       *hyphenLimits // CSS hyphenate-limit-chars, nil for auto
 	hyphenPenalty      *int          // -bag-linebreak-hyphen-penalty (nil = inherit/default)
 	linebreakTolerance *float64      // -bag-linebreak-tolerance (nil = inherit/default)
@@ -1335,6 +1340,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		unicodeBidi:        is.unicodeBidi,
 		hangingPunctuation: is.hangingPunctuation,
 		hyphens:            is.hyphens,
+		hyphenCharacter:    is.hyphenCharacter,
 		hyphenLimits:       is.hyphenLimits,
 		hyphenPenalty:      is.hyphenPenalty,
 		linebreakTolerance: is.linebreakTolerance,
@@ -1544,6 +1550,10 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	settings[frontend.SettingHAlign] = ih.Halign
 	settings[frontend.SettingHAlignLast] = ih.halignLast
+	settings[frontend.SettingHyphenCharacter] = nil
+	if ih.hyphenCharacter != nil {
+		settings[frontend.SettingHyphenCharacter] = *ih.hyphenCharacter
+	}
 	settings[frontend.SettingHangingPunctuation] = ih.hangingPunctuation
 	settings[frontend.SettingItalicCorrection] = ih.italicCorrection
 	// text-indent is logical: it indents the line-start edge, which the

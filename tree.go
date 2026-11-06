@@ -204,6 +204,8 @@ func (c *CSS) warnInvalidValue(property string, value tokenstream) {
 		_, valid = parseFontVariantNumeric(text)
 	case "text-align-last":
 		_, valid = lastAlignments[strings.ToLower(text)]
+	case "hyphenate-character":
+		_, valid = parseHyphenCharacter(text)
 	case "hyphenate-limit-chars":
 		_, valid = parseHyphenLimits(text)
 	}

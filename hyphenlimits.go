@@ -47,6 +47,36 @@ func parseHyphenLimits(v string) (*hyphenLimits, bool) {
 	return &hyphenLimits{values[0], values[1], values[2]}, true
 }
 
+// parseHyphenCharacter reads a value of hyphenate-character and reports whether
+// it is valid: one CSS string, or auto for the hyphen of the font, which is nil.
+// An invalid value leaves the inherited one in place, which covers inherit,
+// unset and revert.
+func parseHyphenCharacter(v string) (*string, bool) {
+	v = strings.TrimSpace(v)
+	if keyword := strings.ToLower(v); keyword == "auto" || keyword == "initial" {
+		return nil, true
+	}
+	inner, ok := unquoteCSSString(v)
+	if !ok {
+		return nil, false
+	}
+	var text strings.Builder
+	for i := 0; i < len(inner); i++ {
+		switch c := inner[i]; {
+		case c == '\\' && i+1 < len(inner):
+			i++
+			text.WriteByte(inner[i])
+		case c == v[0]:
+			// Two strings: "a" "b".
+			return nil, false
+		default:
+			text.WriteByte(c)
+		}
+	}
+	s := text.String()
+	return &s, true
+}
+
 // limitedLanguage returns l with the limits applied. The document holds one
 // language per language and limits, so that a change of limits within a
 // document keeps its word caches apart.
