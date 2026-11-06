@@ -652,6 +652,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					vl.Attributes["pageBreakInside"] = pbi
 				}
 
+				cb.stampLineSnap(vl, t)
+
 				vls.List = node.InsertAfter(vls.List, node.Tail(vls.List), vl)
 				if vl.Width > vls.Width {
 					vls.Width = vl.Width

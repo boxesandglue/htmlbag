@@ -53,19 +53,32 @@ var traceLineGridColor = color.Color{Space: color.ColorRGB, R: 0.85, G: 0.2, B: 
 // and the mark on the body take the running text, as every element has a
 // line-height and the body's need not be the one of the text.
 func (cb *CSSBuilder) lineGridFor(te *frontend.Text) *lineGrid {
-	src := findText(te, func(t *frontend.Text) bool {
+	if markedForLineGrid(te) == nil && !cb.TraceLineGrid {
+		return nil
+	}
+	src := lineGridSource(te)
+	if src == nil {
+		return nil
+	}
+	return cb.lineGridAt(src, paragraphLeading(src.Settings))
+}
+
+// markedForLineGrid returns the first Text with -bag-trace: linegrid.
+func markedForLineGrid(te *frontend.Text) *frontend.Text {
+	return findText(te, func(t *frontend.Text) bool {
 		marked, _ := t.Settings[settingTraceLineGrid].(bool)
 		return marked
 	})
-	if src == nil && !cb.TraceLineGrid {
-		return nil
+}
+
+// lineGridSource returns the Text whose line-height is the grid of te: the
+// one with the mark, or the running text, nil when there is no text.
+func lineGridSource(te *frontend.Text) *frontend.Text {
+	src, body := markedForLineGrid(te), findBody(te)
+	if src == nil || src == body {
+		return runningText(body)
 	}
-	if body := findBody(te); src == nil || src == body {
-		if src = runningText(body); src == nil {
-			return nil
-		}
-	}
-	return cb.lineGridAt(src, paragraphLeading(src.Settings))
+	return src
 }
 
 // lineGridAt returns the grid of step, with the first baseline a line of src
@@ -204,15 +217,20 @@ func (g lineGrid) rule(width bag.ScaledPoint, lines []bag.ScaledPoint) *node.Rul
 	return r
 }
 
-// number sets n at x, in the monospace font every builder has.
+// number sets n at x.
 func (g lineGrid) number(n int, x bag.ScaledPoint) (*node.HList, error) {
+	return g.label(strconv.Itoa(n), x)
+}
+
+// label sets text at x, in the monospace font every builder has.
+func (g lineGrid) label(text string, x bag.ScaledPoint) (*node.HList, error) {
 	fe := g.cb.frontend
 	te := frontend.NewText()
 	te.Settings[frontend.SettingFontFamily] = fe.FindFontFamily("monospace")
 	te.Settings[frontend.SettingSize] = lineGridNumberSize
 	te.Settings[frontend.SettingLeading] = lineGridNumberSize
 	te.Settings[frontend.SettingColor] = &traceLineGridColor
-	te.Items = append(te.Items, strconv.Itoa(n))
+	te.Items = append(te.Items, text)
 	vl, _, err := fe.FormatParagraph(te, 10*lineGridNumberSize)
 	if err != nil {
 		return nil, err
@@ -240,6 +258,7 @@ func (cb *CSSBuilder) traceLineGridOnPage() error {
 		return err
 	}
 	reg.page.OutputAt(reg.left, reg.top, g.overlay(reg.width, reg.height))
+	cb.traceSnapMarks(g, reg.page)
 	return nil
 }
 

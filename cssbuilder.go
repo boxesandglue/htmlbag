@@ -239,6 +239,16 @@ type CSSBuilder struct {
 	// sets one.
 	pageLineGrid *lineGrid
 	pageLineStep bag.ScaledPoint
+	// lineSnaps holds the block Texts with line-snap: baseline. snapSource
+	// is the Text that gives the grid they snap to, snapGrids the grids
+	// measured for it by distance. snapMarks are the rests of the current
+	// page for the trace, snapPending those of the region being filled,
+	// whose height on the page is known once it is painted.
+	lineSnaps   map[*frontend.Text]bool
+	snapSource  *frontend.Text
+	snapGrids   map[bag.ScaledPoint]*lineGrid
+	snapMarks   []snapMark
+	snapPending []snapMark
 	// Anchors collects every block-level element with an id attribute
 	// encountered during VList construction. Page numbers are assigned
 	// during shipout, just like Headings. Read by the multi-pass aux
@@ -1148,8 +1158,8 @@ func (cb *CSSBuilder) OutputPagesFromText(te *frontend.Text) error {
 		return err
 	}
 	cb.pageLineGrid = cb.lineGridFor(te)
-	defer func() { cb.pageLineGrid = nil }()
-	fc := &flowCursor{regions: &pageRegions{cb: cb}}
+	defer func() { cb.pageLineGrid, cb.snapSource, cb.snapGrids = nil, nil, nil }()
+	fc := &flowCursor{regions: &pageRegions{cb: cb}, snapping: cb.startLineSnap(te)}
 	if flow, m := cb.multicolBody(findBody(te)); flow != nil {
 		fc.regions = &columnRegions{cb: cb, count: m.count, gap: m.gap, fillAuto: m.fillAuto, body: flow, rule: m}
 		fc.columns = true
@@ -1778,6 +1788,16 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			}
 		}
 
+		if vl, ok := cur.(*node.VList); ok {
+			if fc.transparentForSnap(cb, vl, fc.cur.height) {
+				cur = takeApartForSnap(vl, vl.Next())
+				continue
+			}
+			if fc.snapped(vl) {
+				fc.snapLines(cb, vl)
+			}
+		}
+
 		next := cur.Next()
 		h := vlistNodeHeight(cur)
 		contentArea := fc.cur.height
@@ -1799,16 +1819,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			o, _ := wrap.Attributes["origin"].(string)
 			spl, _ := wrap.Attributes["_splittable"].(bool)
 			if o != "table" && !spl && !isPlaceholderBox(wrap) && wrap.List != nil && hasTableChild(wrap.List) {
-				propagateInsertsAttr(wrap, wrap.List)
-				propagateFlowChild(wrap, wrap.List)
-				first := wrap.List
-				last := node.Tail(first)
-				last.SetNext(next)
-				if next != nil {
-					next.SetPrev(last)
-				}
-				first.SetPrev(nil)
-				cur = first
+				cur = spliceChildren(wrap, next)
 				continue
 			}
 		}
@@ -1907,6 +1918,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		if t := blockTrimAtBreak(cur); t > 0 && trialPageHeight(incoming, h-t) <= contentArea {
 			fit = h - t
 		}
+		fit += fc.blockSnapRest(cb, cur, incoming)
 
 		// Splittable block (<pre>, block container with bg/border) that's
 		// taller than what fits even on an empty page: fragment it across
@@ -1970,6 +1982,8 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			for _, n := range rest {
 				chained[n] = true
 			}
+			// The block after the chain may have to move down to the grid.
+			need += fc.snapSlack(cb)
 			if trialPageHeight(incoming, need) > contentArea && fc.holdsContent(cb) {
 				if err := fc.moveOn(cb, cur); err != nil {
 					return -1, nil, err
@@ -2026,7 +2040,8 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		}
 
 		// cur stays here: trim it if it fits only by its text.
-		if t := blockTrimAtBreak(cur); t > 0 && trialPageHeight(incoming, h) > contentArea && trialPageHeight(incoming, h-t) <= contentArea {
+		snapRest := fc.blockSnapRest(cb, cur, incoming)
+		if t := blockTrimAtBreak(cur); t > 0 && trialPageHeight(incoming, h+snapRest) > contentArea && trialPageHeight(incoming, h+snapRest-t) <= contentArea {
 			trimBlockAtBreak(cur)
 			h = vlistNodeHeight(cur)
 		}
@@ -2040,6 +2055,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			cb.pageInsertHeight[InsertFootnote] = cb.totalFootnoteHeight(cb.pageInserts[InsertFootnote])
 		}
 
+		snapped := fc.snapBlock(cb, cur)
 		cur.SetPrev(nil)
 		cur.SetNext(nil)
 		box := node.NewVList()
@@ -2048,6 +2064,9 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 		box.Height = h
 
 		cb.bufferBody(box, h)
+		if snapped {
+			fc.endPiece(cb)
+		}
 		if _, isFloat := floatBoxHeight(cur); isFloat {
 			floatRegion = fc.serial
 		}
@@ -2173,6 +2192,9 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			// The block's first line was placed already.
 			trimLines(tailVL, textBoxTrim{end: cb.trims[splitTe].end})
 			shiftLines(tailVL.List, lineShift)
+			if fc.snapped(blockVL) {
+				fc.snapLines(cb, tailVL)
+			}
 		}
 		if hasPBI {
 			splitTe.Settings[settingPageBreakInside] = pbi
@@ -2384,6 +2406,28 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		if top, bottom, ok := decorationClone(blockVL); ok {
 			topOverhead, bottomOverhead, cutOverhead = top, bottom, bottom
 		}
+		// The first line of the block and of each part of a paragraph stands
+		// on the grid; a box with a border keeps its inside as it is.
+		var snapLine, snapRest bag.ScaledPoint
+		snapped := fc.snapped(blockVL) && (isFirst || splitTe != nil)
+		if snapped {
+			var line bag.ScaledPoint
+			if line, snapped = firstLineIn(children[i:]); snapped {
+				snapLine = topOverhead + line
+				snapRest = fc.snapRest(cb, snapLine, cb.pageInsertHeight[InsertFloatTop])
+				avail -= snapRest
+			}
+		}
+		// place buffers a fragment, its first line on the grid.
+		place := func(wrapped *node.VList, h bag.ScaledPoint) {
+			if snapped {
+				fc.applySnap(cb, snapRest, snapLine)
+			}
+			cb.bufferBody(wrapped, h)
+			if snapped {
+				fc.endPiece(cb)
+			}
+		}
 		remaining := childrenHeight(children[i:])
 		restInserts := fc.insertsIn(children[i:])
 
@@ -2397,7 +2441,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 			if isFirst {
 				carryMarks(blockVL, wrapped)
 			}
-			cb.bufferBody(wrapped, h)
+			place(wrapped, h)
 			cb.commitInserts(restInserts)
 			return nil
 		}
@@ -2514,7 +2558,7 @@ func (cb *CSSBuilder) outputBlockSplit(blockVL *node.VList, fc *flowCursor) erro
 		if isFirst {
 			carryMarks(blockVL, wrapped)
 		}
-		cb.bufferBody(wrapped, h)
+		place(wrapped, h)
 		cb.commitInserts(fc.insertsIn(batch))
 		isFirst = false
 		placedLines += countLines(batch)

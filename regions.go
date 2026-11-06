@@ -156,6 +156,9 @@ func (cb *CSSBuilder) FlowText(te *frontend.Text, r Regions) error {
 		bag.Logger.Warn("FlowText does not lay out column-count, the content is set in one column")
 	}
 	cb.multicols, cb.spanners = nil, nil
+	if cb.snapsLines(te) {
+		bag.Logger.Warn("FlowText does not support line-snap, ignoring it")
+	}
 	cr := &callerRegions{cb: cb, r: r}
 	if rr, ok := r.(RemainingRegions); ok && rr.BalanceEnd() {
 		cr.bal = &flowBalance{rr: rr}
@@ -258,6 +261,9 @@ type region struct {
 	width, height bag.ScaledPoint
 	// left and top are its top-left corner in PDF coordinates on page.
 	left, top bag.ScaledPoint
+	// gridTop is where the line grid of the page begins, the top of the
+	// page area, in the same coordinates.
+	gridTop bag.ScaledPoint
 	// page is the page a page region paints on, nil for a caller's region.
 	// pageNum is the 1-based page number headings, anchors and
 	// inside/outside floats take.
@@ -393,6 +399,7 @@ func (cb *CSSBuilder) pageRegion() (region, error) {
 		height:  pd.ContentHeight,
 		left:    pd.PageAreaLeft,
 		top:     pd.Height - pd.PageAreaTop,
+		gridTop: pd.Height - pd.PageAreaTop,
 		page:    cb.frontend.Doc.CurrentPage,
 		pageNum: len(cb.frontend.Doc.Pages),
 		// The inserts of a page sit within its margins, outside the @page
@@ -880,6 +887,10 @@ type flowCursor struct {
 	// lineGrid is what the line grid trace draws in a caller's regions, nil
 	// without one.
 	lineGrid *lineGrid
+	// snapping is set for a flow with line-snap. snapFrom is the first entry
+	// of the page buffer after the last snapped line.
+	snapping bool
+	snapFrom int
 }
 
 // start takes the first region, brk being the first block's forced
@@ -912,6 +923,7 @@ func (fc *flowCursor) breakTo(brk string, n node.Node) error {
 	fc.cur = reg
 	fc.serial++
 	fc.movedOn = false
+	fc.snapFrom = 0
 	fc.top = topKept
 	if brk == "" && (!reg.occupied || reg.truncates) {
 		fc.top = topTruncated

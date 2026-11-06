@@ -840,6 +840,7 @@ func (cb *CSSBuilder) flushInsertsIn(reg region) error {
 	// area (PageAreaLeft / PageAreaTop = margin + @page border + @page
 	// padding), so @page padding acts as a content indent.
 	yCursor := reg.top - topFloatHeight
+	cb.settleSnapMarks(yCursor)
 	for i, entry := range cb.pageBuf {
 		// The parity is known for certain only now: a float declared
 		// inside or outside that was built for the other one moves to
@@ -958,6 +959,11 @@ func (cb *CSSBuilder) totalFloatTopHeight(fls []*Insert) bag.ScaledPoint {
 	}
 	// Trailing skip between the float stack and body content.
 	total += cb.FloatTopInterSkip
+	// The body moves down by this height, also below lines placed before a
+	// float arrived: a multiple of the line grid keeps them on it.
+	if step := cb.snapStep(); step > 0 {
+		total = gridMultiple(total, step)
+	}
 	return total
 }
 

@@ -399,6 +399,12 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			// the keyword as-is and translate to the no-op language at
 			// ApplySettings when it's "none" or "manual".
 			ih.hyphens = strings.ToLower(strings.TrimSpace(v))
+		case "line-snap":
+			// CSS Line Grid 1: inherited. contain is not supported and
+			// warned about, it leaves the value as it is.
+			if s, ok := lineSnapValues[strings.ToLower(strings.TrimSpace(v))]; ok {
+				ih.lineSnap = s
+			}
 		case "hyphenate-character":
 			if character, ok := parseHyphenCharacter(v); ok {
 				ih.hyphenCharacter = character
@@ -1076,6 +1082,7 @@ type FormattingStyles struct {
 	direction          string        // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
 	unicodeBidi        string        // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
 	hyphens            string        // CSS hyphens: "" (auto), "auto", "manual", "none"
+	lineSnap           bool          // line-snap: baseline
 	hyphenCharacter    *string       // hyphenate-character, nil for auto
 	hyphenLimits       *hyphenLimits // CSS hyphenate-limit-chars, nil for auto
 	hyphenPenalty      *int          // -bag-linebreak-hyphen-penalty (nil = inherit/default)
@@ -1349,6 +1356,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		unicodeBidi:        is.unicodeBidi,
 		hangingPunctuation: is.hangingPunctuation,
 		hyphens:            is.hyphens,
+		lineSnap:           is.lineSnap,
 		hyphenCharacter:    is.hyphenCharacter,
 		hyphenLimits:       is.hyphenLimits,
 		hyphenPenalty:      is.hyphenPenalty,
@@ -2036,6 +2044,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		newte.Settings[settingLangTag] = styles.declaredLang
 	}
 	cb.setFragLines(newte, styles.fragLines())
+	cb.setLineSnap(newte, styles.lineSnap)
 	// Remember the element's own resolved CSS height: `styles` is
 	// reassigned when an inline run starts below, but the empty-block
 	// check at the end of this function needs the element's value.
@@ -2472,6 +2481,7 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 				cb.noteSource(te, itm.Node)
 				styles = ss.PushStyles()
 				cb.setFragLines(te, styles.fragLines())
+				cb.setLineSnap(te, styles.lineSnap)
 				// A pending block-level ::before joins the first inline
 				// run so the generated text shares its line box.
 				if beforeRun != nil {
