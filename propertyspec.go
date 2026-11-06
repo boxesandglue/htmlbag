@@ -202,6 +202,7 @@ var Properties = []PropertySpec{
 	{Name: "value", Values: "A CSS color such as `#ff0000` or `rgb(255, 0, 0)`, used instead of a model with components", Example: "value: #c00;", Group: GroupColor},
 	{Name: "colorname", Values: "Name of the separation for a spot color", Example: "colorname: PANTONE 300 C;", Group: GroupColor},
 	{Name: "c", Aliases: []string{"m", "y", "k", "r", "g", "b"}, Values: "Number, one component of the chosen model", Example: "c: 100;", Group: GroupColor},
+	{Name: "overprint", Values: "`yes` or `no`, the default. With `yes` the color prints on top of what is below it instead of knocking it out", Example: "overprint: yes;", Note: "Works with CMYK and spot colors. A CMYK color prints only on the plates of its nonzero components, so white disappears. Both cases warn", Group: GroupColor},
 }
 
 // PropertiesInGroup returns the specs of one group in their declaration order.

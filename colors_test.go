@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	pdf "github.com/boxesandglue/baseline-pdf"
 	"github.com/boxesandglue/boxesandglue/backend/color"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
@@ -157,5 +158,50 @@ p { color: ink }`); err != nil {
 	}
 	if !regexp.MustCompile(`/CS1 \d+ 0 R`).Match(buf.Bytes()) {
 		t.Error("the page resources do not refer to the color space")
+	}
+}
+
+// overprint: yes puts the color's graphics state in front of its operators,
+// for names, for values and for spot colors.
+func TestBagColorOverprint(t *testing.T) {
+	_, fe := newColorTestDoc(t, `
+		@-bag-color ink   { model: cmyk; c: 0; m: 0; y: 0; k: 100; overprint: yes; }
+		@-bag-color plain { model: cmyk; c: 0; m: 0; y: 0; k: 100; overprint: no; }
+		@-bag-color val   { value: device-cmyk(0 0 0 1); overprint: yes; }
+		@-bag-color spot  { model: spotcolor; colorname: "PANTONE 300 C"; overprint: yes; }
+	`)
+	on := "/" + string(pdf.OverprintOn.ResourceName()) + " gs "
+	testdata := []struct {
+		name string
+		want bool
+	}{{"ink", true}, {"plain", false}, {"val", true}, {"spot", true}}
+	for _, tc := range testdata {
+		got := fe.GetColor(tc.name).PDFStringNonStroking()
+		if strings.HasPrefix(got, on) != tc.want {
+			t.Errorf("%s: %q, overprint want %v", tc.name, got, tc.want)
+		}
+	}
+	if !fe.Doc.Overprint {
+		t.Error("the document does not know about the overprinting color")
+	}
+}
+
+// A color made from a name is a color of its own: overprint must not reach
+// the shared predefined color.
+func TestBagColorOverprintKeepsSharedColor(t *testing.T) {
+	_, fe := newColorTestDoc(t, `@-bag-color ink { value: darkblue; overprint: yes; }`)
+	if fe.GetColor("darkblue").Overprint {
+		t.Error("darkblue overprints after being used as a value")
+	}
+	if !fe.GetColor("ink").Overprint {
+		t.Error("ink lost its overprint")
+	}
+}
+
+func TestBagColorOverprintValue(t *testing.T) {
+	c := NewCSSParser()
+	err := c.AddCSSText(`@-bag-color ink { model: cmyk; c: 0; m: 0; y: 0; k: 100; overprint: maybe; }`)
+	if err == nil || !strings.Contains(err.Error(), "overprint must be yes or no") {
+		t.Errorf("got %v", err)
 	}
 }

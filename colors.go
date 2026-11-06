@@ -17,6 +17,7 @@ import (
 //	@-bag-color muted { value: #6A6A6A; }
 //	@-bag-color brand { model: cmyk; c: 0; m: 80; y: 90; k: 10; }
 //	@-bag-color spot  { model: spotcolor; colorname: "PANTONE 300 C"; c: 100; m: 44; y: 0; k: 0; }
+//	@-bag-color ink   { model: cmyk; c: 0; m: 0; y: 0; k: 100; overprint: yes; }
 //
 // Without a model the value is any color that CSS accepts, including a
 // previously defined name. The models cmyk, rgb and gray take components
@@ -30,6 +31,8 @@ type ColorDefinition struct {
 	Colorname string
 	// Components holds the r, g, b, c, m, y, k descriptors as written.
 	Components map[string]string
+	// Overprint prints the color on top of what is below it.
+	Overprint bool
 	// resolved caches the color so repeated registrations reuse the same
 	// object (a spot color must be registered only once).
 	resolved *color.Color
@@ -68,6 +71,15 @@ func (c *CSS) doColor(atrule *sBlock) error {
 			cd.Colorname = value
 		case "r", "g", "b", "c", "m", "y", "k":
 			cd.Components[key] = value
+		case "overprint":
+			switch value {
+			case "yes":
+				cd.Overprint = true
+			case "no":
+				cd.Overprint = false
+			default:
+				return fmt.Errorf("@-bag-color %s: overprint must be yes or no, not %q", cd.Name, value)
+			}
 		default:
 			return fmt.Errorf("@-bag-color %s: unknown descriptor %q", cd.Name, key)
 		}
@@ -179,8 +191,11 @@ func (cd *ColorDefinition) Color(fe *frontend.Document) (*color.Color, error) {
 		if c == nil {
 			return nil, fmt.Errorf("@-bag-color %s: cannot parse color value %q", cd.Name, cd.Value)
 		}
-		col = c
+		// GetColor hands out the shared color of a name such as black.
+		copied := *c
+		col = &copied
 	}
+	col.Overprint = cd.Overprint
 	cd.resolved = col
 	return col, nil
 }

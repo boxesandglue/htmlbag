@@ -3088,11 +3088,11 @@ func colorStartNode(c *color.Color) node.Node {
 	return s
 }
 
-func colorResetNode() node.Node {
+func colorResetNode(c *color.Color) node.Node {
 	s := node.NewStartStop()
 	s.Position = node.PDFOutputPage
 	s.ShipoutCallback = func(n node.Node) string {
-		return document.ColorReset
+		return document.ColorEnd(c)
 	}
 	return s
 }
@@ -3112,7 +3112,7 @@ func (cb *CSSBuilder) buildFragment(blockVL *node.VList, items []node.Node, kind
 			items = append([]node.Node{colorStartNode(c)}, items...)
 		}
 		if kind == fragTop || kind == fragMiddle {
-			items = append(items, colorResetNode())
+			items = append(items, colorResetNode(c))
 		}
 	}
 	_, _, clone := decorationClone(blockVL)
