@@ -546,6 +546,11 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 				ih.borderSpacingV = ParseRelativeSize(parts[1], curFontSize, ih.DefaultFontSize)
 			}
 		case "color":
+			if v == "transparent" {
+				// The keyword means "paint nothing", which is what a background
+				// wants. Text without a color operator would come out black.
+				v = "rgba(0,0,0,0)"
+			}
 			ih.color = df.GetColor(v)
 		case "content":
 			// Check for leader() function: leader('.') or leader(".")

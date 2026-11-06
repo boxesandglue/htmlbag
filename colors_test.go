@@ -93,10 +93,10 @@ func TestBagColorInStyles(t *testing.T) {
 	if err := StylesToStyles(ih, StyleMap{"color": textValue("muted"), "background-color": textValue("muted")}, fe, ih.Fontsize); err != nil {
 		t.Fatalf("StylesToStyles: %v", err)
 	}
-	if got := rgb(t, ih.color); got != "rgba(107,107,107,0)" {
+	if got := rgb(t, ih.color); got != "rgba(107,107,107,1)" {
 		t.Errorf("color = %s", got)
 	}
-	if got := rgb(t, ih.BackgroundColor); got != "rgba(107,107,107,0)" {
+	if got := rgb(t, ih.BackgroundColor); got != "rgba(107,107,107,1)" {
 		t.Errorf("background-color = %s", got)
 	}
 }
@@ -203,5 +203,21 @@ func TestBagColorOverprintValue(t *testing.T) {
 	err := c.AddCSSText(`@-bag-color ink { model: cmyk; c: 0; m: 0; y: 0; k: 100; overprint: maybe; }`)
 	if err == nil || !strings.Contains(err.Error(), "overprint must be yes or no") {
 		t.Errorf("got %v", err)
+	}
+}
+
+// The keyword paints nothing. A background simply leaves its rectangle out,
+// but text without a color operator would come out black.
+func TestColorTransparentKeyword(t *testing.T) {
+	_, fe := newColorTestDoc(t, ``)
+	ih := baseStyles()
+	if err := StylesToStyles(ih, StyleMap{"color": textValue("transparent"), "background-color": textValue("transparent")}, fe, ih.Fontsize); err != nil {
+		t.Fatalf("StylesToStyles: %v", err)
+	}
+	if got, want := ih.color.PDFStringNonStroking(), "/GSca0 gs 0 0 0 rg"; got != want {
+		t.Errorf("color = %q, want %q", got, want)
+	}
+	if ih.BackgroundColor.Space != color.ColorNone {
+		t.Errorf("background-color has space %v, want none", ih.BackgroundColor.Space)
 	}
 }
