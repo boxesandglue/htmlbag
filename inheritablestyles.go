@@ -541,6 +541,10 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			} else {
 				ih.fontfeatures = append(ih.fontfeatures, cssFontFeatureSettings(v)...)
 			}
+		case "font-variant-numeric":
+			if features, ok := parseFontVariantNumeric(v); ok {
+				ih.numericFeatures = features
+			}
 		case "font-variation-settings":
 			// Parse CSS syntax: "wght" 700, "wdth" 100
 			if ih.variationSettings == nil {
@@ -1028,6 +1032,7 @@ type FormattingStyles struct {
 	// only fontfamily were set.
 	fontfamilyStack    []*frontend.FontFamily
 	fontfeatures       []string
+	numericFeatures    []string           // font-variant-numeric, replaced as a whole
 	variationSettings  map[string]float64 // axis tag -> value (e.g., "wght" -> 700)
 	Fontsize           bag.ScaledPoint
 	fontstyle          frontend.FontStyle
@@ -1297,6 +1302,7 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		fontfamily:         is.fontfamily,
 		fontfamilyStack:    is.fontfamilyStack,
 		fontfeatures:       newFontFeatures,
+		numericFeatures:    is.numericFeatures,
 		variationSettings:  newVariationSettings,
 		italicCorrection:   is.italicCorrection,
 		synthesizeItalic:   is.synthesizeItalic,
@@ -1532,7 +1538,7 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	settings[frontend.SettingMarginRight] = ih.marginRight
 	settings[frontend.SettingMarginLeft] = ih.marginLeft
 	settings[frontend.SettingMarginTop] = ih.marginTop
-	settings[frontend.SettingOpenTypeFeature] = ih.fontfeatures
+	settings[frontend.SettingOpenTypeFeature] = ih.openTypeFeatures()
 	if ih.variationSettings != nil {
 		settings[frontend.SettingFontVariationSettings] = ih.variationSettings
 	}
@@ -3458,6 +3464,12 @@ func (cb *CSSBuilder) closeFloatGroup(outer, group *frontend.Text, item *HTMLIte
 	}
 	outer.Items = append(outer.Items, group)
 	return nil
+}
+
+// openTypeFeatures is the feature list for the shaper. font-feature-settings
+// comes last, so it wins over font-variant-numeric, as CSS Fonts 4 asks.
+func (ih *FormattingStyles) openTypeFeatures() []string {
+	return slices.Concat(ih.numericFeatures, ih.fontfeatures)
 }
 
 // cssFontFeatureSettings converts a CSS font-feature-settings value such as

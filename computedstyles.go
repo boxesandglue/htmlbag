@@ -318,6 +318,7 @@ func resolveDeclarations(decls []declaration) StyleMap {
 			set("font-weight", textValue("normal"))
 			set("line-height", textValue("normal"))
 			set("font-variant-caps", textValue("normal"))
+			set("font-variant-numeric", textValue("normal"))
 			for _, part := range parts[:sizeIdx] {
 				switch txt := part.String(); txt {
 				case "italic", "oblique":
@@ -343,13 +344,24 @@ func resolveDeclarations(decls []declaration) StyleMap {
 			}
 			set("font-family", textValue(strings.Join(family, " ")))
 		case "font-variant":
-			// Only the caps longhand is read; expanding here keeps a later
-			// font-variant-caps or font shorthand in the same rule in order.
+			// Only the caps and numeric longhands are read; expanding here
+			// keeps a later longhand or font shorthand in the same rule in
+			// order.
 			caps := "normal"
 			if hasKeyword(decl.value, "small-caps") {
 				caps = "small-caps"
 			}
 			set("font-variant-caps", textValue(caps))
+			var numeric []string
+			for _, part := range componentValues(decl.value) {
+				if _, ok := numericKeywords[part.String()]; ok {
+					numeric = append(numeric, part.String())
+				}
+			}
+			if len(numeric) == 0 {
+				numeric = []string{"normal"}
+			}
+			set("font-variant-numeric", textValue(strings.Join(numeric, " ")))
 		case "font-synthesis":
 			set(key, value)
 			synth := "none"

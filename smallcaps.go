@@ -51,7 +51,7 @@ func (cb *CSSBuilder) faceHasSmcp(df *frontend.Document, sty *FormattingStyles) 
 func (cb *CSSBuilder) smallCapsItems(df *frontend.Document, sty *FormattingStyles, s string) []any {
 	if cb.faceHasSmcp(df, sty) {
 		t := frontend.NewText()
-		t.Settings[frontend.SettingOpenTypeFeature] = append(append([]string(nil), sty.fontfeatures...), "smcp=1")
+		t.Settings[frontend.SettingOpenTypeFeature] = append(sty.openTypeFeatures(), "smcp=1")
 		t.Items = []any{s}
 		return []any{t}
 	}

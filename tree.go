@@ -200,6 +200,8 @@ func (c *CSS) warnInvalidValue(property string, value tokenstream) {
 	switch property {
 	case "display":
 		valid = displayValues[text]
+	case "font-variant-numeric":
+		_, valid = parseFontVariantNumeric(text)
 	case "hyphenate-limit-chars":
 		_, valid = parseHyphenLimits(text)
 	}
