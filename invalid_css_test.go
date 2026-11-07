@@ -129,8 +129,9 @@ func TestInvalidCSSWarns(t *testing.T) {
 func TestInvalidCSSWarnsOnce(t *testing.T) {
 	doc := "<html><body>" + strings.Repeat(`<p class="x">Text</p>`, 50) + "</body></html>"
 	got := warningsOf(t, ".x { display: flex; color: red | blue; hyphenate-limit-chars: six; font-variant-numeric: bold; text-align-last: middle; hyphenate-character: equals; }", doc)
-	if len(got) != 6 {
-		t.Errorf("want 6 warnings, got %d: %q", len(got), got)
+	// Seven, as the color gets two: for the token and for what remains of it.
+	if len(got) != 7 {
+		t.Errorf("want 7 warnings, got %d: %q", len(got), got)
 	}
 }
 
@@ -150,8 +151,8 @@ func TestCSSWideKeywordsDoNotWarn(t *testing.T) {
 func TestInvalidStyleAttributeWarnsOnce(t *testing.T) {
 	doc := "<html><body>" + strings.Repeat(`<p style="display: flex; color: red | blue">Text</p>`, 50) + "</body></html>"
 	got := warningsOf(t, ".x { display: flex; }", doc)
-	if len(got) != 2 {
-		t.Errorf("want 2 warnings, got %d: %q", len(got), got)
+	if len(got) != 3 {
+		t.Errorf("want 3 warnings, got %d: %q", len(got), got)
 	}
 }
 
