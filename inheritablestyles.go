@@ -3030,7 +3030,6 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				return fmt.Errorf("parsing inline svg: %w", err)
 			}
 			cs := ss.CurrentStyle()
-			_ = cs
 			var wd, ht bag.ScaledPoint
 			rawWidth := item.Attributes["width"]
 			if h := item.Attributes["height"]; h != "" {
@@ -3043,7 +3042,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				// dimensions at zero width) and attach a sizer that
 				// materializes the real geometry when the container
 				// width is known.
-				placeholder := df.Doc.CreateSVGNodeFromDocument(svgDoc, 0, ht, svgTextRenderer(df, ss.CurrentStyle().fontfamily))
+				placeholder := createSVGNode(df, svgDoc, nil, 0, ht, svgTextRenderer(df, cs.fontfamily), cs.color)
 				vl := node.Vpack(placeholder)
 				if vl.Attributes == nil {
 					vl.Attributes = node.H{}
@@ -3053,7 +3052,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				if alt, ok := item.Attributes["alt"]; ok {
 					vl.Attributes["alt"] = alt
 				}
-				setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, nil, imageDims{widthPct: pct, ht: ht}, df, ss.CurrentStyle().fontfamily))
+				setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, nil, imageDims{widthPct: pct, ht: ht}, df, cs.fontfamily, cs.color))
 				te.Items = append(te.Items, vl)
 				break
 			}
@@ -3065,7 +3064,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					wd = sp
 				}
 			}
-			svgNode := df.Doc.CreateSVGNodeFromDocument(svgDoc, wd, ht, svgTextRenderer(df, ss.CurrentStyle().fontfamily))
+			svgNode := createSVGNode(df, svgDoc, nil, wd, ht, svgTextRenderer(df, cs.fontfamily), cs.color)
 			vl := node.Vpack(svgNode)
 			if vl.Attributes == nil {
 				vl.Attributes = node.H{}
@@ -3231,7 +3230,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				}
 				crop := imageCrop(item, bag.ScaledPointFromFloat(svgDoc.Width), bag.ScaledPointFromFloat(svgDoc.Height), cs.Fontsize, defaultFontsize)
 				if imgDims.needsContainerWidth() {
-					placeholder := createSVGNode(df, svgDoc, crop, 0, ht, svgTextRenderer(df, nil))
+					placeholder := createSVGNode(df, svgDoc, crop, 0, ht, svgTextRenderer(df, nil), nil)
 					vl := node.Vpack(placeholder)
 					if vl.Attributes == nil {
 						vl.Attributes = node.H{}
@@ -3241,7 +3240,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					if alt, ok := item.Attributes["alt"]; ok {
 						vl.Attributes["alt"] = alt
 					}
-					setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, crop, imgDims, df, nil))
+					setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, crop, imgDims, df, nil, nil))
 					if cs.floatSide != "" {
 						vl.Attributes[attrFloat] = cs.floatSide
 						vl.Attributes[attrFloatMargins] = cs.floatMargins()
@@ -3263,7 +3262,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 						}
 					}
 					textRenderer := svgTextRenderer(df, nil)
-					svgNode := createSVGNode(df, svgDoc, crop, wd, ht, textRenderer)
+					svgNode := createSVGNode(df, svgDoc, crop, wd, ht, textRenderer, nil)
 					// Wrap in VList so the SVG is correctly positioned in
 					// horizontal mode. The SVG renderer draws from (0,0)
 					// downward; a VList in an HList starts output from the

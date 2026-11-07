@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/boxesandglue/boxesandglue/backend/bag"
+	"github.com/boxesandglue/boxesandglue/backend/color"
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/svgreader"
@@ -48,7 +50,10 @@ import (
 // "vertical cell part" VList. A bare Rule sitting directly under a
 // nested VList would not reach the horizontal emit path that knows
 // how to write the Pre stream with positioning.
-func newInlineSVGFormatter(doc *svgreader.Document, crop *node.ImageCrop, dims imageDims, df *frontend.Document, family *frontend.FontFamily) frontend.FormatToVList {
+//
+// family and current are the font and the CSS color an inline <svg> inherits
+// from the HTML around it; an SVG in <img> passes nil for both.
+func newInlineSVGFormatter(doc *svgreader.Document, crop *node.ImageCrop, dims imageDims, df *frontend.Document, family *frontend.FontFamily, current *color.Color) frontend.FormatToVList {
 	return func(containerWidth bag.ScaledPoint) (*node.VList, error) {
 		tr := svgTextRenderer(df, family)
 
@@ -75,7 +80,7 @@ func newInlineSVGFormatter(doc *svgreader.Document, crop *node.ImageCrop, dims i
 		}
 
 		wd := dims.resolveWidth(containerWidth, naturalW)
-		svgNode := createSVGNode(df, doc, crop, wd, dims.ht, tr)
+		svgNode := createSVGNode(df, doc, crop, wd, dims.ht, tr, current)
 
 		// Pure-Depth rule (see Geometry trick above).
 		svgHeight := svgNode.Height
@@ -97,12 +102,14 @@ func newInlineSVGFormatter(doc *svgreader.Document, crop *node.ImageCrop, dims i
 }
 
 // createSVGNode renders doc, or the region crop of it (an object-view-box) when
-// crop is set.
-func createSVGNode(df *frontend.Document, doc *svgreader.Document, crop *node.ImageCrop, wd, ht bag.ScaledPoint, tr *frontend.SVGTextRenderer) *node.Rule {
-	if crop == nil {
-		return df.Doc.CreateSVGNodeFromDocument(doc, wd, ht, tr)
+// crop is set. current is the color currentColor stands for, the CSS color of
+// an inline <svg>; nil, as for an SVG in <img>, means black.
+func createSVGNode(df *frontend.Document, doc *svgreader.Document, crop *node.ImageCrop, wd, ht bag.ScaledPoint, tr *frontend.SVGTextRenderer, current *color.Color) *node.Rule {
+	opts := document.SVGOptions{TextRenderer: tr, CurrentColor: current}
+	if crop != nil {
+		opts.Crop = *crop
 	}
-	return df.Doc.CreateSVGNodeFromDocumentCrop(doc, *crop, wd, ht, tr)
+	return df.Doc.CreateSVGNodeWithOptions(doc, wd, ht, opts)
 }
 
 // parseSVGPercentWidth interprets an SVG width="…" attribute.
