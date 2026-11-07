@@ -235,7 +235,7 @@ func TestObjectViewBoxPDF(t *testing.T) {
 func writeTestSVG(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "img.svg")
-	src := `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 400 200"><rect x="0" y="0" width="200" height="200" fill="red"/><rect x="200" y="0" width="200" height="200" fill="blue"/></svg>`
+	src := `<svg xmlns="http://www.w3.org/2000/svg" width="200pt" height="100pt" viewBox="0 0 400 200"><rect x="0" y="0" width="200" height="200" fill="red"/><rect x="200" y="0" width="200" height="200" fill="blue"/></svg>`
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
