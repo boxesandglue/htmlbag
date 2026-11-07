@@ -128,6 +128,18 @@ func isTableRowOrCell(tag string) bool {
 	return false
 }
 
+// isReplacedElement reports whether tag is drawn by collectHorizontalNodes
+// as one opaque box rather than from its children. Output() routes such an
+// element with display: block through the inline pass, otherwise nothing
+// would draw it.
+func isReplacedElement(tag string) bool {
+	switch tag {
+	case "img", "svg", "math", "barcode":
+		return true
+	}
+	return false
+}
+
 func isCSSHeightExempt(tag string) bool {
 	switch tag {
 	case "table", "thead", "tbody", "tfoot", "tr", "td", "th", "col", "colgroup", "caption", "img":
@@ -2438,17 +2450,18 @@ func Output(cb *CSSBuilder, item *HTMLItem, ss StylesStack, df *frontend.Documen
 		return newte, nil
 	}
 
-	// Replaced void element (img) classified as block via CSS `display: block`
-	// lands here instead of in collectHorizontalNodes, but the image is only
-	// loaded there. Route it through the inline pass and wrap the result in a
-	// block container so the surrounding layout still treats it as a block.
+	// A replaced element (img, svg, math, barcode) classified as block via
+	// CSS `display: block` lands here instead of in collectHorizontalNodes,
+	// but it is only rendered there. Route it through the inline pass and
+	// wrap the result in a block container so the surrounding layout still
+	// treats it as a block.
 	// SettingWidth must be stripped from both container settings: the inline
 	// img path reads the width directly from item.Attributes and passes it
 	// to newRasterImageFormatter as widthPct. Leaving SettingWidth in
 	// either container would have buildVlistInternal reduce the container
 	// width too, stacking with the formatter's own percent-of-parent math
 	// (50% * 50% * 50% = 12.5%).
-	if item.Data == "img" {
+	if isReplacedElement(item.Data) {
 		delete(newte.Settings, frontend.SettingWidth)
 		inner := frontend.NewText()
 		cb.applySettings(inner.Settings, styles)
