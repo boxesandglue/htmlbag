@@ -44,7 +44,7 @@ func (c *CSS) ProcessHTMLFile(filename string) (*goquery.Document, error) {
 	if errcond != nil {
 		return nil, errcond
 	}
-	doc.Find(":root > head style").Each(func(i int, sel *goquery.Selection) {
+	styleElements(doc).Each(func(i int, sel *goquery.Selection) {
 		if err := c.AddCSSText(sel.Text()); err != nil {
 			errcond = err
 		}
@@ -91,7 +91,7 @@ func (c *CSS) ProcessHTMLChunk(htmltext string) (*goquery.Document, error) {
 	if errcond != nil {
 		return nil, errcond
 	}
-	doc.Find(":root > head style").Each(func(i int, sel *goquery.Selection) {
+	styleElements(doc).Each(func(i int, sel *goquery.Selection) {
 		if err := c.AddCSSText(sel.Text()); err != nil {
 			errcond = err
 		}
@@ -108,6 +108,16 @@ func (c *CSS) ProcessHTMLChunk(htmltext string) (*goquery.Document, error) {
 	}
 
 	return doc, nil
+}
+
+// styleElements returns the style elements of the document in document order.
+// As in a browser that includes those in the body. The HTML parser moves only
+// the ones before the body into the head. A style element inside an SVG image
+// belongs to the image.
+func styleElements(doc *goquery.Document) *goquery.Selection {
+	return doc.Find("style").FilterFunction(func(i int, sel *goquery.Selection) bool {
+		return sel.Nodes[0].Namespace == ""
+	})
 }
 
 // AddCSSText parses CSS text and appends the rules to the previously read
