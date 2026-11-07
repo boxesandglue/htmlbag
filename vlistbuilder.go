@@ -1080,6 +1080,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		}
 	}
 
+	// The background of the block is painted with its box from hv. On the
+	// Text, FormatParagraph would paint it once more behind the runs.
+	defer withoutParagraphBackground(te)()
+
 	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points).
 	vl, _, err := cb.frontend.FormatParagraph(te, contentWidth)
 	if err != nil {
@@ -1543,6 +1547,18 @@ func findImageAlt(te *frontend.Text) string {
 		}
 	}
 	return ""
+}
+
+// withoutParagraphBackground removes the background color from the settings
+// of te and returns the function that puts it back. htmlbag paints the
+// background of a block, a cell or a margin box with its box. Left on the Text
+// that goes to FormatParagraph, boxes and glue would paint it a second time
+// behind the runs of each line. The background of an inline element is on a
+// child Text and stays.
+func withoutParagraphBackground(te *frontend.Text) func() {
+	restore := restoreSettings(te.Settings, []frontend.SettingType{frontend.SettingBackgroundColor})
+	delete(te.Settings, frontend.SettingBackgroundColor)
+	return restore
 }
 
 // settingsToHTMLValues extracts border/padding/background settings into HTMLValues.

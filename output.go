@@ -429,6 +429,9 @@ func (cb *CSSBuilder) outputMarginBoxes(dimensions PageDimensions) error {
 					txt.Settings[frontend.SettingVAlign] = styles.Valign
 
 					txt.Items = append(txt.Items, c)
+					// The margin box paints its background with its box;
+					// on the Text it would be painted again behind the runs.
+					delete(txt.Settings, frontend.SettingBackgroundColor)
 					defaultFontFamily := styles.DefaultFontFamily
 					if defaultFontFamily == nil {
 						defaultFontFamily = styles.fontfamily
