@@ -1241,18 +1241,29 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		}
 	}
 
-	// PDF/UA: tag leaf block elements (p, h1-h6, pre, code), and an
-	// anonymous run that holds an image, such as the image of a <figure>
-	// beside its figcaption.
+	// PDF/UA: tag leaf block elements (p, h1-h6, pre, code), an anonymous run
+	// that holds an image, such as the image of a <figure> beside its
+	// figcaption, and any text that has no element of its own: an anonymous
+	// run beside a block, or the content of an element without a role such
+	// as <main> or <dd>. Untagged, it would be an artifact, which is valid
+	// but keeps the text from assistive technology.
 	if cb.enableTagging {
-		if tag, _ := settings[frontend.SettingDebug].(string); tag != "" || findImageAlt(te) != "" {
+		hasText := strings.TrimSpace(extractTextContent(te)) != ""
+		if tag, _ := settings[frontend.SettingDebug].(string); tag != "" || hasText || findImageAlt(te) != "" {
 			canonical := canonicalRoleForTag(tag)
 
 			// If this paragraph contains an image, use Figure role with alt text
 			if canonical == "P" || canonical == "" {
 				if alt := findImageAlt(te); alt != "" {
 					canonical = "Figure"
+				} else if hasText {
+					canonical = "P"
 				}
+			}
+			// A grouping element without text has nothing to tag. A
+			// background of such a box stays an artifact.
+			if isGrouping(canonical) && !hasText {
+				canonical = ""
 			}
 
 			if canonical != "" {
@@ -1331,6 +1342,17 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 					se.AddChild(code)
 					tagVList(vl, code)
 					contentSE = code
+				case isGrouping(canonical):
+					// ISO 32005 sees through a Div and does not allow
+					// content in a Sect, Art or BlockQuote. Text in such an
+					// element is an anonymous paragraph.
+					cb.structureCurrent.AddChild(se)
+					para := newSE("P", format)
+					para.ActualText = se.ActualText
+					se.ActualText = ""
+					se.AddChild(para)
+					tagVList(vl, para)
+					contentSE = para
 				case canonical == "Figure" && hasFormXObjectImage(te):
 					// PDF/UA-1 §7.1 Note 1: a Figure whose entire body is a
 					// Form XObject (imported PDF) attaches via /StructParent

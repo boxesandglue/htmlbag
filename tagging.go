@@ -121,12 +121,14 @@ var canonicalToHTML5 = map[string]string{
 // pdf17OnlyRoles lists canonical role names whose target under
 // PDF/UA-2 RoleMapNS must be the PDF 1.7 Standard Structure Namespace
 // rather than PDF 2.0 SSN. PDF 2.0 §14.7.2 does not retain every PDF 1.7
-// inline structure type in the PDF 2.0 SSN, and veraPDF's UA-2 profile
-// rejects RoleMapNS targets that don't resolve to a recognised standard
-// type. The PDF 1.7 SSN is one of the three allowed namespaces under
-// ISO 14289-2 §8.2.4, so mapping to it is conformant.
+// structure type in the PDF 2.0 SSN, and veraPDF's UA-2 profile rejects
+// RoleMapNS targets that don't resolve to a recognised standard type. The
+// PDF 1.7 SSN is one of the three allowed namespaces under ISO 14289-2
+// §8.2.4, so mapping to it is conformant.
 var pdf17OnlyRoles = map[string]bool{
-	"Code": true,
+	"Art":        true,
+	"BlockQuote": true,
+	"Code":       true,
 }
 
 // pdf20Renamed maps the canonical PDF 1.7 role names that PDF 2.0 SSN
@@ -198,6 +200,16 @@ func canonicalRoleForTag(htmlTag string) string {
 		return info.ssn
 	}
 	return ""
+}
+
+// isGrouping reports whether a role groups blocks and must not hold text
+// itself.
+func isGrouping(canonical string) bool {
+	switch canonical {
+	case "Div", "Sect", "Art", "BlockQuote":
+		return true
+	}
+	return false
 }
 
 // tagVList sets the "tag" attribute on a VList so that the backend emits

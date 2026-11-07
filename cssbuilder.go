@@ -1621,6 +1621,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 	if vl.Attributes != nil {
 		propagateInsertsAttr(vl, contentList)
 	}
+	// A group of one paragraph is the paragraph, and it holds the structure
+	// element itself.
+	if _, tagged := vl.Attributes["tag"]; tagged {
+		contentList = vl
+	}
 	for {
 		inner, ok := contentList.(*node.VList)
 		if !ok || inner.Next() != nil {
@@ -1646,6 +1651,11 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			// fits is kept. A taller one must split: its marks move onto its
 			// first child.
 			if hasBoxMarks(inner) && vlistNodeHeight(inner) <= fc.cur.height {
+				break
+			}
+			// The structure element of a block sits on its box. Unwrapped, a
+			// paragraph of one line would end up as an artifact.
+			if _, tagged := inner.Attributes["tag"]; tagged {
 				break
 			}
 			// Unwrapped, a paragraph's lines would be placed one by one,
@@ -3131,21 +3141,19 @@ func (cb *CSSBuilder) buildFragment(blockVL *node.VList, items []node.Node, kind
 		totalH += vlistNodeHeight(n)
 	}
 	innerVL.Height = totalH
-	// Carry the PDF/UA StructureElement linkage onto the first fragment.
-	// tagVList stamps it on blockVL before splitting; without this copy the
-	// wrapped fragment would have no /K MCR entry and the StructElem would
-	// be structurally empty. Only the first fragment (Only / Top) gets the
-	// tag — later fragments would create duplicate MCID references.
+	// Carry the PDF/UA StructureElement linkage onto every fragment. tagVList
+	// stamps it on blockVL before splitting; without this copy a fragment
+	// would be an artifact. Each one gets a marked content sequence of its
+	// own, which the StructElem refers to in reading order.
 	tag, hasTag := blockVL.Attributes["tag"]
-	hasTag = hasTag && (kind == fragOnly || kind == fragTop)
-	if hasTag {
-		innerVL.SetAttribute("tag", tag)
-	}
 	// The block's horizontal shift (margin-left plus the parent's
 	// padding-left, stamped by the box branch of buildVlistInternal) sits on
 	// the original VList; every fragment must inherit it or an indented
 	// block (e.g. a blockquote) snaps to the left edge.
 	if !hv.hasBorder() && hv.BackgroundColor == nil {
+		if hasTag {
+			innerVL.SetAttribute("tag", tag)
+		}
 		innerVL.ShiftX = blockVL.ShiftX
 		return innerVL, vlistNodeHeight(innerVL)
 	}
@@ -3159,8 +3167,8 @@ func (cb *CSSBuilder) buildFragment(blockVL *node.VList, items []node.Node, kind
 		fragHv.BorderBottomWidth = 0
 	}
 	wrapped := cb.HTMLBorder(innerVL, fragHv)
-	// Same rationale for the bordered path: HTMLBorder produced a fresh
-	// outer VList, so the tag would otherwise be dropped.
+	// HTMLBorder produced a fresh outer VList. The tag goes there and not on
+	// innerVL as well, which would nest two sequences of the same element.
 	if hasTag {
 		wrapped.SetAttribute("tag", tag)
 	}

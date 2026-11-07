@@ -642,7 +642,14 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 			if isBox, ok := t.Settings[frontend.SettingBox]; ok && isBox.(bool) {
 				textCopy := t
 				ftv := func(wd bag.ScaledPoint) (*node.VList, error) {
+					// The table runs this for every measurement, and the
+					// structure element of the cell owns its content. Tagged
+					// here, each pass would leave a copy of the elements in
+					// the cell behind, in the place of the table.
+					tagging := cb.enableTagging
+					cb.enableTagging = false
 					vl, err := cb.CreateVlist(textCopy, wd)
+					cb.enableTagging = tagging
 					if err != nil {
 						return nil, err
 					}
