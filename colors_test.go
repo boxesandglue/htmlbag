@@ -284,15 +284,77 @@ func TestBackgroundIsPaintedOnce(t *testing.T) {
 	}
 }
 
-// A cell keeps its own background over the one of its row.
-func TestCellBackgroundWinsOverRow(t *testing.T) {
-	html := `<table><tr style="background-color:rgba(255,0,0,.5)">
-<td style="background-color:rgba(0,255,0,.25)">a</td><td>b</td></tr></table>`
-	if got := countInPDF(t, html, "/GSca0_25 gs"); got != 1 {
-		t.Errorf("own background painted %d times, want 1", got)
+// CSS stacks row group, row and cell. In each table the operators are counted:
+// the backgrounds that can be seen are painted once per cell.
+func TestCellBackgroundStack(t *testing.T) {
+	const red, green, blue = "rgba(255,0,0,.5)", "rgba(0,255,0,.25)", "rgba(0,0,255,.75)"
+	for name, tc := range map[string]struct {
+		html       string
+		half       int // /GSca0_5
+		quarter    int // /GSca0_25
+		threeQuart int // /GSca0_75
+	}{
+		"transparent cell on a transparent row": {
+			html: `<table><tr style="background-color:` + red + `"><td style="background-color:` + green + `">a</td><td>b</td></tr></table>`,
+			half: 2, quarter: 1,
+		},
+		"opaque cell hides the row": {
+			html: `<table><tr style="background-color:` + red + `"><td style="background-color:#fff">a</td></tr></table>`,
+		},
+		"transparent row on a transparent row group": {
+			html: `<table><tbody style="background-color:` + red + `"><tr style="background-color:` + green + `"><td>a</td></tr></tbody></table>`,
+			half: 1, quarter: 1,
+		},
+		"opaque row hides the row group": {
+			html:    `<table><tbody style="background-color:` + red + `"><tr style="background-color:#fff"><td style="background-color:` + green + `">a</td></tr></tbody></table>`,
+			quarter: 1,
+		},
+		"all three": {
+			html: `<table><tbody style="background-color:` + red + `"><tr style="background-color:` + green + `"><td style="background-color:` + blue + `">a</td></tr></tbody></table>`,
+			half: 1, quarter: 1, threeQuart: 1,
+		},
+		"sibling rows keep their own stack": {
+			html: `<table><tbody style="background-color:` + red + `"><tr style="background-color:` + green + `"><td>a</td></tr><tr style="background-color:` + blue + `"><td>b</td></tr></tbody></table>`,
+			half: 2, quarter: 1, threeQuart: 1,
+		},
+		"a fully transparent cell shows the row": {
+			html: `<table><tr style="background-color:` + red + `"><td style="background-color:rgba(0,0,0,0)">a</td></tr></table>`,
+			half: 1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := countInPDF(t, tc.html, "/GSca0_5 gs"); got != tc.half {
+				t.Errorf("half alpha painted %d times, want %d", got, tc.half)
+			}
+			if got := countInPDF(t, tc.html, "/GSca0_25 gs"); got != tc.quarter {
+				t.Errorf("quarter alpha painted %d times, want %d", got, tc.quarter)
+			}
+			if got := countInPDF(t, tc.html, "/GSca0_75 gs"); got != tc.threeQuart {
+				t.Errorf("three quarter alpha painted %d times, want %d", got, tc.threeQuart)
+			}
+		})
 	}
-	if got := countInPDF(t, html, "/GSca0_5 gs"); got != 1 {
-		t.Errorf("background of the row painted %d times, want 1", got)
+}
+
+// The layers of a cell are painted in the order of the stack.
+func TestCellBackgroundOrder(t *testing.T) {
+	const html = `<table><tr style="background-color:rgba(255,0,0,.5)"><td style="background-color:rgba(0,255,0,.25)">a</td></tr></table>`
+	vl := buildHTML(t, floatBuilder(t), html)
+	pre := backgroundRule(vl)
+	row, cell := strings.Index(pre, "/GSca0_5 gs"), strings.Index(pre, "/GSca0_25 gs")
+	if row < 0 || cell < row {
+		t.Errorf("row at %d, cell at %d in %q, want the row first", row, cell, pre)
+	}
+}
+
+// background-color: transparent is the color "none", which draws nothing. As a
+// rectangle it came out black.
+func TestTransparentCellShowsTheRow(t *testing.T) {
+	const html = `<table><tr style="background-color:#ff0000"><td style="background-color:transparent">a</td></tr></table>`
+	vl := buildHTML(t, floatBuilder(t), html)
+	pre := backgroundRule(vl)
+	if !strings.Contains(pre, "1 0 0 rg") {
+		t.Errorf("the cell does not paint the row: %q", pre)
 	}
 }
 

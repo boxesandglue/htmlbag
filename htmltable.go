@@ -553,6 +553,9 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 	if v, ok := settings[frontend.SettingBackgroundColor]; ok && v != nil {
 		td.BackgroundColor = v.(*color.Color)
 	}
+	if v, ok := settings[settingBackgroundBelow].([]*color.Color); ok {
+		td.BackgroundBelow = v
+	}
 
 	// If this cell references a pre-rendered VList, use it directly as content.
 	if vlid, ok := settings[frontend.SettingPrerenderedVListID].(string); ok {

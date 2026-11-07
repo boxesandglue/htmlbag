@@ -86,6 +86,10 @@ const settingTraceBoxModel frontend.SettingType = -11
 // the Text before the flow starts and captured like settingTraceBoxModel.
 const settingTraceLineGrid frontend.SettingType = -12
 
+// settingBackgroundBelow carries the backgrounds that show through a
+// transparent cell to buildTD, see resolveRowBackground.
+const settingBackgroundBelow frontend.SettingType = -13
+
 // Sentinels for CSS floats that text flows beside (see float.go). They carry
 // state from style resolution and from the block container down to the
 // paragraph, and are consumed before FormatParagraph, whose settings switch
@@ -1039,9 +1043,13 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 // FormattingStyles are HTML formatting styles.
 type FormattingStyles struct {
 	BackgroundColor *color.Color
-	// rowBackground is the background of the enclosing row or row group, see
-	// resolveRowBackground. Unlike BackgroundColor it is inherited.
-	rowBackground     *color.Color
+	// rowBackground holds the backgrounds of the enclosing row group and row
+	// that can be seen, the lowest first, see resolveRowBackground. Unlike
+	// BackgroundColor it is inherited.
+	rowBackground []*color.Color
+	// backgroundBelow is the part of rowBackground that a cell paints below
+	// its BackgroundColor.
+	backgroundBelow   []*color.Color
 	BorderLeftWidth   bag.ScaledPoint
 	BorderRightWidth  bag.ScaledPoint
 	BorderBottomWidth bag.ScaledPoint
@@ -1328,21 +1336,40 @@ func sameColor(a, b *color.Color) bool {
 
 // resolveRowBackground hands the background of a row or a row group to its
 // cells. background-color is not inherited, but rows paint nothing themselves,
-// so the cells paint for them. The table is left out: it paints its own
-// background.
+// so the cells paint for them. CSS stacks row group, row and cell, so a
+// transparent color lets the ones below show through and an opaque color ends
+// the stack. The table is left out: it paints its own background.
 func (is *FormattingStyles) resolveRowBackground(element string) {
 	switch element {
 	case "thead", "tbody", "tfoot", "tr":
-		if is.BackgroundColor != nil {
-			is.rowBackground = is.BackgroundColor
+		if col := is.BackgroundColor; paintsBackground(col) {
+			if col.Transparency == 0 {
+				is.rowBackground = []*color.Color{col}
+			} else {
+				// Clip: sibling rows share the list of their row group.
+				is.rowBackground = append(slices.Clip(is.rowBackground), col)
+			}
 		}
 	case "td", "th":
-		if is.BackgroundColor == nil {
-			is.BackgroundColor = is.rowBackground
+		below := is.rowBackground
+		if !paintsBackground(is.BackgroundColor) {
+			is.BackgroundColor = nil
+			if n := len(below); n > 0 {
+				is.BackgroundColor = below[n-1]
+				below = below[:n-1]
+			}
+		} else if is.BackgroundColor.Transparency == 0 {
+			below = nil
 		}
+		is.backgroundBelow = below
 		// The content of the cell, a nested table for example, is on its own.
 		is.rowBackground = nil
 	}
+}
+
+// paintsBackground reports whether col leaves a mark.
+func paintsBackground(col *color.Color) bool {
+	return col != nil && col.Space != color.ColorNone && col.Transparency < 1
 }
 
 // Clone mimics style inheritance.
@@ -1556,6 +1583,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		settings[frontend.SettingFontWeight] = ih.Fontweight
 	}
 	settings[frontend.SettingBackgroundColor] = ih.BackgroundColor
+	if len(ih.backgroundBelow) > 0 {
+		settings[settingBackgroundBelow] = ih.backgroundBelow
+	}
 	// An inline background covers the font's ascent and descent, the content
 	// area browsers paint (CSS 2.1 §10.6.1 leaves it to the user agent).
 	settings[frontend.SettingBackgroundArea] = frontend.BackgroundAreaAscentDescent
