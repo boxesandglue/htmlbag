@@ -28,29 +28,8 @@ func (c *CSS) ProcessHTMLFile(filename string) (*goquery.Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	var errcond error
-	doc.Find(":root > head link").Each(func(i int, sel *goquery.Selection) {
-		if stylesheetfile, attExists := sel.Attr("href"); attExists {
-			block, err := c.tokenizeCSSFile(stylesheetfile)
-			if err != nil {
-				errcond = err
-			}
-			parsedStyles := consumeBlock(block, false)
-			parsedStyles.blocks = flattenNestedBlocks(parsedStyles.blocks)
-			c.warnInvalidValues(parsedStyles, false)
-			c.stylesheet = append(c.stylesheet, parsedStyles)
-		}
-	})
-	if errcond != nil {
-		return nil, errcond
-	}
-	styleElements(doc).Each(func(i int, sel *goquery.Selection) {
-		if err := c.AddCSSText(sel.Text()); err != nil {
-			errcond = err
-		}
-	})
-	if errcond != nil {
-		return nil, errcond
+	if err = c.readStylesheets(doc); err != nil {
+		return nil, err
 	}
 	if err = c.addPendingCSS(); err != nil {
 		return nil, err
@@ -72,32 +51,8 @@ func (c *CSS) ProcessHTMLChunk(htmltext string) (*goquery.Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	var errcond error
-	doc.Find(":root > head link").Each(func(i int, sel *goquery.Selection) {
-		if stylesheetfile, attExists := sel.Attr("href"); attExists {
-			block, err := c.tokenizeCSSFile(stylesheetfile)
-			if err != nil {
-				errcond = err
-			}
-			parsedStyles := consumeBlock(block, false)
-			parsedStyles.blocks = flattenNestedBlocks(parsedStyles.blocks)
-			if err = c.processAtRules(parsedStyles); err != nil {
-				errcond = err
-			}
-			c.warnInvalidValues(parsedStyles, false)
-			c.stylesheet = append(c.stylesheet, parsedStyles)
-		}
-	})
-	if errcond != nil {
-		return nil, errcond
-	}
-	styleElements(doc).Each(func(i int, sel *goquery.Selection) {
-		if err := c.AddCSSText(sel.Text()); err != nil {
-			errcond = err
-		}
-	})
-	if errcond != nil {
-		return nil, errcond
+	if err = c.readStylesheets(doc); err != nil {
+		return nil, err
 	}
 	if err = c.addPendingCSS(); err != nil {
 		return nil, err
@@ -110,14 +65,65 @@ func (c *CSS) ProcessHTMLChunk(htmltext string) (*goquery.Document, error) {
 	return doc, nil
 }
 
-// styleElements returns the style elements of the document in document order.
-// As in a browser that includes those in the body. The HTML parser moves only
-// the ones before the body into the head. A style element inside an SVG image
-// belongs to the image.
-func styleElements(doc *goquery.Document) *goquery.Selection {
-	return doc.Find("style").FilterFunction(func(i int, sel *goquery.Selection) bool {
-		return sel.Nodes[0].Namespace == ""
+// readStylesheets reads the stylesheets of doc in document order, as a browser
+// does: the style elements and the link elements with rel="stylesheet", in
+// the head and in the body. The HTML parser moves only those before the body
+// into the head. A style or link element inside an SVG image belongs to the
+// image.
+func (c *CSS) readStylesheets(doc *goquery.Document) error {
+	var err error
+	doc.Find("style, link").EachWithBreak(func(i int, sel *goquery.Selection) bool {
+		n := sel.Nodes[0]
+		if n.Namespace != "" {
+			return true
+		}
+		switch n.Data {
+		case "style":
+			err = c.AddCSSText(sel.Text())
+		case "link":
+			if href, ok := sel.Attr("href"); ok && isStylesheetLink(sel.AttrOr("rel", "")) {
+				err = c.addLinkedCSS(href)
+			}
+		}
+		return err == nil
 	})
+	return err
+}
+
+// isStylesheetLink reports whether the rel attribute of a link element loads a
+// stylesheet. rel is a list of keywords in any case. An alternate stylesheet
+// is not applied unless the reader picks it, which paper does not allow.
+func isStylesheetLink(rel string) bool {
+	stylesheet := false
+	for _, kw := range strings.Fields(rel) {
+		switch strings.ToLower(kw) {
+		case "stylesheet":
+			stylesheet = true
+		case "alternate":
+			return false
+		}
+	}
+	return stylesheet
+}
+
+// addLinkedCSS reads the stylesheet file href and appends its rules, as
+// AddCSSText does for the text of a style element.
+func (c *CSS) addLinkedCSS(href string) error {
+	toks, err := c.tokenizeCSSFile(href)
+	if err != nil {
+		return err
+	}
+	block := consumeBlock(toks, false)
+	block.blocks = flattenNestedBlocks(block.blocks)
+	if err = c.processAtRules(block); err != nil {
+		return err
+	}
+	if err = validateSelectors(block); err != nil {
+		return err
+	}
+	c.warnInvalidValues(block, false)
+	c.stylesheet = append(c.stylesheet, block)
+	return nil
 }
 
 // AddCSSText parses CSS text and appends the rules to the previously read
