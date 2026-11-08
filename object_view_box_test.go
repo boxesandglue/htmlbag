@@ -276,8 +276,8 @@ func TestObjectViewBoxSVGPercentWidth(t *testing.T) {
 		t.Fatal("no deferred SVG wrapper")
 	}
 	resolveDeferredSizing([]any{vl}, bag.MustSP("200pt"))
-	if vl.Width != bag.MustSP("100pt") || vl.Depth != bag.MustSP("100pt") {
-		t.Errorf("size = %s×%s, want 100pt×100pt (the region's 1:1)", vl.Width, vl.Depth)
+	if vl.Width != bag.MustSP("100pt") || vl.Height+vl.Depth != bag.MustSP("100pt") {
+		t.Errorf("size = %s×%s, want 100pt×100pt (the region's 1:1)", vl.Width, vl.Height+vl.Depth)
 	}
 }
 
@@ -337,8 +337,8 @@ func TestObjectViewBoxSVGPercentMaxWidth(t *testing.T) {
 		t.Fatal("no deferred SVG wrapper")
 	}
 	resolveDeferredSizing([]any{vl}, bag.MustSP("150pt"))
-	if vl.Width != bag.MustSP("100pt") || vl.Depth != bag.MustSP("100pt") {
-		t.Errorf("size = %s×%s, want 100pt×100pt (the region is under the cap)", vl.Width, vl.Depth)
+	if vl.Width != bag.MustSP("100pt") || vl.Height+vl.Depth != bag.MustSP("100pt") {
+		t.Errorf("size = %s×%s, want 100pt×100pt (the region is under the cap)", vl.Width, vl.Height+vl.Depth)
 	}
 }
 

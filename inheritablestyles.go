@@ -3031,6 +3031,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			}
 			// The svg element's own styles: em in its CSS size is its own
 			// font size, and its color is what currentColor stands for.
+			parentStyle := ss.CurrentStyle()
 			svgSty := ss.PushStyles()
 			if err := StylesToStyles(svgSty, item.Styles, df, currentFontsize); err != nil {
 				ss.PopStyles()
@@ -3039,6 +3040,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			cs := ss.CurrentStyle()
 			family, current := cs.fontfamily, cs.color
 			dims := replacedElementDims(item, cs.Fontsize, defaultFontsize)
+			align := cb.newReplacedAlign(item, cs, parentStyle)
 			ss.PopStyles()
 			var vl *node.VList
 			if dims.needsContainerWidth() {
@@ -3048,12 +3050,13 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				// width is known.
 				placeholder := createSVGNode(df, svgDoc, nil, 0, dims.ht, svgTextRenderer(df, family), current)
 				vl = node.Vpack(placeholder)
-				setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, nil, dims, df, family, current))
+				setDeferredFormatter(vl, align.formatter(newInlineSVGFormatter(svgDoc, nil, dims, df, family, current)))
 			} else {
 				// Unparseable sizes are dropped: the SVG falls back to
 				// its natural size rather than stopping the render.
 				wd := dims.eagerWidth(bag.ScaledPointFromFloat(svgDoc.Width), bag.ScaledPointFromFloat(svgDoc.Height))
 				vl = node.Vpack(createSVGNode(df, svgDoc, nil, wd, dims.ht, svgTextRenderer(df, family), current))
+				align.apply(&vl.Height, &vl.Depth)
 			}
 			if vl.Attributes == nil {
 				vl.Attributes = node.H{}
@@ -3147,12 +3150,14 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			// font-size for relative sizing, …) is visible via CurrentStyle().
 			// Without this, cs.Valign would always be the parent paragraph's
 			// vertical-align, masking img-level overrides.
+			parentStyle := ss.CurrentStyle()
 			imgSty := ss.PushStyles()
 			if err := StylesToStyles(imgSty, item.Styles, df, currentFontsize); err != nil {
 				ss.PopStyles()
 				return err
 			}
 			cs := ss.CurrentStyle()
+			align := cb.newReplacedAlign(item, cs, parentStyle)
 			filename := item.Attributes["src"]
 			imgDims := replacedElementDims(item, cs.Fontsize, defaultFontsize)
 			wd, ht, maxWd := imgDims.wd, imgDims.ht, imgDims.maxWd
@@ -3184,7 +3189,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					if alt, ok := item.Attributes["alt"]; ok {
 						vl.Attributes["alt"] = alt
 					}
-					setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, crop, imgDims, df, nil, nil))
+					setDeferredFormatter(vl, align.formatter(newInlineSVGFormatter(svgDoc, crop, imgDims, df, nil, nil)))
 					if cs.floatSide != "" {
 						vl.Attributes[attrFloat] = cs.floatSide
 						vl.Attributes[attrFloatMargins] = cs.floatMargins()
@@ -3205,6 +3210,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					// downward; a VList in an HList starts output from the
 					// top, which matches the SVG coordinate system.
 					svgVL := node.Vpack(svgNode)
+					align.apply(&svgVL.Height, &svgVL.Depth)
 					svgVL.Attributes = node.H{
 						"origin": "svg",
 						"attr":   item.Attributes,
@@ -3258,7 +3264,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					if alt, ok := item.Attributes["alt"]; ok {
 						vl.Attributes["alt"] = alt
 					}
-					setDeferredFormatter(vl, newRasterImageFormatter(imgNode, intrinsicWd, intrinsicHt, imgDims))
+					setDeferredFormatter(vl, align.formatter(newRasterImageFormatter(imgNode, intrinsicWd, intrinsicHt, imgDims)))
 					if cs.floatSide != "" {
 						vl.Attributes[attrFloat] = cs.floatSide
 						vl.Attributes[attrFloatMargins] = cs.floatMargins()
@@ -3287,20 +3293,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					}
 					imgNode.Width = maxWd
 				}
-				// CSS vertical-align: top|text-top — split the image into a
-				// (Height above baseline, Depth below baseline) pair so the
-				// image top sits at the parent font's ascent. ascent is
-				// approximated as 0.8 × font-size (typical typoAscender ratio
-				// across common fonts; deliberate heuristic to avoid loading
-				// the font at this stage). Only kicks in for the eager raster
-				// path; SVG and deferred percent-width remain baseline-anchored.
-				if cs.Valign == frontend.VAlignTop && imgNode.Height > 0 {
-					ascent := cs.Fontsize * 4 / 5
-					if imgNode.Height > ascent {
-						imgNode.Depth = imgNode.Height - ascent
-						imgNode.Height = ascent
-					}
-				}
+				align.apply(&imgNode.Height, &imgNode.Depth)
 				if cs.floatSide != "" {
 					if imgNode.Attributes == nil {
 						imgNode.Attributes = node.H{}

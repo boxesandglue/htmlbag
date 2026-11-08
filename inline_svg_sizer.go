@@ -42,7 +42,9 @@ import (
 // downward-painting SVG without changing the backend, the returned
 // Rule's reserved space is declared as Depth rather than Height — a
 // pure-Depth rule's bottom edge sits at baseline-Depth, which is
-// exactly where the downward Pre lands.
+// exactly where the downward Pre lands. The returned VList declares
+// the whole height above its baseline: the backend draws a VList from
+// its top, and in running text it stands on the baseline of the line.
 //
 // Backend dispatch trick. The Rule is wrapped in an HList (not a bare
 // Vpack) so outputVerticalItems → outputHorizontalItems dispatches
@@ -95,8 +97,8 @@ func newInlineSVGFormatter(doc *svgreader.Document, crop *node.ImageCrop, dims i
 
 		vl := node.Vpack(hpack)
 		vl.Width = svgNode.Width
-		vl.Height = 0
-		vl.Depth = svgHeight
+		vl.Height = svgHeight
+		vl.Depth = 0
 		return vl, nil
 	}
 }
