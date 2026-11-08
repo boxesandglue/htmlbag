@@ -57,9 +57,9 @@ func newInlineSVGFormatter(doc *svgreader.Document, crop *node.ImageCrop, dims i
 	return func(containerWidth bag.ScaledPoint) (*node.VList, error) {
 		tr := svgTextRenderer(df, family)
 
-		naturalW := bag.ScaledPointFromFloat(doc.Width)
+		naturalW, naturalH := bag.ScaledPointFromFloat(doc.Width), bag.ScaledPointFromFloat(doc.Height)
 		if crop != nil {
-			naturalW = bag.ScaledPointFromFloat(crop.Width)
+			naturalW, naturalH = bag.ScaledPointFromFloat(crop.Width), bag.ScaledPointFromFloat(crop.Height)
 		}
 		if naturalW <= 0 {
 			naturalW = bag.MustSP("100pt")
@@ -79,7 +79,7 @@ func newInlineSVGFormatter(doc *svgreader.Document, crop *node.ImageCrop, dims i
 			return vl, nil
 		}
 
-		wd := dims.resolveWidth(containerWidth, naturalW)
+		wd := dims.resolveWidth(containerWidth, naturalW, naturalH)
 		svgNode := createSVGNode(df, doc, crop, wd, dims.ht, tr, current)
 
 		// Pure-Depth rule (see Geometry trick above).

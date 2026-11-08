@@ -227,7 +227,7 @@ func TestResolveWidthMaxWidthSemantics(t *testing.T) {
 		{"max-content probe drops percent cap", imageDims{maxPct: 50}, intrinsic * 1000, intrinsic},
 	}
 	for _, tc := range tests {
-		if got := tc.dims.resolveWidth(tc.container, intrinsic); got != tc.want {
+		if got := tc.dims.resolveWidth(tc.container, intrinsic, intrinsic); got != tc.want {
 			t.Errorf("%s: resolveWidth = %s, want %s", tc.name, got, tc.want)
 		}
 	}

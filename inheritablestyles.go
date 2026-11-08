@@ -3019,8 +3019,8 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 		case "svg":
 			// Inline <svg>. selection.go has serialised the subtree
 			// onto Attributes["_svgSource"]; parse it via svgreader and
-			// either render eagerly (absolute / missing width) or
-			// attach a DeferredSizer when width is percent-based.
+			// either render eagerly or attach a DeferredSizer when the
+			// size depends on the container width.
 			src, _ := item.Attributes["_svgSource"]
 			if src == "" {
 				break
@@ -3029,43 +3029,32 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 			if err != nil {
 				return fmt.Errorf("parsing inline svg: %w", err)
 			}
-			cs := ss.CurrentStyle()
-			var wd, ht bag.ScaledPoint
-			rawWidth := item.Attributes["width"]
-			if h := item.Attributes["height"]; h != "" {
-				if sp, err := bag.SP(h); err == nil {
-					ht = sp
-				}
+			// The svg element's own styles: em in its CSS size is its own
+			// font size, and its color is what currentColor stands for.
+			svgSty := ss.PushStyles()
+			if err := StylesToStyles(svgSty, item.Styles, df, currentFontsize); err != nil {
+				ss.PopStyles()
+				return err
 			}
-			if pct, isPct := parseSVGPercentWidth(rawWidth); isPct {
+			cs := ss.CurrentStyle()
+			family, current := cs.fontfamily, cs.color
+			dims := replacedElementDims(item, cs.Fontsize, defaultFontsize)
+			ss.PopStyles()
+			var vl *node.VList
+			if dims.needsContainerWidth() {
 				// Defer: create a small placeholder VList (natural
 				// dimensions at zero width) and attach a sizer that
 				// materializes the real geometry when the container
 				// width is known.
-				placeholder := createSVGNode(df, svgDoc, nil, 0, ht, svgTextRenderer(df, cs.fontfamily), cs.color)
-				vl := node.Vpack(placeholder)
-				if vl.Attributes == nil {
-					vl.Attributes = node.H{}
-				}
-				vl.Attributes["origin"] = "inline-svg"
-				stampInlineID(vl, item)
-				if alt, ok := item.Attributes["alt"]; ok {
-					vl.Attributes["alt"] = alt
-				}
-				setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, nil, imageDims{widthPct: pct, ht: ht}, df, cs.fontfamily, cs.color))
-				te.Items = append(te.Items, vl)
-				break
+				placeholder := createSVGNode(df, svgDoc, nil, 0, dims.ht, svgTextRenderer(df, family), current)
+				vl = node.Vpack(placeholder)
+				setDeferredFormatter(vl, newInlineSVGFormatter(svgDoc, nil, dims, df, family, current))
+			} else {
+				// Unparseable sizes are dropped: the SVG falls back to
+				// its natural size rather than stopping the render.
+				wd := dims.eagerWidth(bag.ScaledPointFromFloat(svgDoc.Width), bag.ScaledPointFromFloat(svgDoc.Height))
+				vl = node.Vpack(createSVGNode(df, svgDoc, nil, wd, dims.ht, svgTextRenderer(df, family), current))
 			}
-			// Non-percent width: render eagerly. Silently ignore
-			// unparseable widths (the SVG falls back to its viewBox
-			// natural size) rather than crashing the whole render.
-			if rawWidth != "" {
-				if sp, err := bag.SP(rawWidth); err == nil {
-					wd = sp
-				}
-			}
-			svgNode := createSVGNode(df, svgDoc, nil, wd, ht, svgTextRenderer(df, cs.fontfamily), cs.color)
-			vl := node.Vpack(svgNode)
 			if vl.Attributes == nil {
 				vl.Attributes = node.H{}
 			}
@@ -3164,54 +3153,9 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				return err
 			}
 			cs := ss.CurrentStyle()
-			var filename string
-			var wd, ht, maxWd bag.ScaledPoint
-			var widthPct float64    // 0 means: width is absolute (or absent)
-			var maxWidthPct float64 // 0 means: max-width is absolute (or absent)
-
-			for k, v := range item.Attributes {
-				switch k {
-				case "width":
-					// bag.MustSP panics on "100%" — guard via the
-					// percent parser first. Absolute values fall
-					// through to bag.SP (silent on parse failure).
-					if pct, isPct := parseSVGPercentWidth(v); isPct {
-						widthPct = pct
-					} else if sp, err := bag.SP(v); err == nil {
-						wd = sp
-					}
-				case "height":
-					if sp, err := bag.SP(v); err == nil {
-						ht = sp
-					}
-				case "src":
-					filename = v
-				}
-			}
-			// CSS beats the width/height content attributes: those are
-			// presentational hints, the lowest level of the cascade.
-			if v := item.Styles.Get("width"); v != "" {
-				if pct, isPct := parseSVGPercentWidth(v); isPct {
-					widthPct = pct
-				} else {
-					wd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
-				}
-			}
-			if v := item.Styles.Get("max-width"); v != "" {
-				// Percent resolves against the container (deferred path),
-				// absolute lengths cap eagerly. Keyword values (none,
-				// max-content, …) mean "no cap" and must not reach
-				// ParseRelativeSize, which returns the font size for
-				// unparseable input.
-				if pct, isPct := parseSVGPercentWidth(v); isPct {
-					maxWidthPct = pct
-				} else if sp, err := bag.SP(v); err == nil {
-					maxWd = sp
-				} else if strings.HasSuffix(v, "em") || strings.HasSuffix(v, "rem") {
-					maxWd = ParseRelativeSize(v, cs.Fontsize, defaultFontsize)
-				}
-			}
-			imgDims := imageDims{wd: wd, widthPct: widthPct, ht: ht, maxWd: maxWd, maxPct: maxWidthPct}
+			filename := item.Attributes["src"]
+			imgDims := replacedElementDims(item, cs.Fontsize, defaultFontsize)
+			wd, ht, maxWd := imgDims.wd, imgDims.ht, imgDims.maxWd
 
 			if strings.ToLower(filepath.Ext(filename)) == ".svg" {
 				// SVG image via <img src=x.svg>. Same eager / deferred
@@ -3249,18 +3193,11 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				} else {
 					// Absolute max-width caps eagerly against the
 					// requested (or natural) width.
-					if maxWd > 0 {
-						eff := wd
-						if eff == 0 {
-							eff = bag.ScaledPointFromFloat(svgDoc.Width)
-							if crop != nil {
-								eff = bag.ScaledPointFromFloat(crop.Width)
-							}
-						}
-						if eff > maxWd {
-							wd = maxWd
-						}
+					naturalW, naturalH := bag.ScaledPointFromFloat(svgDoc.Width), bag.ScaledPointFromFloat(svgDoc.Height)
+					if crop != nil {
+						naturalW, naturalH = bag.ScaledPointFromFloat(crop.Width), bag.ScaledPointFromFloat(crop.Height)
 					}
+					wd = imgDims.eagerWidth(naturalW, naturalH)
 					textRenderer := svgTextRenderer(df, nil)
 					svgNode := createSVGNode(df, svgDoc, crop, wd, ht, textRenderer, nil)
 					// Wrap in VList so the SVG is correctly positioned in
