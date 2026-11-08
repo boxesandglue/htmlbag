@@ -53,6 +53,12 @@ func TestReplacedElementCSSSize(t *testing.T) {
 		{"img png css height", `<img src="testdata/float.png" style="height: 50pt">`, "183.33333pt", "50pt"},
 		{"img css width auto keeps the natural size", `<img src="testdata/float.svg" style="width: auto">`, "45pt", "30pt"},
 		{"img css width beats a percentage attribute", `<img src="testdata/float.png" width="50%" style="width: 110pt">`, "110pt", "30pt"},
+		// A width or height attribute without a unit is in CSS pixels (#115).
+		{"img width attribute in pixels", `<img src="testdata/float.png" width="200">`, "150pt", "40.90909pt"},
+		{"img height attribute in pixels", `<img src="testdata/float.png" height="40">`, "110pt", "30pt"},
+		{"img svg width attribute in pixels", `<img src="testdata/float.svg" width="200">`, "150pt", "100pt"},
+		{"svg attributes in pixels", `<svg width="96" height="96" ` + box, "72pt", "72pt"},
+		{"svg width attribute stays beside a css height", `<svg width="96" style="height: 50pt" ` + box, "72pt", "50pt"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,6 +111,26 @@ func TestReplacedLength(t *testing.T) {
 		got, ok := replacedLength(tc.in, fs, root)
 		if ok != tc.ok || got != bag.MustSP(tc.want) {
 			t.Errorf("replacedLength(%q) = %s, %v, want %s, %v", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestAttrLength(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+		ok       bool
+	}{
+		{"96", "72pt", true},
+		{" 200 ", "150pt", true},
+		{"1.5", "1.125pt", true},
+		{"20pt", "20pt", true},
+		{"2cm", "2cm", true},
+		{"auto", "0pt", false},
+		{"12em", "0pt", false},
+	} {
+		got, err := attrLength(tc.in)
+		if (err == nil) != tc.ok || (tc.ok && got != bag.MustSP(tc.want)) {
+			t.Errorf("attrLength(%q) = %s, %v, want %s", tc.in, got, err, tc.want)
 		}
 	}
 }

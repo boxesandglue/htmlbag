@@ -3314,13 +3314,13 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				case "type":
 					typ = v
 				case "width":
-					if sp, err := bag.SP(v); err == nil {
+					if sp, err := attrLength(v); err == nil {
 						wd = sp
 					} else {
 						return fmt.Errorf("barcode: invalid width %q: %w", v, err)
 					}
 				case "height":
-					if sp, err := bag.SP(v); err == nil {
+					if sp, err := attrLength(v); err == nil {
 						ht = sp
 					} else {
 						return fmt.Errorf("barcode: invalid height %q: %w", v, err)

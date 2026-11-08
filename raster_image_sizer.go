@@ -46,12 +46,12 @@ func replacedElementDims(item *HTMLItem, fontsize, rootsize bag.ScaledPoint) ima
 		// bag.MustSP panics on "100%", so the percentage goes first.
 		if pct, isPct := parseSVGPercentWidth(v); isPct {
 			d.widthPct = pct
-		} else if sp, err := bag.SP(v); err == nil {
+		} else if sp, err := attrLength(v); err == nil && sp > 0 {
 			d.wd = sp
 		}
 	}
 	if v := item.Attributes["height"]; v != "" {
-		if sp, err := bag.SP(v); err == nil {
+		if sp, err := attrLength(v); err == nil && sp > 0 {
 			d.ht = sp
 		}
 	}
@@ -82,6 +82,17 @@ func replacedElementDims(item *HTMLItem, fontsize, rootsize bag.ScaledPoint) ima
 		}
 	}
 	return d
+}
+
+// attrLength reads a width or height attribute: a length, or a number
+// without a unit, which HTML takes as CSS pixels. An SVG takes it as user
+// units, and a user unit is a CSS pixel too.
+func attrLength(v string) (bag.ScaledPoint, error) {
+	v = strings.TrimSpace(v)
+	if _, err := strconv.ParseFloat(v, 64); err == nil {
+		v += "px"
+	}
+	return bag.SP(v)
 }
 
 // replacedLength reads a CSS length, absolute or in em or rem. Keywords,
