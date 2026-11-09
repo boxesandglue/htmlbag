@@ -1,8 +1,11 @@
 package htmlbag
 
 import (
+	"math"
+
 	"github.com/boxesandglue/boxesandglue/backend/bag"
 	"github.com/boxesandglue/boxesandglue/backend/color"
+	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"github.com/boxesandglue/boxesandglue/frontend/pdfdraw"
@@ -38,8 +41,31 @@ type HTMLValues struct {
 	PaddingRight            bag.ScaledPoint
 	PaddingBottom           bag.ScaledPoint
 	PaddingLeft             bag.ScaledPoint
+	// Transparency is 1 minus the CSS opacity of the box, so that the zero
+	// value is opaque, as for color.Color.
+	Transparency float64
 	// traceBoxModel is -bag-trace: boxmodel on this element.
 	traceBoxModel bool
+}
+
+// boxed reports whether the element needs a box of its own around its
+// content: one that paints a border or a background, or that is painted as
+// one object with an opacity.
+func (hv HTMLValues) boxed() bool {
+	return hv.hasBorder() || hv.BackgroundColor != nil || hv.Transparency > 0
+}
+
+// setOpacity marks vl, the box of the element, to be painted with its
+// opacity, see document.Opacity.
+func (hv HTMLValues) setOpacity(vl *node.VList) {
+	if hv.Transparency <= 0 {
+		return
+	}
+	if vl.Attributes == nil {
+		vl.Attributes = node.H{}
+	}
+	// Rounded as color.Color.Alpha does, 1 - (1 - 0.3) is not 0.3.
+	vl.Attributes[document.Opacity] = math.Round((1-hv.Transparency)*10000) / 10000
 }
 
 func (hv HTMLValues) hasBorder() bool {
@@ -52,6 +78,7 @@ func (hv HTMLValues) hasBorder() bool {
 func SettingsToValues(s frontend.TypesettingSettings) HTMLValues {
 	hv := HTMLValues{}
 	hv.traceBoxModel, _ = s[settingTraceBoxModel].(bool)
+	hv.Transparency, _ = s[settingTransparency].(float64)
 	if c, ok := s[frontend.SettingBackgroundColor]; ok {
 		hv.BackgroundColor = c.(*color.Color)
 	}
@@ -382,6 +409,7 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 	bgWd := hv.PaddingBottom + hv.BorderBottomWidth
 
 	if lgWd == 0 && rgWd == 0 && tgWd == 0 && bgWd == 0 {
+		hv.setOpacity(vl)
 		return vl
 	}
 
@@ -529,6 +557,7 @@ func (cb *CSSBuilder) HTMLBorder(vl *node.VList, hv HTMLValues) *node.VList {
 
 	vl = node.Vpack(head)
 	vl.Attributes = node.H{"origin": "vpack padding"}
+	hv.setOpacity(vl)
 
 	return vl
 }

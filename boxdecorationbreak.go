@@ -65,7 +65,7 @@ func decorationClone(vl *node.VList) (top, bottom bag.ScaledPoint, ok bool) {
 	if !ok {
 		return 0, 0, false
 	}
-	if hv, _ := vl.Attributes["_splittableHv"].(HTMLValues); hv.hasBorder() || hv.BackgroundColor != nil {
+	if hv, _ := vl.Attributes["_splittableHv"].(HTMLValues); hv.boxed() {
 		return hv.PaddingTop + hv.BorderTopWidth, hv.PaddingBottom + hv.BorderBottomWidth, true
 	}
 	return pad.top, pad.bottom, true

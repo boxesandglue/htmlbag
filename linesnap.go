@@ -332,7 +332,7 @@ func (fc *flowCursor) transparentForSnap(cb *CSSBuilder, vl *node.VList, room ba
 	if _, leaf := vl.Attributes["_splittableTe"]; leaf {
 		return false
 	}
-	if hv, ok := vl.Attributes["_splittableHv"].(HTMLValues); ok && (hv.hasBorder() || hv.BackgroundColor != nil) {
+	if hv, ok := vl.Attributes["_splittableHv"].(HTMLValues); ok && hv.boxed() {
 		return false
 	}
 	if _, _, clone := decorationClone(vl); clone || cb.fragmentTrim(vl) != (breakTrim{}) {
@@ -400,7 +400,7 @@ func (fc *flowCursor) snapLines(cb *CSSBuilder, vl *node.VList) {
 	if g == nil {
 		return
 	}
-	if hv, _ := vl.Attributes["_splittableHv"].(HTMLValues); hv.hasBorder() || hv.BackgroundColor != nil {
+	if hv, _ := vl.Attributes["_splittableHv"].(HTMLValues); hv.boxed() {
 		return
 	}
 	if _, _, clone := decorationClone(vl); clone {

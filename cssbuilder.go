@@ -1646,7 +1646,7 @@ func (cb *CSSBuilder) outputGroupNodes(vl *node.VList, fc *flowCursor) (int, map
 			// A box with a border or background splits in outputBlockSplit,
 			// which needs its _splittable VList; unwrapped, the HTMLBorder
 			// parts would be placed whole (#35). Transparent boxes unwrap.
-			if hv, ok := inner.Attributes["_splittableHv"].(HTMLValues); ok && (hv.hasBorder() || hv.BackgroundColor != nil) {
+			if hv, ok := inner.Attributes["_splittableHv"].(HTMLValues); ok && hv.boxed() {
 				break
 			}
 			// The page and position of a heading, an anchor and an element
@@ -3153,7 +3153,7 @@ func (cb *CSSBuilder) buildFragment(blockVL *node.VList, items []node.Node, kind
 	// padding-left, stamped by the box branch of buildVlistInternal) sits on
 	// the original VList; every fragment must inherit it or an indented
 	// block (e.g. a blockquote) snaps to the left edge.
-	if !hv.hasBorder() && hv.BackgroundColor == nil {
+	if !hv.boxed() {
 		if hasTag {
 			innerVL.SetAttribute("tag", tag)
 		}

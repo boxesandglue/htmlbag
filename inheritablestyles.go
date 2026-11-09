@@ -86,6 +86,11 @@ const settingTraceBoxModel frontend.SettingType = -11
 // the Text before the flow starts and captured like settingTraceBoxModel.
 const settingTraceLineGrid frontend.SettingType = -12
 
+// settingTransparency carries 1 minus the CSS opacity of an element to the
+// place where its box is built (HTMLValues.Transparency). Like the trace marks
+// it must not reach FormatParagraph, see captureTraceSettings.
+const settingTransparency frontend.SettingType = -14
+
 // settingBackgroundBelow carries the backgrounds that show through a
 // transparent cell to buildTD, see resolveRowBackground.
 const settingBackgroundBelow frontend.SettingType = -13
@@ -498,6 +503,10 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			ih.flowRoot = (v == "flow-root")
 		case "background-color":
 			ih.BackgroundColor = df.GetColor(v)
+		case "opacity":
+			if opacity, ok := parseOpacity(v); ok {
+				ih.transparency = 1 - opacity
+			}
 		case "border-right-width", "border-left-width", "border-top-width", "border-bottom-width":
 			size := ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 			switch k {
@@ -1189,11 +1198,12 @@ type FormattingStyles struct {
 	pageBreakAfter  string
 	pageBreakBefore string
 	pageBreakInside string
-	widows          int    // 0 = initial (2)
-	orphans         int    // 0 = initial (2)
-	bookmark        string // -bag-bookmark raw value (non-inherited; "" = unset)
-	traceBoxModel   bool   // -bag-trace: boxmodel (non-inherited)
-	traceLineGrid   bool   // -bag-trace: linegrid (non-inherited)
+	widows          int     // 0 = initial (2)
+	orphans         int     // 0 = initial (2)
+	bookmark        string  // -bag-bookmark raw value (non-inherited; "" = unset)
+	traceBoxModel   bool    // -bag-trace: boxmodel (non-inherited)
+	transparency    float64 // 1 - opacity (non-inherited; 0 = opaque)
+	traceLineGrid   bool    // -bag-trace: linegrid (non-inherited)
 	yoffset         bag.ScaledPoint
 	// relativeYOffset is the sum of the top/bottom offsets of the
 	// position: relative inline elements around the text. It moves the
@@ -1692,6 +1702,9 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	if ih.bookmark != "" {
 		settings[settingBookmark] = ih.bookmark
+	}
+	if ih.transparency > 0 {
+		settings[settingTransparency] = ih.transparency
 	}
 	if ih.traceBoxModel {
 		settings[settingTraceBoxModel] = true
@@ -3709,4 +3722,20 @@ func (cb *CSSBuilder) applyBreaker(settings frontend.TypesettingSettings, ih *Fo
 	if b := f(BreakerStyles{Name: ih.breaker, FontSize: ih.Fontsize, Language: ih.language}); b != nil {
 		settings[frontend.SettingBreaker] = b
 	}
+}
+
+// parseOpacity reads the value of the opacity property, a number or a
+// percentage, clamped to 0..1 (CSS Color 4, section 15.1).
+func parseOpacity(v string) (float64, bool) {
+	v = strings.TrimSpace(v)
+	scale := 1.0
+	if strings.HasSuffix(v, "%") {
+		v = strings.TrimSuffix(v, "%")
+		scale = 100
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || math.IsNaN(f) {
+		return 0, false
+	}
+	return min(max(f/scale, 0), 1), true
 }

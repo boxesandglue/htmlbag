@@ -200,7 +200,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 
 		// Extract border/padding values for this container
 		hv := settingsToHTMLValues(settings)
-		hasBorderOrBg := hv.hasBorder() || hv.BackgroundColor != nil
+		hasBorderOrBg := hv.boxed()
 
 		// Calculate effective width for children
 		childBaseWidth := wd
@@ -511,7 +511,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						tableHv.BorderTopWidth, tableHv.BorderRightWidth = 0, 0
 						tableHv.BorderBottomWidth, tableHv.BorderLeftWidth = 0, 0
 					}
-					hasTableBorderOrBg := tableHv.hasBorder() || tableHv.BackgroundColor != nil
+					hasTableBorderOrBg := tableHv.boxed()
 					hasTheadOrTfoot := false
 					if hasTableBorderOrBg {
 						for _, itm := range t.Items {
@@ -1174,7 +1174,7 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	}
 
 	// Apply borders if any are defined
-	if hv.hasBorder() || hv.BackgroundColor != nil {
+	if hv.boxed() {
 		// Snapshot the inner children (typically HList lines for <pre>)
 		// before HTMLBorder mutates the list. outputBlockSplit reuses this
 		// snapshot to fragment the block across pages when its wrapped
@@ -1597,6 +1597,7 @@ func withoutParagraphBackground(te *frontend.Text) func() {
 func settingsToHTMLValues(settings frontend.TypesettingSettings) HTMLValues {
 	hv := HTMLValues{}
 	hv.traceBoxModel, _ = settings[settingTraceBoxModel].(bool)
+	hv.Transparency, _ = settings[settingTransparency].(float64)
 
 	if v, ok := settings[frontend.SettingBackgroundColor]; ok && v != nil {
 		hv.BackgroundColor = v.(*color.Color)

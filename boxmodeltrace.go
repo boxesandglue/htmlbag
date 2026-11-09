@@ -145,7 +145,7 @@ func (cb *CSSBuilder) traceBoxModel(vl *node.VList, hv HTMLValues, paddingInside
 }
 
 // captureTraceSettings removes the -bag-trace marks (settingTraceBoxModel,
-// settingTraceLineGrid) from te and every Text inline in it, and returns the
+// settingTraceLineGrid) and the opacity (settingTransparency) from te and every Text inline in it, and returns the
 // restore. The marks are read before the box is built and must not reach
 // FormatParagraph, whose settings
 // switch rejects an unknown setting; ApplySettings stamps it wherever it is
@@ -155,9 +155,10 @@ func captureTraceSettings(te *frontend.Text) func() {
 	var restores []func()
 	var walk func(t *frontend.Text)
 	walk = func(t *frontend.Text) {
-		restores = append(restores, restoreSettings(t.Settings, []frontend.SettingType{settingTraceBoxModel, settingTraceLineGrid}))
+		restores = append(restores, restoreSettings(t.Settings, []frontend.SettingType{settingTraceBoxModel, settingTraceLineGrid, settingTransparency}))
 		delete(t.Settings, settingTraceBoxModel)
 		delete(t.Settings, settingTraceLineGrid)
+		delete(t.Settings, settingTransparency)
 		for _, itm := range t.Items {
 			if inner, ok := itm.(*frontend.Text); ok {
 				walk(inner)
