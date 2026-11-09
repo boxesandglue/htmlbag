@@ -64,8 +64,36 @@ func (hv HTMLValues) setOpacity(vl *node.VList) {
 	if vl.Attributes == nil {
 		vl.Attributes = node.H{}
 	}
+	setOpacityAttribute(vl.Attributes, hv.Transparency)
+}
+
+// setOpacityAttribute sets the document.Opacity of a node in attrs from
+// transparency, 1 minus the CSS opacity, if it is not opaque.
+func setOpacityAttribute(attrs node.H, transparency float64) {
+	if transparency <= 0 {
+		return
+	}
 	// Rounded as color.Color.Alpha does, 1 - (1 - 0.3) is not 0.3.
-	vl.Attributes[document.Opacity] = math.Round((1-hv.Transparency)*10000) / 10000
+	attrs[document.Opacity] = math.Round((1-transparency)*10000) / 10000
+}
+
+// withOpacity returns ftv, which formats a replaced element, so that the
+// VList it makes has the opacity of the element. A table cell takes that
+// VList as it is, without the wrapper the opacity is set on.
+func withOpacity(ftv frontend.FormatToVList, transparency float64) frontend.FormatToVList {
+	if transparency <= 0 {
+		return ftv
+	}
+	return func(wd bag.ScaledPoint) (*node.VList, error) {
+		vl, err := ftv(wd)
+		if err == nil && vl != nil {
+			if vl.Attributes == nil {
+				vl.Attributes = node.H{}
+			}
+			setOpacityAttribute(vl.Attributes, transparency)
+		}
+		return vl, err
+	}
 }
 
 func (hv HTMLValues) hasBorder() bool {

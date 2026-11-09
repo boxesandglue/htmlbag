@@ -3051,7 +3051,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				return err
 			}
 			cs := ss.CurrentStyle()
-			family, current := cs.fontfamily, cs.color
+			family, current, transparency := cs.fontfamily, cs.color, cs.transparency
 			dims := replacedElementDims(item, cs.Fontsize, defaultFontsize)
 			align := cb.newReplacedAlign(item, cs, parentStyle)
 			ss.PopStyles()
@@ -3063,7 +3063,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				// width is known.
 				placeholder := createSVGNode(df, svgDoc, nil, 0, dims.ht, svgTextRenderer(df, family), current)
 				vl = node.Vpack(placeholder)
-				setDeferredFormatter(vl, align.formatter(newInlineSVGFormatter(svgDoc, nil, dims, df, family, current)))
+				setDeferredFormatter(vl, withOpacity(align.formatter(newInlineSVGFormatter(svgDoc, nil, dims, df, family, current)), transparency))
 			} else {
 				// Unparseable sizes are dropped: the SVG falls back to
 				// its natural size rather than stopping the render.
@@ -3075,6 +3075,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				vl.Attributes = node.H{}
 			}
 			vl.Attributes["origin"] = "inline-svg"
+			setOpacityAttribute(vl.Attributes, transparency)
 			stampInlineID(vl, item)
 			if alt, ok := item.Attributes["alt"]; ok {
 				vl.Attributes["alt"] = alt
@@ -3202,7 +3203,8 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					if alt, ok := item.Attributes["alt"]; ok {
 						vl.Attributes["alt"] = alt
 					}
-					setDeferredFormatter(vl, align.formatter(newInlineSVGFormatter(svgDoc, crop, imgDims, df, nil, nil)))
+					setOpacityAttribute(vl.Attributes, cs.transparency)
+					setDeferredFormatter(vl, withOpacity(align.formatter(newInlineSVGFormatter(svgDoc, crop, imgDims, df, nil, nil)), cs.transparency))
 					if cs.floatSide != "" {
 						vl.Attributes[attrFloat] = cs.floatSide
 						vl.Attributes[attrFloatMargins] = cs.floatMargins()
@@ -3231,6 +3233,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 					if alt, ok := item.Attributes["alt"]; ok {
 						svgVL.Attributes["alt"] = alt
 					}
+					setOpacityAttribute(svgVL.Attributes, cs.transparency)
 					if cs.floatSide != "" {
 						svgVL.Attributes[attrFloat] = cs.floatSide
 						svgVL.Attributes[attrFloatMargins] = cs.floatMargins()
@@ -3260,6 +3263,7 @@ func collectHorizontalNodes(cb *CSSBuilder, te *frontend.Text, item *HTMLItem, s
 				if alt, ok := item.Attributes["alt"]; ok {
 					imgNode.Attributes["alt"] = alt
 				}
+				setOpacityAttribute(imgNode.Attributes, cs.transparency)
 				if imgDims.needsContainerWidth() {
 					// Defer geometry resolution to layout time. The
 					// placeholder gets a small intrinsic-size rendering

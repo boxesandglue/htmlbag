@@ -88,6 +88,10 @@ func TestOpacityBlocks(t *testing.T) {
 		{"table", `<table style="opacity: .5"><tr><td>A</td></tr></table>`, []string{"0_5"}},
 		{"opaque", `<p style="opacity: 1">Text</p>`, nil},
 		{"span", `<p>A <span style="opacity: .5">B</span></p>`, nil},
+		{"inline svg", `<p>A <svg style="opacity: .5" width="10" height="10"><rect width="10" height="10"/></svg></p>`, []string{"0_5"}},
+		{"svg image", `<p>A <img style="opacity: .5; width: 1cm" src="testdata/float.svg"></p>`, []string{"0_5"}},
+		{"svg image in percent", `<p>A <img style="opacity: .5; width: 10%" src="testdata/float.svg"></p>`, []string{"0_5"}},
+		{"svg image alone in a cell", `<table><tr><td><img style="opacity: .5; width: 50%" src="testdata/float.svg"></td></tr></table>`, []string{"0_5"}},
 		{"cell", `<table><tr><td style="opacity: .5">A</td></tr></table>`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -112,5 +116,21 @@ func TestOpacitySplitBlock(t *testing.T) {
 	}
 	if got := len(groupAlphas(out)); got != pages {
 		t.Errorf("%d groups on %d pages", got, pages)
+	}
+}
+
+// A bitmap is drawn with the alpha constant of a graphics state, without a
+// group, also when its size waits for the width of its container.
+func TestOpacityBitmapImage(t *testing.T) {
+	alpha := regexp.MustCompile(`q /GSca0_5CA0_5 gs\nq [^\n]*/ImgBag1 Do Q\nQ`)
+	for _, img := range []string{
+		`<img style="opacity: .5; width: 1cm" src="testdata/float.png">`,
+		`<img style="opacity: .5; width: 10%" src="testdata/float.png">`,
+		`<img style="opacity: .5; display: block; width: 1cm" src="testdata/float.png">`,
+	} {
+		out := renderOpacityPDF(t, `<html><body><p>A `+img+`</p></body></html>`)
+		if !alpha.MatchString(out) {
+			t.Errorf("%s is not drawn with alpha 0.5", img)
+		}
 	}
 }
