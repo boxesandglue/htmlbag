@@ -221,6 +221,64 @@ func tagVList(vl *node.VList, se *document.StructureElement) {
 	vl.Attributes["tag"] = se
 }
 
+// eachImageAlt calls fn for each image in the Text tree te that has an alt
+// text, in document order, with the attributes of the node the image is drawn
+// with: a *node.Image for a raster or PDF image, a *node.VList for an SVG or
+// an image sized later. An image with an empty alt is decorative and skipped.
+func eachImageAlt(te *frontend.Text, fn func(attrs node.H, alt string)) {
+	for _, itm := range te.Items {
+		var attrs node.H
+		switch t := itm.(type) {
+		case *node.Image:
+			attrs = t.Attributes
+		case *node.VList:
+			attrs = t.Attributes
+		case *frontend.Text:
+			eachImageAlt(t, fn)
+			continue
+		}
+		if alt, _ := attrs["alt"].(string); alt != "" {
+			fn(attrs, alt)
+		}
+	}
+}
+
+// firstImageAlt returns the first alt text of an image in te, or "".
+func firstImageAlt(te *frontend.Text) string {
+	first := ""
+	eachImageAlt(te, func(_ node.H, alt string) {
+		if first == "" {
+			first = alt
+		}
+	})
+	return first
+}
+
+// countImageAlts returns the number of images with an alt text in te.
+func countImageAlts(te *frontend.Text) int {
+	n := 0
+	eachImageAlt(te, func(node.H, string) { n++ })
+	return n
+}
+
+// tagInlineFigures gives each image with an alt text in the Text tree te a
+// Figure element of its own, with that /Alt, in the "tag" attribute of the
+// node the image is drawn with, and returns the elements in document order.
+// Boxes and glue gives each a marked-content sequence of its own, which
+// interrupts the sequence of the text around it, as for an inline formula.
+// The caller links them below the element that holds the text, whose
+// /ActualText would hide them.
+func (cb *CSSBuilder) tagInlineFigures(te *frontend.Text) []*document.StructureElement {
+	var figures []*document.StructureElement
+	eachImageAlt(te, func(attrs node.H, alt string) {
+		se := newSE("Figure", cb.frontend.Doc.Format)
+		se.Alt = alt
+		attrs["tag"] = se
+		figures = append(figures, se)
+	})
+	return figures
+}
+
 // tagVListAsXObjectFigure marks the VList as a Figure whose body is a single
 // imported PDF Form XObject. Instead of emitting a BDC/EMC pair on the page
 // around the /Do, the backend will route the structure attachment via a

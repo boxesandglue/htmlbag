@@ -202,6 +202,9 @@ type CSSBuilder struct {
 	// the table is built.
 	captionTables   map[*frontend.Text]*frontend.Text
 	pendingCaptions map[*frontend.Text][]*document.StructureElement
+	// cellFigures are the Figures of the images in a table cell, which
+	// tagTable links below the cell's element.
+	cellFigures map[*frontend.TableCell][]*document.StructureElement
 	// inlineNodes are the nodes InlineNode stands in for, by element.
 	inlineNodes      map[*html.Node]node.Node
 	ElementCallback  ElementCallbackFunc

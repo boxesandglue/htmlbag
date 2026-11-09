@@ -584,6 +584,17 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 					continue
 				}
 			}
+			// PDF/UA: the element of the cell owns all of its content, so
+			// each image with an alt text in it, also in a block, is a
+			// Figure of its own below the cell (tagTable).
+			if cb.enableTagging {
+				if figs := cb.tagInlineFigures(t); len(figs) > 0 {
+					if cb.cellFigures == nil {
+						cb.cellFigures = map[*frontend.TableCell][]*document.StructureElement{}
+					}
+					cb.cellFigures[td] = append(cb.cellFigures[td], figs...)
+				}
+			}
 			// Pull any insertMarkers out of this cell's text tree before
 			// it reaches FormatParagraph / BuildTable. Footnote markers
 			// become in-text superscript calls; float markers become
@@ -680,7 +691,11 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 				// short-circuit: hand the closure straight to the
 				// cell builder. The cell builder will call it at the
 				// final paraWidth.
-				td.Contents = append(td.Contents, getDeferredFormatter(vl))
+				ftv := getDeferredFormatter(vl)
+				if fig, ok := vl.Attributes["tag"].(*document.StructureElement); ok {
+					ftv = figureInLine(ftv, fig)
+				}
+				td.Contents = append(td.Contents, ftv)
 			} else if hasDeferredFormatterInTextTree(t) {
 				// Mixed inline content with a deferred closure somewhere
 				// inside — e.g. paragraph text + inline SVG. Resolve
@@ -741,6 +756,24 @@ func (cb *CSSBuilder) buildTD(te *frontend.Text, row *frontend.TableRow, isHeade
 	}
 	row.Cells = append(row.Cells, td)
 	return anchors
+}
+
+// figureInLine returns a closure that formats the box of an image with ftv,
+// gives it the Figure fig and sets it in a line of its own. A box in a line
+// interrupts the marked-content sequence of the cell for its own; a box set
+// straight into the cell would sit inside the cell's sequence.
+func figureInLine(ftv frontend.FormatToVList, fig *document.StructureElement) frontend.FormatToVList {
+	return func(wd bag.ScaledPoint) (*node.VList, error) {
+		vl, err := ftv(wd)
+		if err != nil || vl == nil {
+			return vl, err
+		}
+		if vl.Attributes == nil {
+			vl.Attributes = node.H{}
+		}
+		vl.Attributes["tag"] = fig
+		return node.Vpack(node.Hpack(vl)), nil
+	}
 }
 
 // hasSideMargin reports whether t has a left or right margin.
@@ -834,7 +867,16 @@ func (cb *CSSBuilder) tagTable(tableVL *node.VList, tbl *frontend.Table, langTag
 					cellSE.Scope = "Row"
 				}
 			}
-			cellSE.ActualText = extractCellText(cell)
+			// The /ActualText of the cell would hide the /Alt of its
+			// images.
+			if figs := cb.cellFigures[cell]; len(figs) > 0 {
+				for _, fig := range figs {
+					cellSE.AddChild(fig)
+				}
+				delete(cb.cellFigures, cell)
+			} else {
+				cellSE.ActualText = extractCellText(cell)
+			}
 			trSE.AddChild(cellSE)
 			tagVList(cellVL, cellSE)
 			cellIdx++

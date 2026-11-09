@@ -1084,6 +1084,31 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// Text, FormatParagraph would paint it once more behind the runs.
 	defer withoutParagraphBackground(te)()
 
+	// PDF/UA: a block that holds nothing but one image is a Figure with its
+	// alt text (tagged below). An image among text, or beside another image,
+	// is a Figure of its own inside the element of the block, which keeps its
+	// text: the /Alt of a Figure replaces its content for assistive
+	// technology. The Figures go on the image nodes before FormatParagraph
+	// copies them into the lines.
+	hasText := strings.TrimSpace(extractTextContent(te)) != ""
+	figureBlock := false
+	var inlineFigures []*document.StructureElement
+	if cb.enableTagging {
+		tag, _ := settings[frontend.SettingDebug].(string)
+		switch canonicalRoleForTag(tag) {
+		case "Figure":
+			// <figure> or <img> as a block is a Figure itself.
+		case "P", "":
+			if n := countImageAlts(te); !hasText && n == 1 {
+				figureBlock = true
+			} else if n > 0 {
+				inlineFigures = cb.tagInlineFigures(te)
+			}
+		default:
+			inlineFigures = cb.tagInlineFigures(te)
+		}
+	}
+
 	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points).
 	vl, _, err := cb.frontend.FormatParagraph(te, contentWidth)
 	if err != nil {
@@ -1252,21 +1277,19 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// as <main> or <dd>. Untagged, it would be an artifact, which is valid
 	// but keeps the text from assistive technology.
 	if cb.enableTagging {
-		hasText := strings.TrimSpace(extractTextContent(te)) != ""
-		if tag, _ := settings[frontend.SettingDebug].(string); tag != "" || hasText || findImageAlt(te) != "" {
+		if tag, _ := settings[frontend.SettingDebug].(string); tag != "" || hasText || figureBlock || len(inlineFigures) > 0 {
 			canonical := canonicalRoleForTag(tag)
 
-			// If this paragraph contains an image, use Figure role with alt text
 			if canonical == "P" || canonical == "" {
-				if alt := findImageAlt(te); alt != "" {
+				if figureBlock {
 					canonical = "Figure"
-				} else if hasText {
+				} else if hasText || len(inlineFigures) > 0 {
 					canonical = "P"
 				}
 			}
-			// A grouping element without text has nothing to tag. A
-			// background of such a box stays an artifact.
-			if isGrouping(canonical) && !hasText {
+			// A grouping element without text or images has nothing to
+			// tag. A background of such a box stays an artifact.
+			if isGrouping(canonical) && !hasText && len(inlineFigures) == 0 {
 				canonical = ""
 			}
 
@@ -1276,16 +1299,20 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				// lang= switch declared on this block element → /Lang.
 				se.Lang = langTag
 				// A block that contains an inline <math> gets a Formula child
-				// (linked below). In that case we must NOT stamp ActualText on
-				// the block: ActualText replaces the element's entire content
+				// (linked below), one with an image among its text a Figure
+				// child. In that case we must NOT stamp ActualText on the
+				// block: ActualText replaces the element's entire content
 				// for assistive technology (PDF 1.7 §14.9.4), which would mask
-				// the Formula child's /Alt and read the sentence without the
-				// formula. Letting the structure stand — text MCRs plus the
-				// Formula element — keeps the formula reachable.
+				// the child's /Alt and read the sentence without the
+				// formula or image. Letting the structure stand — text MCRs
+				// plus the child element — keeps it reachable.
 				hasFormula := cb.enableTagging && containsFormula(te)
-				if canonical == "Figure" {
+				switch {
+				case figureBlock:
+					se.Alt = firstImageAlt(te)
+				case canonical == "Figure":
 					se.Alt = findImageAlt(te)
-				} else if !hasFormula {
+				case !hasFormula && len(inlineFigures) == 0:
 					se.ActualText = extractTextContent(te)
 				}
 				// Stash heading SE on the VList so the outer caller can
@@ -1376,6 +1403,11 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				// place.
 				if hasFormula {
 					linkFormulaSEs(te, contentSE)
+				}
+				// The Figures of images among the text, sorted into reading
+				// order in the same way.
+				for _, fig := range inlineFigures {
+					contentSE.AddChild(fig)
 				}
 			}
 		} else if containsFormula(te) {
