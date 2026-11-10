@@ -125,7 +125,10 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		var containerSE *document.StructureElement
 		var savedStructureCurrent *document.StructureElement
 		if cb.enableTagging {
-			if tag, ok := settings[frontend.SettingDebug].(string); ok {
+			// An <img> with display: block gets its Figure from the leaf
+			// branch below, with the BBox and the content. A Figure
+			// around it would say the Alt twice.
+			if tag, ok := settings[frontend.SettingDebug].(string); ok && tag != "img" {
 				if canonical := canonicalRoleForTag(tag); canonical != "" {
 					// A <figure> with blocks inside, such as a figcaption,
 					// groups them: the image in it is a Figure of its own
@@ -165,16 +168,6 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 						case "ul":
 							containerSE.ListNumbering = "Disc"
 						}
-					}
-					// PDF/UA-1 §7.3: Figure must carry /Alt. The leaf
-					// branch below handles <img> nested inside <p>;
-					// this box branch fires when the image was promoted
-					// to a block via CSS `display: block` and routed
-					// through Output()'s img-special path. te.Items
-					// holds an inner Text whose first item is the
-					// imgNode (with alt stamped on its Attributes).
-					if canonical == "Figure" {
-						containerSE.Alt = findImageAlt(te)
 					}
 				}
 			}
@@ -956,6 +949,17 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 		// PDF/UA: pop structure element back to parent
 		if containerSE != nil {
 			cb.structureCurrent = savedStructureCurrent
+			// A heading that holds a block, such as an image with
+			// display: block, is a container: its element is the
+			// destination of its outline entry, as for the leaf
+			// (PDF/UA-2 §8.8).
+			switch strings.ToUpper(containerSE.Role) {
+			case "H1", "H2", "H3", "H4", "H5", "H6":
+				if vls.Attributes == nil {
+					vls.Attributes = node.H{}
+				}
+				vls.Attributes["_heading_se"] = containerSE
+			}
 		}
 
 		attachInserts(vls)
@@ -1290,6 +1294,26 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			// A grouping element without text or images has nothing to
 			// tag. A background of such a box stays an artifact.
 			if isGrouping(canonical) && !hasText && len(inlineFigures) == 0 {
+				canonical = ""
+			}
+			// Text without an element of its own in a paragraph or a
+			// heading, beside a block in it such as an image with display:
+			// block, is content of that element, as in the accessibility
+			// tree of a browser: a P must not hold a P (ISO 32005), and
+			// the image is a Figure in the paragraph, as one among text.
+			if parent := cb.structureCurrent; canonical == "P" && tag == "" && holdsInlineOnly(parent) {
+				tagVList(vl, parent)
+				for _, idx := range inlineAnchorIndices {
+					if idx >= 0 && idx < len(cb.Anchors) {
+						cb.registerDestination(cb.Anchors[idx].ID, parent)
+					}
+				}
+				if containsFormula(te) {
+					linkFormulaSEs(te, parent)
+				}
+				for _, fig := range inlineFigures {
+					parent.AddChild(fig)
+				}
 				canonical = ""
 			}
 

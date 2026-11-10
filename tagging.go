@@ -212,6 +212,19 @@ func isGrouping(canonical string) bool {
 	return false
 }
 
+// holdsInlineOnly reports whether se, if any, is an element whose content is
+// inline, a paragraph or a heading, which must not hold a P.
+func holdsInlineOnly(se *document.StructureElement) bool {
+	if se == nil {
+		return false
+	}
+	switch strings.ToUpper(se.Role) {
+	case "P", "H1", "H2", "H3", "H4", "H5", "H6":
+		return true
+	}
+	return false
+}
+
 // tagVList sets the "tag" attribute on a VList so that the backend emits
 // the correct BDC/EMC marked content operators during shipout.
 func tagVList(vl *node.VList, se *document.StructureElement) {
