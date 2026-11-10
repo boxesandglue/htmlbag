@@ -292,6 +292,38 @@ func (cb *CSSBuilder) tagInlineFigures(te *frontend.Text) []*document.StructureE
 	return figures
 }
 
+// tagFloatFigure gives box, the float box of n, an image that floats beside
+// the text of a container, a Figure with the alt text of n, below the element
+// the float stands in. Taken out of the text, the image is not among those
+// tagInlineFigures finds, and the box would be an artifact (issue #117). The
+// box is painted before the text beside it, so the Figure reads before it,
+// as in the source. An image without an alt text is decorative and stays an
+// artifact.
+func (cb *CSSBuilder) tagFloatFigure(n node.Node, box *node.VList) {
+	if !cb.enableTagging || cb.structureCurrent == nil {
+		return
+	}
+	var attrs node.H
+	switch t := n.(type) {
+	case *node.Image:
+		attrs = t.Attributes
+	case *node.VList:
+		attrs = t.Attributes
+	}
+	alt, _ := attrs["alt"].(string)
+	if alt == "" {
+		return
+	}
+	se := newSE("Figure", cb.frontend.Doc.Format)
+	se.Alt = alt
+	cb.structureCurrent.AddChild(se)
+	if img, ok := n.(*node.Image); ok && img.ImageFile != nil && img.ImageFile.Format == "pdf" {
+		tagVListAsXObjectFigure(box, se)
+		return
+	}
+	tagVList(box, se)
+}
+
 // tagVListAsXObjectFigure marks the VList as a Figure whose body is a single
 // imported PDF Form XObject. Instead of emitting a BDC/EMC pair on the page
 // around the /Do, the backend will route the structure attachment via a

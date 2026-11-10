@@ -643,7 +643,9 @@ func (cb *CSSBuilder) buildFloat(itm any, wd bag.ScaledPoint) (*node.VList, erro
 		// of the content into the float box with it.
 		t.SetNext(nil)
 		t.SetPrev(nil)
-		return node.Vpack(t), nil
+		box := node.Vpack(t)
+		cb.tagFloatFigure(t, box)
+		return box, nil
 	}
 	return nil, nil
 }
