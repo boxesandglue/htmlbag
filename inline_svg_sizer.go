@@ -142,5 +142,6 @@ func svgTextRenderer(df *frontend.Document, family *frontend.FontFamily) *fronte
 		family = df.FindFontFamily("serif")
 	}
 	tr.DefaultFamily = family
+	tr.FamilyAliases = cssGenericFontFamilyAliases
 	return tr
 }
