@@ -5,6 +5,7 @@ import (
 
 	"github.com/boxesandglue/boxesandglue/backend/document"
 	"github.com/boxesandglue/boxesandglue/backend/node"
+	"github.com/boxesandglue/boxesandglue/backend/text/bidi"
 	"github.com/boxesandglue/boxesandglue/frontend"
 )
 
@@ -210,6 +211,107 @@ func isGrouping(canonical string) bool {
 		return true
 	}
 	return false
+}
+
+// blockRole returns the role of the structure element of a block of text
+// with the HTML tag tag, "" for none. hasText, figureBlock and inlineFigures
+// describe its content: text, nothing but one image, images among the text.
+// intoParent reports that the text is content of the element around it,
+// cb.structureCurrent, instead.
+func (cb *CSSBuilder) blockRole(tag string, hasText, figureBlock, inlineFigures bool) (canonical string, intoParent bool) {
+	canonical = canonicalRoleForTag(tag)
+	if canonical == "P" || canonical == "" {
+		if figureBlock {
+			canonical = "Figure"
+		} else if hasText || inlineFigures {
+			canonical = "P"
+		}
+	}
+	// A grouping element without text or images has nothing to tag. A
+	// background of such a box stays an artifact.
+	if isGrouping(canonical) && !hasText && !inlineFigures {
+		canonical = ""
+	}
+	// Text without an element of its own in a paragraph or a heading,
+	// beside a block in it such as an image with display: block, is content
+	// of that element, as in the accessibility tree of a browser: a P must
+	// not hold a P (ISO 32005), and the image is a Figure in the paragraph,
+	// as one among text.
+	if canonical == "P" && tag == "" && holdsInlineOnly(cb.structureCurrent) {
+		return "", true
+	}
+	return canonical, false
+}
+
+// hasRightToLeft reports whether the text of te has a right-to-left
+// character (bidi class R or AL).
+func hasRightToLeft(te *frontend.Text) bool {
+	for _, r := range extractTextContent(te) {
+		props, _ := bidi.LookupRune(r)
+		if c := props.Class(); c == bidi.R || c == bidi.AL {
+			return true
+		}
+	}
+	return false
+}
+
+// splitTextRuns cuts the text of te at the images and formulas with an
+// element of their own (tagInlineFigures, collectHorizontalNodes) and makes
+// each run of text between them a Span with the run as ActualText. Every
+// string of a run moves into a Text of its own with SettingStructure, so its
+// glyphs become the content of the Span. It returns the Spans, Figures and
+// Formulas in reading order. White space before the first word of a run
+// goes into its ActualText; a run of nothing but white space has no glyphs
+// and gets no Span.
+func splitTextRuns(te *frontend.Text, format document.Format) []*document.StructureElement {
+	var order []*document.StructureElement
+	var run *document.StructureElement
+	var space strings.Builder
+	var walk func(te *frontend.Text)
+	walk = func(te *frontend.Text) {
+		for i, itm := range te.Items {
+			switch t := itm.(type) {
+			case string:
+				if run == nil {
+					if strings.TrimSpace(t) == "" {
+						space.WriteString(t)
+						continue
+					}
+					run = newSE("Span", format)
+					run.ActualText = space.String()
+					space.Reset()
+					order = append(order, run)
+				}
+				run.ActualText += t
+				wrapped := frontend.NewText()
+				wrapped.Settings[frontend.SettingStructure] = run
+				wrapped.Items = append(wrapped.Items, t)
+				te.Items[i] = wrapped
+			case *frontend.Text:
+				walk(t)
+			case *node.HList:
+				if se, ok := t.Attributes["_formula_se"].(*document.StructureElement); ok {
+					order = append(order, se)
+					run = nil
+					space.Reset()
+				}
+			case *node.Image:
+				if se, ok := t.Attributes["tag"].(*document.StructureElement); ok {
+					order = append(order, se)
+					run = nil
+					space.Reset()
+				}
+			case *node.VList:
+				if se, ok := t.Attributes["tag"].(*document.StructureElement); ok {
+					order = append(order, se)
+					run = nil
+					space.Reset()
+				}
+			}
+		}
+	}
+	walk(te)
+	return order
 }
 
 // holdsInlineOnly reports whether se, if any, is an element whose content is

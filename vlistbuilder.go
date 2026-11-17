@@ -1112,6 +1112,18 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 			inlineFigures = cb.tagInlineFigures(te)
 		}
 	}
+	// A block of right-to-left text with an image or a formula among the
+	// text gets no ActualText, which would hide their alternate text, and
+	// its content stream is in visual order. Its text runs between them
+	// become elements of their own with ActualText in reading order; the
+	// glyphs take them along through FormatParagraph.
+	var inlineOrder []*document.StructureElement
+	if cb.enableTagging && (len(inlineFigures) > 0 || containsFormula(te)) && hasRightToLeft(te) {
+		tag, _ := settings[frontend.SettingDebug].(string)
+		if canonical, intoParent := cb.blockRole(tag, hasText, figureBlock, len(inlineFigures) > 0); canonical != "" && canonical != "Figure" && !intoParent {
+			inlineOrder = splitTextRuns(te, cb.frontend.Doc.Format)
+		}
+	}
 
 	// FormatParagraph -> Mknodes handles SettingPrepend (e.g., bullet points).
 	vl, _, err := cb.frontend.FormatParagraph(te, contentWidth)
@@ -1282,26 +1294,8 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 	// but keeps the text from assistive technology.
 	if cb.enableTagging {
 		if tag, _ := settings[frontend.SettingDebug].(string); tag != "" || hasText || figureBlock || len(inlineFigures) > 0 {
-			canonical := canonicalRoleForTag(tag)
-
-			if canonical == "P" || canonical == "" {
-				if figureBlock {
-					canonical = "Figure"
-				} else if hasText || len(inlineFigures) > 0 {
-					canonical = "P"
-				}
-			}
-			// A grouping element without text or images has nothing to
-			// tag. A background of such a box stays an artifact.
-			if isGrouping(canonical) && !hasText && len(inlineFigures) == 0 {
-				canonical = ""
-			}
-			// Text without an element of its own in a paragraph or a
-			// heading, beside a block in it such as an image with display:
-			// block, is content of that element, as in the accessibility
-			// tree of a browser: a P must not hold a P (ISO 32005), and
-			// the image is a Figure in the paragraph, as one among text.
-			if parent := cb.structureCurrent; canonical == "P" && tag == "" && holdsInlineOnly(parent) {
+			canonical, intoParent := cb.blockRole(tag, hasText, figureBlock, len(inlineFigures) > 0)
+			if parent := cb.structureCurrent; intoParent {
 				tagVList(vl, parent)
 				for _, idx := range inlineAnchorIndices {
 					if idx >= 0 && idx < len(cb.Anchors) {
@@ -1425,13 +1419,24 @@ func (cb *CSSBuilder) buildVlistInternal(te *frontend.Text, wd bag.ScaledPoint) 
 				// them into document reading order relative to the surrounding
 				// text marked-content runs, so a mid-sentence formula reads in
 				// place.
-				if hasFormula {
-					linkFormulaSEs(te, contentSE)
-				}
-				// The Figures of images among the text, sorted into reading
-				// order in the same way.
-				for _, fig := range inlineFigures {
-					contentSE.AddChild(fig)
+				switch {
+				case inlineOrder != nil:
+					// The text runs, Figures and Formulas of a block of
+					// right-to-left text, in reading order: its content
+					// stream is in visual order (splitTextRuns).
+					contentSE.KeepOrder = true
+					for _, child := range inlineOrder {
+						contentSE.AddChild(child)
+					}
+				default:
+					if hasFormula {
+						linkFormulaSEs(te, contentSE)
+					}
+					// The Figures of images among the text, sorted into
+					// reading order in the same way.
+					for _, fig := range inlineFigures {
+						contentSE.AddChild(fig)
+					}
 				}
 			}
 		} else if containsFormula(te) {
