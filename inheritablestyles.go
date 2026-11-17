@@ -442,16 +442,15 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			switch strings.ToLower(strings.TrimSpace(v)) {
 			case "ltr", "rtl":
 				ih.direction = strings.ToLower(strings.TrimSpace(v))
+				ih.directionDeclared = true
 			}
 		case "unicode-bidi":
-			// CSS Writing Modes 3 §2.4. We only act on "plaintext" — that
-			// keyword opts a subtree into the "first strong character
-			// determines base direction" heuristic, i.e. the backend's
-			// detectParagraphDirection path. Other keywords (isolate,
-			// embed, bidi-override, isolate-override, normal) are
-			// recognised so ApplySettings can leave SettingDirection alone
-			// and the LTR-default branch applies; we do not yet implement
-			// their finer bidi-control semantics.
+			// CSS Writing Modes 3 §2.2, not inherited. On an inline
+			// element embed, isolate, the overrides and plaintext open a
+			// level of their own in the bidi algorithm (ApplySettings
+			// passes them on as SettingUnicodeBidi). On a block plaintext
+			// sets the paragraph direction from the first strong
+			// character, the overrides override the paragraph.
 			switch strings.ToLower(strings.TrimSpace(v)) {
 			case "plaintext", "isolate", "embed", "bidi-override", "isolate-override", "normal":
 				ih.unicodeBidi = strings.ToLower(strings.TrimSpace(v))
@@ -1117,7 +1116,8 @@ type FormattingStyles struct {
 	halignLast         frontend.HorizontalAlignment // text-align-last
 	hangingPunctuation frontend.HangingPunctuation
 	direction          string        // CSS direction: "" (no explicit value, defaults to LTR unless overridden by unicode-bidi), "ltr", "rtl"
-	unicodeBidi        string        // CSS unicode-bidi (Writing Modes 3 §2.4): "" / "isolate" (default behaviour), "plaintext" (auto-detect base direction from content)
+	directionDeclared  bool          // the element itself declares direction, so its dir= attribute does not apply; NOT inherited (Clone drops it)
+	unicodeBidi        string        // CSS unicode-bidi (Writing Modes 3 §2.2) the element itself declares, "" for none; NOT inherited (Clone drops it), as in CSS
 	hyphens            string        // CSS hyphens: "" (auto), "auto", "manual", "none"
 	lineSnap           bool          // line-snap: baseline
 	hyphenCharacter    *string       // hyphenate-character, nil for auto
@@ -1429,7 +1429,6 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		fontstyle:          is.fontstyle,
 		Fontweight:         is.Fontweight,
 		direction:          is.direction,
-		unicodeBidi:        is.unicodeBidi,
 		hangingPunctuation: is.hangingPunctuation,
 		hyphens:            is.hyphens,
 		lineSnap:           is.lineSnap,
@@ -1517,13 +1516,12 @@ func applyLangAndHyphens(ih *FormattingStyles, attrs map[string]string, df *fron
 	if declared != "" && !strings.EqualFold(declared, inherited) {
 		ih.declaredLang = declared
 	}
-	// HTML dir= attribute (HTML §3.2.6.2). Equivalent to a UA-stylesheet
-	// rule [dir=rtl] { direction: rtl; }, so author-CSS direction wins —
-	// only consult the attribute when no CSS direction has been set yet.
-	// "auto" requires runtime first-strong detection which boxesandglue
-	// already does as the default; we surface it by leaving ih.direction
-	// empty so the auto-detect path stays in effect.
-	if ih.direction == "" {
+	// HTML dir= attribute (HTML §15.3.5). Equivalent to a UA-stylesheet
+	// rule [dir=rtl] { direction: rtl; }, so author-CSS direction on the
+	// element wins; an inherited direction does not. "auto" is the
+	// UA rule [dir=auto] { unicode-bidi: plaintext } in CSSdefaults: the
+	// direction comes from the first strong character.
+	if !ih.directionDeclared {
 		if v, ok := attrs["dir"]; ok {
 			switch strings.ToLower(strings.TrimSpace(v)) {
 			case "ltr", "rtl":
@@ -1726,9 +1724,11 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 	}
 	// Resolution rules (CSS Writing Modes 3 §2):
 	//   1. Explicit `direction: ltr|rtl` always wins.
-	//   2. Otherwise, if `unicode-bidi: plaintext` is in effect we leave
-	//      SettingDirection unset so the backend's detectParagraphDirection
-	//      heuristic fills it in from the first strong character.
+	//   2. Otherwise, if the element declares `unicode-bidi: plaintext` we
+	//      leave SettingDirection unset so the backend's
+	//      detectParagraphDirection fills it in from the first strong
+	//      character. With plaintext on a paragraph the backend detects it
+	//      even when the direction is set (SettingUnicodeBidi below).
 	//   3. Otherwise the CSS default applies: LTR.
 	switch ih.direction {
 	case "rtl":
@@ -1739,6 +1739,20 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		if ih.unicodeBidi != "plaintext" {
 			settings[frontend.SettingDirection] = frontend.DirectionLTR
 		}
+	}
+	// unicode-bidi is not inherited: only the element that declares it
+	// gets the setting, and the backend does not copy it to child texts.
+	switch ih.unicodeBidi {
+	case "embed":
+		settings[frontend.SettingUnicodeBidi] = frontend.UnicodeBidiEmbed
+	case "isolate":
+		settings[frontend.SettingUnicodeBidi] = frontend.UnicodeBidiIsolate
+	case "bidi-override":
+		settings[frontend.SettingUnicodeBidi] = frontend.UnicodeBidiBidiOverride
+	case "isolate-override":
+		settings[frontend.SettingUnicodeBidi] = frontend.UnicodeBidiIsolateOverride
+	case "plaintext":
+		settings[frontend.SettingUnicodeBidi] = frontend.UnicodeBidiPlaintext
 	}
 	if ih.hyphenPenalty != nil {
 		settings[frontend.SettingHyphenPenalty] = *ih.hyphenPenalty

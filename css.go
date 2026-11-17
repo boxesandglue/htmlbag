@@ -646,6 +646,11 @@ ol ul, ul ol,
 ul ul, ol ol    { margin-top: 0; margin-bottom: 0 }
 u, ins          { text-decoration: underline }
 center          { text-align: center }
+bdi, [dir=ltr i],
+[dir=rtl i]     { unicode-bidi: isolate }
+bdi:not([dir]),
+[dir=auto i]    { unicode-bidi: plaintext }
+bdo, bdo[dir]   { unicode-bidi: isolate-override }
 `
 
 // :link           { text-decoration: underline }
