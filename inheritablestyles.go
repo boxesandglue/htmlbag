@@ -630,6 +630,17 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 			if v != "normal" {
 				ih.letterSpacing = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
 			}
+		case "word-spacing":
+			switch v = strings.TrimSpace(v); {
+			case v == "normal":
+				ih.wordSpacing = 0
+			case strings.HasSuffix(v, "%"):
+				// CSS Text 4 takes a percentage of the space width, which
+				// the font only knows when the text is set.
+				bag.Logger.Warn("word-spacing takes `normal` or a length, ignoring the percentage", "value", v)
+			default:
+				ih.wordSpacing = ParseRelativeSize(v, curFontSize, ih.DefaultFontSize)
+			}
 		case "line-height":
 			if v == "normal" {
 				ih.lineheight = 0
@@ -992,6 +1003,19 @@ func StylesToStyles(ih *FormattingStyles, attributes StyleMap, df *frontend.Docu
 				fe := f / 100
 				ih.fontexpansion = &fe
 			}
+		case "-bag-word-spacing":
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "inherit", "unset":
+				// The cloned parent styles already carry the inherited limits.
+			case "normal", "initial":
+				ih.wordSpacingLimits = nil
+			default:
+				if ws, ok := parseWordSpacingLimits(v); ok {
+					ih.wordSpacingLimits = &ws
+				} else {
+					bag.Logger.Warn("-bag-word-spacing needs three percentages or numbers, minimum, natural and maximum width, ignoring it", "value", v)
+				}
+			}
 		case "-bag-horizontal-scale":
 			switch strings.ToLower(strings.TrimSpace(v)) {
 			case "inherit", "unset":
@@ -1112,6 +1136,8 @@ type FormattingStyles struct {
 	Fontweight         frontend.FontWeight
 	fontexpansion      *float64
 	horizontalScale    *float64 // -bag-horizontal-scale; nil writes no setting, so documents without it are unchanged
+	wordSpacing        bag.ScaledPoint
+	wordSpacingLimits  *frontend.WordSpacing // -bag-word-spacing; nil keeps the font's own stretch and shrink
 	Halign             frontend.HorizontalAlignment
 	halignLast         frontend.HorizontalAlignment // text-align-last
 	hangingPunctuation frontend.HangingPunctuation
@@ -1334,6 +1360,35 @@ func parseHorizontalScale(v string) (float64, bool) {
 	return f / div, true
 }
 
+// parseWordSpacingLimits reads a -bag-word-spacing value: the minimum,
+// natural and maximum width of a word space, in that order, each a
+// percentage of the font's space width or a number, 80% and 0.8 being the
+// same. The order follows the minimum, desired and maximum word spacing of
+// typesetting programs. The minimum may not exceed the natural width, nor
+// the natural width the maximum.
+func parseWordSpacingLimits(v string) (frontend.WordSpacing, bool) {
+	fields := strings.Fields(v)
+	if len(fields) != 3 {
+		return frontend.WordSpacing{}, false
+	}
+	var f [3]float64
+	for i, field := range fields {
+		div := 1.0
+		if p, ok := strings.CutSuffix(field, "%"); ok {
+			field, div = p, 100
+		}
+		n, err := strconv.ParseFloat(field, 64)
+		if err != nil || n < 0 || math.IsInf(n, 0) || math.IsNaN(n) {
+			return frontend.WordSpacing{}, false
+		}
+		f[i] = n / div
+	}
+	if f[0] > f[1] || f[1] > f[2] {
+		return frontend.WordSpacing{}, false
+	}
+	return frontend.WordSpacing{Min: f[0], Opt: f[1], Max: f[2]}, true
+}
+
 // addTextDecoration appends the decoration an element declares to the ones it
 // propagates. The list is shared with the parent, so it is copied first. A
 // decoration already in the list is not added again: <s><s>x</s></s> would
@@ -1416,6 +1471,8 @@ func (is *FormattingStyles) Clone() *FormattingStyles {
 		DefaultFontFamily:  is.DefaultFontFamily,
 		fontexpansion:      is.fontexpansion,
 		horizontalScale:    is.horizontalScale,
+		wordSpacing:        is.wordSpacing,
+		wordSpacingLimits:  is.wordSpacingLimits,
 		fontfamily:         is.fontfamily,
 		fontfamilyStack:    is.fontfamilyStack,
 		fontfeatures:       newFontFeatures,
@@ -1660,6 +1717,12 @@ func ApplySettings(settings frontend.TypesettingSettings, ih *FormattingStyles) 
 		settings[frontend.SettingLeading] = ih.lineheight
 	}
 	settings[frontend.SettingLetterSpacing] = ih.letterSpacing
+	if ih.wordSpacing != 0 {
+		settings[frontend.SettingWordSpacing] = ih.wordSpacing
+	}
+	if ih.wordSpacingLimits != nil {
+		settings[frontend.SettingWordSpacingLimits] = *ih.wordSpacingLimits
+	}
 	settings[frontend.SettingMarginBottom] = ih.marginBottom
 	settings[frontend.SettingMarginRight] = ih.marginRight
 	settings[frontend.SettingMarginLeft] = ih.marginLeft
