@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/boxesandglue/boxesandglue/frontend"
 	"golang.org/x/net/html"
@@ -20,9 +19,15 @@ var (
 )
 
 // isCollapsibleSpace returns true for whitespace characters that CSS considers
-// collapsible. NBSP (U+00A0) is explicitly excluded.
+// collapsible, the same set as the patterns above. NBSP (U+00A0), U+2009 THIN
+// SPACE and the other Unicode spaces are not document white space (CSS Text 3
+// §4.1.1) and stay.
 func isCollapsibleSpace(r rune) bool {
-	return r != '\u00A0' && unicode.IsSpace(r)
+	switch r {
+	case ' ', '\t', '\n', '\r', '\f':
+		return true
+	}
+	return false
 }
 
 // Mode is the progression direction of the current HTML element.
