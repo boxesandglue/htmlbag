@@ -4,10 +4,10 @@ go 1.25.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
-	github.com/boxesandglue/baseline-pdf v1.1.34
-	github.com/boxesandglue/boxesandglue v0.2.107
+	github.com/boxesandglue/baseline-pdf v1.1.36
+	github.com/boxesandglue/boxesandglue v0.2.108
 	github.com/boxesandglue/svgreader v0.0.10
-	github.com/boxesandglue/textshape v0.0.21
+	github.com/boxesandglue/textshape v0.0.22
 	github.com/speedata/barcode v1.1.1
 	github.com/speedata/css v1.0.5
 	golang.org/x/net v0.57.0
